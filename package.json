@@ -6,7 +6,8 @@
     "dev": "node --use-system-ca node_modules/next/dist/bin/next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:staging-env": "node scripts/check-staging-env.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",

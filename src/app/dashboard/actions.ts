@@ -5670,7 +5670,7 @@ export async function expandAndSearch(query: string): Promise<{ subcategories: s
 
 export async function analyzeSiteAction(url: string): Promise<{ success: boolean; lead: any }> {
   try {
-    const backendUrl = process.env.BACKEND_URL || 'http://178.104.182.142:8001'
+    const backendUrl = process.env.BACKEND_URL || 'http://116.203.137.39:8002'
     const res = await fetch(`${backendUrl}/audit-url`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

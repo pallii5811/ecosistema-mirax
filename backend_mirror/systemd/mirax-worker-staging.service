@@ -1,0 +1,18 @@
+[Unit]
+Description=Mirax Worker STAGING (Supabase dev only)
+After=network.target
+
+[Service]
+Type=simple
+User=worker
+WorkingDirectory=/home/worker/app/backend-staging
+Environment=PATH=/home/worker/app/venv/bin
+EnvironmentFile=/home/worker/app/backend-staging/.env
+ExecStart=/home/worker/app/venv/bin/python worker_supabase.py --mode user --cooldown 5
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

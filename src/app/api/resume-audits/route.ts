@@ -8,7 +8,7 @@ import {
   mergeAuditIntoLead,
 } from '@/lib/merge-audit-into-lead'
 
-const BACKEND_URL = process.env.BACKEND_URL || 'http://178.104.182.142:8001'
+const BACKEND_URL = process.env.BACKEND_URL || 'http://116.203.137.39:8002'
 const AUDIT_TIMEOUT_MS = 90_000
 
 function parseResults(raw: unknown): Record<string, unknown>[] {

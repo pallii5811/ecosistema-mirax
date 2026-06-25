@@ -28,7 +28,7 @@ export async function analyzeTrends(category: string, city: string): Promise<Tre
 
   // Chiama il backend Hetzner per Google Trends reale
   try {
-    const backendUrl = process.env.BACKEND_URL || 'http://178.104.182.142:8001'
+    const backendUrl = process.env.BACKEND_URL || 'http://116.203.137.39:8002'
     const res = await fetch(`${backendUrl}/trends-analysis`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -28,14 +28,16 @@ Senza questo blocco, ogni test dev rischia di toccare la produzione.
 
 | # | Task | Dettaglio | Stato |
 |---|------|-----------|-------|
-| 0.1 | Progetto **Supabase dev** separato | Mai riusare `rtjmnjromqpsfqsgyfvp` | ⬜ |
+| 0.1 | Progetto **Supabase dev** separato | Mai riusare `rtjmnjromqpsfqsgyfvp` | ⬜ **azione tua** |
 | 0.2 | Eseguire tutte le migration | `db/migrations/*.sql` sul progetto dev | ⬜ |
-| 0.3 | `.env.local` in Dev | Da `.env.staging.example`; chiavi solo dev | ⬜ |
-| 0.4 | API staging su **116:8002** | `mirax-audit-api-staging.service` | ⬜ |
-| 0.5 | Worker staging (1–2 istanze) | Stesso codice, `.env` → Supabase dev | ⬜ |
-| 0.6 | `BACKEND_URL` dev | `http://116.203.137.39:8002` | ⬜ |
-| 0.7 | Vercel preview | Progetto collegato a `ecosistema-mirax` | ⬜ |
+| 0.3 | `.env.local` in Dev | Da `.env.staging.example`; `node scripts/check-staging-env.mjs` | ⬜ **azione tua** |
+| 0.4 | API staging su **116:8002** | `mirax-audit-api-staging.service` | ✅ attivo |
+| 0.5 | Worker staging (1–2 istanze) | Stesso codice, `.env` → Supabase dev | ⬜ dopo 0.1 |
+| 0.6 | `BACKEND_URL` dev | `http://116.203.137.39:8002` | ✅ default codice Dev |
+| 0.7 | Vercel preview | Progetto collegato a `ecosistema-mirax` | ⬜ **azione tua** |
 | 0.8 | Regola operativa | Mai deploy worker su **178** senza test su **116:8002** | ⚠️ sempre |
+
+**Guida dettagliata:** `docs/BLOCCO0_SETUP.md`
 
 ---
 
