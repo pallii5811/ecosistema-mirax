@@ -20,6 +20,92 @@ function sanitizeUuidArray(input: unknown): string[] {
     .filter((v) => UUID_RE.test(v))
 }
 
+function emptyStats(): EnvironmentStats {
+  return {
+    total_leads: 0,
+    avg_score: 0,
+    leads_with_email: 0,
+    leads_with_phone: 0,
+    leads_no_pixel: 0,
+    leads_no_gtm: 0,
+    top_categories: [],
+    top_cities: [],
+  }
+}
+
+function normalizeStats(stats: unknown): EnvironmentStats {
+  if (!stats) return emptyStats()
+  if (typeof stats === 'string') {
+    try {
+      const parsed = JSON.parse(stats)
+      return parsed && typeof parsed === 'object' ? { ...emptyStats(), ...(parsed as EnvironmentStats) } : emptyStats()
+    } catch {
+      return emptyStats()
+    }
+  }
+  return typeof stats === 'object' ? { ...emptyStats(), ...(stats as EnvironmentStats) } : emptyStats()
+}
+
+async function attachLiveLeadCounts(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  environments: Environment[]
+): Promise<Environment[]> {
+  if (environments.length === 0) return environments
+
+  const { data: linkedLists, error: listsErr } = await supabase
+    .from('lists')
+    .select('id, environment_id')
+    .eq('user_id', userId)
+    .not('environment_id', 'is', null)
+
+  if (listsErr || !linkedLists?.length) return environments
+
+  const listIdsByEnv = new Map<string, string[]>()
+  for (const row of linkedLists) {
+    const envId = typeof row.environment_id === 'string' ? row.environment_id : ''
+    if (!envId) continue
+    const bucket = listIdsByEnv.get(envId) ?? []
+    bucket.push(row.id)
+    listIdsByEnv.set(envId, bucket)
+  }
+
+  const allListIds = Array.from(listIdsByEnv.values()).flat()
+  if (allListIds.length === 0) return environments
+
+  const { data: linkRows, error: linkErr } = await supabase
+    .from('list_leads')
+    .select('list_id')
+    .in('list_id', allListIds)
+
+  if (linkErr) return environments
+
+  const countByList = new Map<string, number>()
+  for (const row of linkRows ?? []) {
+    const listId = typeof row.list_id === 'string' ? row.list_id : ''
+    if (!listId) continue
+    countByList.set(listId, (countByList.get(listId) ?? 0) + 1)
+  }
+
+  return environments.map((env) => {
+    const listIds = listIdsByEnv.get(env.id) ?? []
+    let totalFromLists = 0
+    for (const listId of listIds) {
+      totalFromLists += countByList.get(listId) ?? 0
+    }
+    if (totalFromLists === 0) return env
+
+    const stats = normalizeStats(env.stats)
+    return {
+      ...env,
+      stats: {
+        ...stats,
+        total_leads: Math.max(totalFromLists, stats.total_leads || 0),
+      },
+    } as Environment
+  })
+}
+
 export async function getEnvironments(): Promise<Environment[]> {
   const supabase = await createClient()
 
@@ -40,7 +126,14 @@ export async function getEnvironments(): Promise<Environment[]> {
     return []
   }
 
-  return (data || []) as Environment[]
+  const rows: Environment[] = ((data || []) as Environment[]).map((env) => ({
+    ...env,
+    stats: normalizeStats(env.stats),
+    search_ids: sanitizeUuidArray(env.search_ids),
+    lead_ids: sanitizeUuidArray(env.lead_ids),
+  }))
+
+  return attachLiveLeadCounts(supabase, user.id, rows)
 }
 
 export type { EnvironmentListSummary } from '@/types/environments'
@@ -48,7 +141,6 @@ export type { EnvironmentListSummary } from '@/types/environments'
 function formatLeadFromDbRow(lead: any) {
   const raw = lead?.raw && typeof lead.raw === 'object' ? lead.raw : {}
   return {
-    ...raw,
     id: lead.id,
     nome: lead.name ?? (raw as any).nome ?? (raw as any).azienda ?? '',
     sito: lead.website ?? (raw as any).sito ?? (raw as any).website ?? '',
@@ -61,6 +153,8 @@ function formatLeadFromDbRow(lead: any) {
     has_pixel: (raw as any).has_pixel ?? null,
     google_tag_manager: (raw as any).google_tag_manager ?? null,
     has_gtm: (raw as any).has_gtm ?? null,
+    instagram: (raw as any).instagram ?? null,
+    facebook: (raw as any).facebook ?? null,
   }
 }
 
@@ -190,7 +284,17 @@ export async function getEnvironmentWithLeads(
     }
   }
 
-  return { environment: environment as Environment, leads, lists }
+  return {
+    environment: {
+      ...(environment as Environment),
+      stats: normalizeStats((environment as Environment).stats),
+      search_ids: sanitizeUuidArray((environment as Environment).search_ids),
+      lead_ids: sanitizeUuidArray((environment as Environment).lead_ids),
+      color: (environment as Environment).color || '#8B5CF6',
+    },
+    leads,
+    lists,
+  }
 }
 
 export async function createEnvironment(input: CreateEnvironmentInput): Promise<{
@@ -318,6 +422,13 @@ export async function addSearchesToEnvironment(
 
   revalidatePath('/dashboard/environments')
   revalidatePath(`/dashboard/environments/${environmentId}`)
+
+  try {
+    await recalculateEnvironmentStats(environmentId)
+  } catch (e) {
+    console.error('[addSearchesToEnvironment] stats refresh failed:', e)
+  }
+
   return { success: true }
 }
 
@@ -348,10 +459,17 @@ export async function recalculateEnvironmentStats(environmentId: string): Promis
 
   const supabase = await createClient()
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) return { success: false, error: 'Non autenticato' }
+
   const { error } = await supabase
     .from('environments')
     .update({ stats, updated_at: new Date().toISOString() })
     .eq('id', environmentId)
+    .eq('user_id', user.id)
 
   if (error) {
     return { success: false, error: error.message }

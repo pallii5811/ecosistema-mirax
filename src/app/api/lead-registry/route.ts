@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 
-const BACKEND_URL = process.env.BACKEND_URL || 'http://116.203.137.39:8001'
+const BACKEND_URL = process.env.BACKEND_URL || 'http://178.104.182.142:8001'
 const OPENAPI_IT_TOKEN = process.env.OPENAPI_IT_TOKEN || ''
 
 // ── Helpers ──────────────────────────────────────────────────────

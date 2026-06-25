@@ -17,7 +17,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { recalculateEnvironmentStats } from '../actions'
 import { useToast } from '@/components/ToastProvider'
-import { LeadEnrichmentPanel } from '@/components/LeadEnrichmentPanel'
 import { SemanticMap } from './SemanticMap'
 
 type Props = {
@@ -216,8 +215,6 @@ export function EnvironmentDetail({ environment, initialLeads, childLists = [] }
                         })()}
                       </a>
                     ) : null}
-
-                    {lead.sito ? <LeadEnrichmentPanel website={String(lead.sito)} leadName={String(lead.nome || '')} /> : null}
                   </td>
                   <td className="p-4">
                     {lead.email ? (

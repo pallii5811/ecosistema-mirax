@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { recalculateEnvironmentStats } from '@/app/dashboard/environments/actions'
 
 // PATCH /api/lists/:id/environment
 // Attach an existing list to an environment (either existing via environmentId or a new one via environmentName).
@@ -99,6 +100,14 @@ export async function PATCH(
       )
     }
     return Response.json({ error: updErr.message }, { status: 500 })
+  }
+
+  if (targetEnvId) {
+    try {
+      await recalculateEnvironmentStats(targetEnvId)
+    } catch (e) {
+      console.error('[lists/environment] stats refresh failed:', e)
+    }
   }
 
   return Response.json({ ok: true, environmentId: targetEnvId })

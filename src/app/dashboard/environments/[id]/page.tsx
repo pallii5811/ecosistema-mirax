@@ -6,17 +6,29 @@ type Props = {
   params: Promise<{ id: string }>
 }
 
+export const dynamic = 'force-dynamic'
+
 export default async function EnvironmentPage({ params }: Props) {
   const { id } = await params
 
-  const { environment, leads, lists } = await getEnvironmentWithLeads(id)
+  if (!id) {
+    notFound()
+  }
+
+  let { environment, leads, lists } = await getEnvironmentWithLeads(id)
 
   if (!environment) {
     notFound()
   }
 
-  if (leads.length > 0 && (!environment.stats || environment.stats.total_leads !== leads.length)) {
-    await recalculateEnvironmentStats(id)
+  if (leads.length > 0) {
+    const statsTotal = Number(environment.stats?.total_leads) || 0
+    if (statsTotal !== leads.length) {
+      const result = await recalculateEnvironmentStats(id)
+      if (result.success && result.stats) {
+        environment = { ...environment, stats: result.stats }
+      }
+    }
   }
 
   return <EnvironmentDetail environment={environment} initialLeads={leads} childLists={lists} />
