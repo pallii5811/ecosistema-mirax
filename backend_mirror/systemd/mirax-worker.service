@@ -1,0 +1,18 @@
+[Unit]
+Description=Mirax Worker Supabase (Backlog)
+After=network.target
+
+[Service]
+Type=simple
+User=worker
+WorkingDirectory=/home/worker/app/backend
+Environment=PATH=/home/worker/app/venv/bin
+EnvironmentFile=/home/worker/app/backend/.env
+ExecStart=/home/worker/app/venv/bin/python worker_supabase.py --mode backlog --cooldown 20
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,1786 @@
+%PDF-1.4
+%âãÏÓ
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 3073 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(MIRAX — DOCUMENTO ARCHITETTURA COMPLETA) Tj
+T*
+(**Obiettivo del documento:** spiegare in modo chiaro ogni pezzo della piattaforma Mirax, a) Tj
+T*
+(cosa serve, dove si trova, quali dati legge/scrive e come si collega agli altri componenti.) Tj
+T*
+(---) Tj
+T*
+(  1. VISIONE GENERALE) Tj
+T*
+(Mirax è una piattaforma SaaS B2B per trovare, analizzare, arricchire e gestire lead) Tj
+T*
+(aziendali. L'utente inserisce una categoria e una città; il sistema crea una ricerca, i) Tj
+T*
+(worker Python raccolgono aziende da Google Maps, il frontend mostra i risultati, l'utente) Tj
+T*
+(può arricchire i lead, salvarli in pipeline, usare insight AI, webhook, export e billing.) Tj
+T*
+(    1.1 Componenti principali) Tj
+T*
+(Componente  Dove vive  A cosa serve) Tj
+T*
+(---  ---  ---) Tj
+T*
+(Frontend Next.js  /app, /components  Interfaccia utente: dashboard, ricerca, pipeline,) Tj
+T*
+(billing, settings) Tj
+T*
+(API Next.js  /app/api/*  Backend serverless: auth check, DB, pagamenti, enrichment, webhook) Tj
+T*
+(Supabase  Cloud Postgres + Auth  Database centrale, autenticazione, sessioni, RLS) Tj
+T*
+(Worker Python  _mirror/worker_supabase.py su VPS  Prende job da Supabase, fa scraping Google) Tj
+T*
+(Maps e audit siti) Tj
+T*
+(Backend FastAPI VPS  _mirror/main.py  Endpoint tecnici e funzioni condivise di) Tj
+T*
+(scraping/audit) Tj
+T*
+(Enrichment modules  /lib/*enrichment*, /lib/*analysis*  Arricchiscono lead con social,) Tj
+T*
+(recensioni, competitor, ads, AI) Tj
+T*
+(OpenAI  API esterna  Genera insight, analisi, pitch, sintesi e opportunità) Tj
+T*
+(Google APIs/Maps  API + scraping  Fonte primaria dei lead e recensioni/competitor) Tj
+T*
+(Stripe/PayPal  API esterne  Pagamenti, abbonamenti, upgrade piano, crediti) Tj
+T*
+(Resend  API esterna  Invio email, sequenze e notifiche) Tj
+T*
+(Webhook utente  URL configurato dall'utente  Invio automatico eventi verso CRM/Zapier/Make) Tj
+T*
+(    1.2 Schema mentale semplice) Tj
+T*
+(UTENTE) Tj
+T*
+(  ? usa) Tj
+T*
+(FRONTEND NEXT.JS) Tj
+T*
+(  ? chiama) Tj
+T*
+(API NEXT.JS) Tj
+T*
+(  ? leggono/scrivono) Tj
+T*
+(SUPABASE) Tj
+T*
+(  ? contiene job pending) Tj
+T*
+(WORKER PYTHON SU VPS) Tj
+T*
+(  ? raccoglie dati da) Tj
+T*
+(GOOGLE MAPS + SITI WEB + API ESTERNE) Tj
+T*
+(  ? salva risultati in) Tj
+T*
+(SUPABASE) Tj
+T*
+(  ? il frontend rilegge e mostra) Tj
+T*
+(DASHBOARD / LEAD DETAIL / PIPELINE / INSIGHTS) Tj
+T*
+(---) Tj
+T*
+(  2. REPOSITORY E CARTELLE) Tj
+T*
+(    2.1 Root progetto) Tj
+T*
+(Percorso progetto Mirax:) Tj
+T*
+(c:\\Users\\Simone\\CascadeProjects\\WEB APP CKB - Copia) Tj
+T*
+(Non va confuso con il progetto  assicurazione.) Tj
+T*
+(    2.2 Cartelle principali) Tj
+T*
+(Cartella/File  Serve a) Tj
+T*
+(---  ---) Tj
+T*
+(/app  Pagine Next.js App Router e API routes) Tj
+T*
+(/components  Componenti React riutilizzabili della UI) Tj
+T*
+(/lib  Logica applicativa server-side: enrichment, analisi, webhook, resend) Tj
+T*
+(/types  Tipi TypeScript usati da app e moduli) Tj
+T*
+(/utils/supabase  Client Supabase browser/server/service-role) Tj
+T*
+(_mirror  Codice Python per scraping, audit, worker e FastAPI) Tj
+T*
+ET
+endstream
+endobj
+3 0 obj
+<< /Length 2846 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(/migrations  Migrazioni SQL Supabase) Tj
+T*
+(.env.local  Variabili d'ambiente locali, NON da esporre) Tj
+T*
+(---) Tj
+T*
+(  3. INFRASTRUTTURA RUNTIME) Tj
+T*
+(    3.1 Frontend/app web) Tj
+T*
+(- Tecnologia: Next.js 14 App Router.) Tj
+T*
+(- Deploy: Vercel.) Tj
+T*
+(- Dominio/sito: configurato con _PUBLIC_SITE_URL.) Tj
+T*
+(- Responsabilità: UI, API serverless, auth session, chiamate DB, pagamenti, enrichment lato) Tj
+T*
+(server.) Tj
+T*
+(    3.2 Supabase) Tj
+T*
+(Supabase è il centro dati del sistema. Contiene:) Tj
+T*
+(- Utenti autenticati.) Tj
+T*
+(- Profili utente e crediti.) Tj
+T*
+(- Job di ricerca.) Tj
+T*
+(- Risultati delle ricerche.) Tj
+T*
+(- Pipeline CRM.) Tj
+T*
+(- Cache degli arricchimenti.) Tj
+T*
+(- Configurazioni webhook.) Tj
+T*
+(    3.3 VPS Python) Tj
+T*
+(Mirax usa worker Python su VPS per attività pesanti che Vercel non può fare bene:) Tj
+T*
+(- Browser Playwright.) Tj
+T*
+(- Scraping Google Maps.) Tj
+T*
+(- Audit siti web.) Tj
+T*
+(- Scraping recensioni e competitor.) Tj
+T*
+(- Re-audit periodico.) Tj
+T*
+(I worker leggono la tabella  su Supabase e prendono job  usando claim atomico. Questo) Tj
+T*
+(permette di avere più worker in parallelo senza duplicare lo stesso job.) Tj
+T*
+(    3.4 Server worker Mirax) Tj
+T*
+(Server  Ruolo) Tj
+T*
+(---  ---) Tj
+T*
+(116.203.137.39  Server storico: backend API, worker principali, audit API) Tj
+T*
+(178.104.182.142  Server worker aggiuntivo: più istanze parallele per processare job utente) Tj
+T*
+(**Nota sicurezza:** credenziali, password e chiavi non vanno documentate nel PDF; devono) Tj
+T*
+(stare solo in .env/secret manager.) Tj
+T*
+(---) Tj
+T*
+(  4. DATABASE SUPABASE SPIEGATO TABELLA PER TABELLA) Tj
+T*
+(    4.1) Tj
+T*
+(**A cosa serve:** rappresenta il profilo applicativo dell'utente autenticato.) Tj
+T*
+(**Campi principali:**) Tj
+T*
+(- : uguale all'id Supabase Auth dell'utente.) Tj
+T*
+(- : email utente.) Tj
+T*
+(- _name: nome mostrato nelle impostazioni.) Tj
+T*
+(- : azienda dell'utente.) Tj
+T*
+(- : crediti disponibili per cercare lead.) Tj
+T*
+(- _type: piano attuale \(, , , , eventualmente \).) Tj
+T*
+(- _customer_id: cliente Stripe associato.) Tj
+T*
+(- _subscription_id: subscription Stripe attiva.) Tj
+T*
+(- _order_id: ultimo ordine PayPal.) Tj
+T*
+(**Chi la usa:**) Tj
+T*
+(- /app/dashboard/layout.tsx: legge profilo e crediti quando entri in dashboard.) Tj
+T*
+(- /api/profile: legge e aggiorna nome/azienda.) Tj
+T*
+(- /api/search: controlla e scala crediti prima di creare ricerca.) Tj
+T*
+(- /api/stripe/webhook: aggiorna piano/crediti dopo pagamento.) Tj
+T*
+(- /api/paypal/capture-order: aggiorna piano/crediti dopo pagamento PayPal.) Tj
+T*
+(- Dashboard billing: mostra piano e crediti.) Tj
+T*
+(**Interconnessione:** Auth crea l'utente,  aggiunge i dati business dell'app. Senza ,) Tj
+T*
+(l'utente può autenticarsi ma non ha crediti/piano.) Tj
+T*
+ET
+endstream
+endobj
+4 0 obj
+<< /Length 2762 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(---) Tj
+T*
+(    4.2) Tj
+T*
+(**A cosa serve:** è la coda dei job di ricerca lead.) Tj
+T*
+(Ogni riga è una richiesta tipo: "trova dentisti a Milano".) Tj
+T*
+(**Campi principali:**) Tj
+T*
+(- : identificativo ricerca.) Tj
+T*
+(- _id: proprietario della ricerca.) Tj
+T*
+(- : categoria cercata.) Tj
+T*
+(- : città/località cercata.) Tj
+T*
+(- : zona opzionale.) Tj
+T*
+(- : stato job \(, , , \).) Tj
+T*
+(- : JSON con i lead finali.) Tj
+T*
+(- _at: quando è stata creata la ricerca.) Tj
+T*
+(**Chi scrive:**) Tj
+T*
+(- /api/search o server action della dashboard: crea job .) Tj
+T*
+(- Worker Python: cambia  ? processing ? completed/error.) Tj
+T*
+(**Chi legge:**) Tj
+T*
+(- Worker Python: legge job .) Tj
+T*
+(- Frontend /dashboard: fa polling e legge risultati.) Tj
+T*
+(- Storico ricerche: mostra ricerche precedenti.) Tj
+T*
+(**Interconnessione:** è il ponte principale tra Next.js e il backend Python. Next.js non fa) Tj
+T*
+(scraping direttamente: scrive un job in ; il worker Python lo processa e salva i risultati) Tj
+T*
+(nella stessa riga.) Tj
+T*
+(---) Tj
+T*
+(    4.3 _pipeline) Tj
+T*
+(**A cosa serve:** CRM interno di Mirax. Contiene i lead salvati dall'utente e il loro stato) Tj
+T*
+(commerciale.) Tj
+T*
+(**Campi principali:**) Tj
+T*
+(- _name, _city, _category: dati base.) Tj
+T*
+(- _phone, _email, _website: contatti.) Tj
+T*
+(- _score: score/opportunità.) Tj
+T*
+(- _data: snapshot JSON completo del lead arricchito.) Tj
+T*
+(- : stato nel funnel \(, , , , \).) Tj
+T*
+(- _value: valore economico stimato.) Tj
+T*
+(- : note commerciali.) Tj
+T*
+(**Chi la usa:**) Tj
+T*
+(- /api/pipeline: CRUD lead pipeline.) Tj
+T*
+(- /dashboard/pipeline: kanban visuale.) Tj
+T*
+(- /api/pipeline/stats: metriche commerciali.) Tj
+T*
+(- /api/insights/ai: genera insight AI sui deal.) Tj
+T*
+(- Re-audit worker: può aggiornare _data se cambiano segnali tecnici.) Tj
+T*
+(**Interconnessione:** un lead nasce in .results, viene arricchito in /api/enrich-lead, poi) Tj
+T*
+(può essere copiato/salvato in _pipeline per lavorarlo commercialmente.) Tj
+T*
+(---) Tj
+T*
+(    4.4 _cache) Tj
+T*
+(**A cosa serve:** evita di rifare enrichment costosi sullo stesso dominio.) Tj
+T*
+(**Campi principali:**) Tj
+T*
+(- : dominio normalizzato, es. .it.) Tj
+T*
+(- : risultato completo dell'arricchimento.) Tj
+T*
+(- _at: data aggiornamento cache.) Tj
+T*
+(**Chi la usa:**) Tj
+T*
+(- /api/enrich-lead: prima controlla la cache; se valida, restituisce subito i dati.) Tj
+T*
+(- -enrichment.ts: salva enrichment fresco.) Tj
+T*
+(**Interconnessione:** sta tra lead detail e moduli enrichment. Riduce chiamate API, costi) Tj
+T*
+(OpenAI e tempi di risposta.) Tj
+T*
+(---) Tj
+T*
+(    4.5 _webhooks) Tj
+T*
+(**A cosa serve:** permette all'utente di collegare Mirax a strumenti esterni come Make,) Tj
+T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Length 2649 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(Zapier, CRM o endpoint custom.) Tj
+T*
+(**Campi principali:**) Tj
+T*
+(- _id: utente proprietario.) Tj
+T*
+(- : URL webhook.) Tj
+T*
+(- : eventi abilitati.) Tj
+T*
+(- _active: webhook attivo/disattivo.) Tj
+T*
+(**Chi la usa:**) Tj
+T*
+(- /dashboard/settings: UI gestione webhook.) Tj
+T*
+(- /api/webhooks: CRUD configurazioni.) Tj
+T*
+(- /lib/webhook.ts: invio evento HTTP POST.) Tj
+T*
+(**Interconnessione:** quando succede un evento importante, Mirax invia payload JSON al CRM) Tj
+T*
+(esterno dell'utente.) Tj
+T*
+(---) Tj
+T*
+(  5. AUTENTICAZIONE E SICUREZZA) Tj
+T*
+(    5.1 Supabase Auth) Tj
+T*
+(Supabase gestisce login, sessione e utenti. Il frontend usa cookie/sessione Supabase per) Tj
+T*
+(sapere chi è l'utente.) Tj
+T*
+(    5.2 .ts) Tj
+T*
+(**A cosa serve:** protegge le route private. Se l'utente non è loggato e prova ad aprire) Tj
+T*
+(dashboard, viene mandato a /login.) Tj
+T*
+(    5.3 Client Supabase) Tj
+T*
+(Client  Dove si usa  Permessi) Tj
+T*
+(---  ---  ---) Tj
+T*
+(Browser client  componenti client  permessi utente, RLS attiva) Tj
+T*
+(Server client  API/layout server  permessi utente autenticato) Tj
+T*
+(Service role client  API protette/worker  bypass RLS, solo server) Tj
+T*
+(**Regola importante:** la service role key non deve mai andare nel browser.) Tj
+T*
+(---) Tj
+T*
+(  6. FRONTEND SPIEGATO PAGINA PER PAGINA) Tj
+T*
+(    6.1 /) Tj
+T*
+(Landing page pubblica. Serve a presentare il prodotto e mandare l'utente a) Tj
+T*
+(login/registrazione.) Tj
+T*
+(    6.2 /login) Tj
+T*
+(Pagina autenticazione. Usa Supabase Auth. Dopo login, l'utente viene mandato alla dashboard.) Tj
+T*
+(    6.3 /dashboard/layout.tsx) Tj
+T*
+(**A cosa serve:** wrapper server della dashboard.) Tj
+T*
+(Flusso:) Tj
+T*
+(1. Legge utente da Supabase Auth.) Tj
+T*
+(2. Se manca utente, redirect a /login.) Tj
+T*
+(3. Legge  per crediti e piano.) Tj
+T*
+(4. Se profilo non esiste, lo crea con piano free.) Tj
+T*
+(5. Passa dati a  e .) Tj
+T*
+(**Interconnessione:** collega auth, profilo, crediti e layout globale.) Tj
+T*
+(    6.4 /dashboard) Tj
+T*
+(Pagina principale di ricerca. L'utente sceglie categoria, città e numero lead.) Tj
+T*
+(Flusso:) Tj
+T*
+(1. Compila form.) Tj
+T*
+(2. Frontend chiama API/action di ricerca.) Tj
+T*
+(3. Sistema controlla crediti.) Tj
+T*
+(4. Crea job in .) Tj
+T*
+(5. UI mostra stato elaborazione.) Tj
+T*
+(6. Polling finché worker completa.) Tj
+T*
+(7. Mostra tabella lead.) Tj
+T*
+(    6.5 /dashboard/lead/[id]) Tj
+T*
+(Pagina dettaglio lead. Serve a vedere un singolo lead in modo approfondito.) Tj
+T*
+(Collegamenti:) Tj
+T*
+(- Prende dati dal risultato ricerca o dalla pipeline.) Tj
+T*
+(- Può chiamare /api/enrich-lead.) Tj
+T*
+ET
+endstream
+endobj
+6 0 obj
+<< /Length 2529 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(- Mostra social, recensioni, competitor, ads, tech audit, score.) Tj
+T*
+(- Permette salvataggio in pipeline.) Tj
+T*
+(    6.6 /dashboard/pipeline) Tj
+T*
+(Kanban CRM. Serve a gestire lo stato commerciale dei lead.) Tj
+T*
+(Collegamenti:) Tj
+T*
+(- Legge/scrive _pipeline tramite /api/pipeline.) Tj
+T*
+(- Cambia stage con drag/drop o azioni UI.) Tj
+T*
+(- Aggiorna deal value e note.) Tj
+T*
+(- Alimenta gli insight AI.) Tj
+T*
+(    6.7 /dashboard/insights) Tj
+T*
+(Dashboard insight. Serve a capire andamento pipeline, opportunità e rischi.) Tj
+T*
+(Collegamenti:) Tj
+T*
+(- Chiama /api/pipeline/stats per statistiche.) Tj
+T*
+(- Chiama /api/insights/ai per suggerimenti AI.) Tj
+T*
+(- I dati arrivano da _pipeline.) Tj
+T*
+(    6.8 /dashboard/settings) Tj
+T*
+(Impostazioni account.) Tj
+T*
+(Serve a:) Tj
+T*
+(- Modificare nome e azienda.) Tj
+T*
+(- Gestire webhook.) Tj
+T*
+(- Testare webhook.) Tj
+T*
+(    6.9 /dashboard/billing) Tj
+T*
+(Pagina piani e pagamenti.) Tj
+T*
+(Serve a:) Tj
+T*
+(- Mostrare piano corrente e crediti.) Tj
+T*
+(- Scegliere piano , , .) Tj
+T*
+(- Pagare con Stripe o PayPal.) Tj
+T*
+(- Aprire portale Stripe per gestire abbonamento.) Tj
+T*
+(    6.10 /dashboard/admin) Tj
+T*
+(Pannello admin. Serve per statistiche globali, gestione utenti/crediti e controllo ricerche.) Tj
+T*
+(Deve essere accessibile solo a profili admin.) Tj
+T*
+(---) Tj
+T*
+(  7. API NEXT.JS SPIEGATE ENDPOINT PER ENDPOINT) Tj
+T*
+(    7.1 Ricerca lead) Tj
+T*
+(####  /api/search) Tj
+T*
+(**Serve a:** creare una nuova ricerca.) Tj
+T*
+(**Legge:** utente autenticato, profilo/crediti.) Tj
+T*
+(**Scrive:**  con ='pending'.) Tj
+T*
+(**Scala crediti:** sì, in base ai lead richiesti/ricerca.) Tj
+T*
+(**Collegamento:** dopo questa API, il worker Python trova il job e lo processa.) Tj
+T*
+(####  /api/search/status) Tj
+T*
+(**Serve a:** controllare se la ricerca è finita.) Tj
+T*
+(**Legge:**  per id ricerca.) Tj
+T*
+(**Risponde:** status e risultati se completata.) Tj
+T*
+(####  /api/search/history) Tj
+T*
+(**Serve a:** mostrare ricerche precedenti.) Tj
+T*
+(**Legge:**  filtrando _id.) Tj
+T*
+(---) Tj
+T*
+(    7.2 Enrichment lead) Tj
+T*
+(####  /api/enrich-lead) Tj
+T*
+(**Serve a:** trasformare un lead base in un lead arricchito completo.) Tj
+T*
+(**Input:** lead con nome, sito, telefono, email, città, categoria.) Tj
+T*
+(**Flusso:**) Tj
+T*
+(1. Verifica utente autenticato.) Tj
+T*
+(2. Normalizza dominio.) Tj
+T*
+(3. Cerca in _cache.) Tj
+T*
+(4. Se cache valida, restituisce subito.) Tj
+T*
+(5. Se cache mancante/scaduta, chiama \(\).) Tj
+T*
+ET
+endstream
+endobj
+7 0 obj
+<< /Length 2337 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(6. Salva risultato in cache.) Tj
+T*
+(7. Restituisce .) Tj
+T*
+(**Collegamento:** è la porta d'ingresso verso tutte le fonti di enrichment.) Tj
+T*
+(---) Tj
+T*
+(    7.3 Pipeline CRM) Tj
+T*
+(#### /api/pipeline) Tj
+T*
+(**GET:** legge i lead in pipeline.) Tj
+T*
+(**POST:** aggiunge un lead alla pipeline.) Tj
+T*
+(**PUT:** aggiorna stage, note, valore, dati.) Tj
+T*
+(**DELETE:** rimuove un lead.) Tj
+T*
+(**Tabella usata:** _pipeline.) Tj
+T*
+(#### /api/pipeline/stats) Tj
+T*
+(**Serve a:** calcolare statistiche CRM: pipeline value, vinti, persi, conversione, valore) Tj
+T*
+(medio.) Tj
+T*
+(---) Tj
+T*
+(    7.4 Profilo) Tj
+T*
+(#### /api/profile) Tj
+T*
+(**GET:** restituisce email, nome, azienda, crediti, piano.) Tj
+T*
+(**PUT:** aggiorna nome e azienda.) Tj
+T*
+(**Tabella:** .) Tj
+T*
+(---) Tj
+T*
+(    7.5 Insight AI) Tj
+T*
+(####  /api/insights/ai) Tj
+T*
+(**Serve a:** generare insight commerciali sulla pipeline.) Tj
+T*
+(**Legge:** _pipeline.) Tj
+T*
+(**Invia a OpenAI:** solo summary aggregato, non PII raw.) Tj
+T*
+(**Output:** 3-5 insight con titolo, descrizione, severità e icona.) Tj
+T*
+(---) Tj
+T*
+(    7.6 Webhook) Tj
+T*
+(#### /api/webhooks) Tj
+T*
+(Gestisce URL webhook dell'utente.) Tj
+T*
+(#### /api/webhooks/test) Tj
+T*
+(Invia un evento di prova all'URL configurato.) Tj
+T*
+(**Utility collegata:** /lib/webhook.ts.) Tj
+T*
+(---) Tj
+T*
+(    7.7 Stripe) Tj
+T*
+(####  /api/stripe/checkout) Tj
+T*
+(Crea sessione Stripe Checkout per piano scelto.) Tj
+T*
+(Collegamenti:) Tj
+T*
+(- Legge utente e profilo.) Tj
+T*
+(- Crea/riusa customer Stripe.) Tj
+T*
+(- Crea subscription checkout.) Tj
+T*
+(- Metadata contiene _user_id e _id.) Tj
+T*
+(####  /api/stripe/webhook) Tj
+T*
+(Riceve eventi Stripe verificando firma webhook.) Tj
+T*
+(Eventi gestiti:) Tj
+T*
+(- .session.completed: aggiorna piano, crediti, subscription id.) Tj
+T*
+(- .payment_succeeded: rinnova crediti mensili.) Tj
+T*
+(- .subscription.deleted: downgrade a free.) Tj
+T*
+(- .payment_failed: log errore.) Tj
+T*
+(####  /api/stripe/portal) Tj
+T*
+(Crea sessione portale Stripe per gestire/cancellare abbonamento.) Tj
+T*
+(---) Tj
+T*
+(    7.8 PayPal) Tj
+T*
+(####  /api/paypal/create-order) Tj
+T*
+(Crea ordine PayPal per piano selezionato.) Tj
+T*
+(####  /api/paypal/capture-order) Tj
+T*
+(Cattura pagamento PayPal, verifica stato , aggiorna .plan_type e .credits.) Tj
+T*
+ET
+endstream
+endobj
+8 0 obj
+<< /Length 2346 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(---) Tj
+T*
+(    7.9 Admin e cron) Tj
+T*
+(#### /api/admin/stats) Tj
+T*
+(Statistiche globali per admin.) Tj
+T*
+(#### /api/cron/reaudit) Tj
+T*
+(Endpoint chiamabile da cron per attivare re-audit periodico.) Tj
+T*
+(---) Tj
+T*
+(  8. WORKER PYTHON E BACKEND VPS) Tj
+T*
+(    8.1 Perché esiste il worker) Tj
+T*
+(Vercel non è adatto a browser Playwright lunghi, scraping e job pesanti. Per questo Mirax) Tj
+T*
+(usa Python su VPS.) Tj
+T*
+(    8.2 File principali) Tj
+T*
+(File  Serve a) Tj
+T*
+(---  ---) Tj
+T*
+(_mirror/worker_supabase.py  Polling Supabase, claim job, scraping, audit, salvataggio) Tj
+T*
+(risultati) Tj
+T*
+(_mirror/main.py  Funzioni core: Maps scraping, website audit, normalizzazione, FastAPI) Tj
+T*
+(_mirror/audit_engine.py  Audit tecnico avanzato HTML/SEO/security/tech) Tj
+T*
+(_mirror/ckb_endpoints.py  Router storico/compatibilità per trigger scraping) Tj
+T*
+(    8.3 Ciclo worker) Tj
+T*
+(1. Worker parte come servizio systemd.) Tj
+T*
+(2. Ogni pochi secondi legge searches dove status = pending.) Tj
+T*
+(3. Tenta claim atomico: pending ? processing.) Tj
+T*
+(4. Se claim fallisce, un altro worker ha preso il job.) Tj
+T*
+(5. Se claim riesce, lancia scraping.) Tj
+T*
+(6. Aggiorna progressivamente results mentre trova lead.) Tj
+T*
+(7. A fine lavoro scrive status = completed.) Tj
+T*
+(8. Se errore, scrive status = error con trace.) Tj
+T*
+(    8.4 Claim atomico) Tj
+T*
+(Il claim atomico evita doppioni quando ci sono tanti worker:) Tj
+T*
+(UPDATE searches) Tj
+T*
+(SET status='processing') Tj
+T*
+(WHERE id = job_id AND status='pending') Tj
+T*
+(Solo un worker riesce a fare update. Gli altri vedono zero righe aggiornate e saltano.) Tj
+T*
+(    8.5 Cosa raccoglie da Google Maps) Tj
+T*
+(Per ogni attività:) Tj
+T*
+(- Nome azienda.) Tj
+T*
+(- Indirizzo.) Tj
+T*
+(- Telefono.) Tj
+T*
+(- Sito web.) Tj
+T*
+(- Rating.) Tj
+T*
+(- Numero recensioni.) Tj
+T*
+(- Stato scheda rivendicata.) Tj
+T*
+(    8.6 Cosa fa l'audit sito) Tj
+T*
+(Se il lead ha un sito, il worker controlla:) Tj
+T*
+(- SSL.) Tj
+T*
+(- Mobile responsive.) Tj
+T*
+(- Meta Pixel.) Tj
+T*
+(- Google Tag Manager.) Tj
+T*
+(- TikTok Pixel.) Tj
+T*
+(- Google Ads/GA4.) Tj
+T*
+(- Chatbot.) Tj
+T*
+(- Sistema prenotazioni.) Tj
+T*
+(- E-commerce.) Tj
+T*
+(- SPF/DMARC.) Tj
+T*
+(- H1/title/SEO disaster.) Tj
+T*
+(- Velocità caricamento.) Tj
+T*
+(- Email e telefono nel sito.) Tj
+T*
+ET
+endstream
+endobj
+9 0 obj
+<< /Length 1968 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(    8.7 Output finale worker) Tj
+T*
+(Il worker produce array JSON con lead pronti per il frontend:) Tj
+T*
+(- , , , , .) Tj
+T*
+(- _stack con segnali/opportunità.) Tj
+T*
+(- _report dettagliato.) Tj
+T*
+(- _score.) Tj
+T*
+(- _score.) Tj
+T*
+(- _reviews.) Tj
+T*
+(- _competitors.) Tj
+T*
+(---) Tj
+T*
+(  9. ENRICHMENT: COME UN LEAD DIVENTA COMPLETO) Tj
+T*
+(    9.1 Orchestratore -enrichment.ts) Tj
+T*
+(**A cosa serve:** è il coordinatore centrale dell'arricchimento.) Tj
+T*
+(Non fa tutto da solo: chiama moduli specializzati e unisce i risultati in un unico oggetto.) Tj
+T*
+(/api/enrich-lead) Tj
+T*
+(  ?) Tj
+T*
+(clayEnrichLead\(\)) Tj
+T*
+(  ?? free/public enrichment) Tj
+T*
+(  ?? website deep scraper) Tj
+T*
+(  ?? Google reviews) Tj
+T*
+(  ?? competitor analysis) Tj
+T*
+(  ?? ads analysis) Tj
+T*
+(  ?? trends analysis) Tj
+T*
+(  ?? social analysis) Tj
+T*
+(  ?? registry analysis) Tj
+T*
+(  ?? Apollo/Snov se configurati) Tj
+T*
+(  ?? output unico ClayEnrichedLead) Tj
+T*
+(    9.2 -enrichment.ts) Tj
+T*
+(Analisi gratuita del sito:) Tj
+T*
+(- Performance.) Tj
+T*
+(- Sicurezza.) Tj
+T*
+(- Header.) Tj
+T*
+(- Tracking pixel.) Tj
+T*
+(- CMS.) Tj
+T*
+(- CRM/chat.) Tj
+T*
+(- Booking/e-commerce.) Tj
+T*
+(- Schema.org.) Tj
+T*
+(- SEO base.) Tj
+T*
+(- Trigger commerciali.) Tj
+T*
+(    9.3 -deep-scraper.ts) Tj
+T*
+(Scraper profondo sito ufficiale. Visita homepage e pagine tipiche come contatti, chi siamo,) Tj
+T*
+(team, privacy.) Tj
+T*
+(Estrae:) Tj
+T*
+(- Email personali/generiche/PEC.) Tj
+T*
+(- Telefoni cellulari/fissi.) Tj
+T*
+(- Social.) Tj
+T*
+(- Team members.) Tj
+T*
+(- Partita IVA/codice fiscale.) Tj
+T*
+(- Indirizzo.) Tj
+T*
+(    9.4 -enrichment.ts) Tj
+T*
+(Fonti pubbliche via Google search scraping:) Tj
+T*
+(- LinkedIn company.) Tj
+T*
+(- LinkedIn persone.) Tj
+T*
+(- Facebook/Instagram/TikTok/YouTube.) Tj
+T*
+(- PEC da INIPEC.) Tj
+T*
+(- Snippet Google descrittivi.) Tj
+T*
+(    9.5 -enrichment.ts) Tj
+T*
+(Integrazione Apollo.io, se _API_KEY è configurata.) Tj
+T*
+ET
+endstream
+endobj
+10 0 obj
+<< /Length 2026 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(Serve a trovare:) Tj
+T*
+(- Persone in azienda.) Tj
+T*
+(- Titolo/ruolo.) Tj
+T*
+(- Email business.) Tj
+T*
+(- LinkedIn.) Tj
+T*
+(- Dati aziendali da dominio.) Tj
+T*
+(    9.6 -enrichment.ts) Tj
+T*
+(Integrazione Snov.io, se credenziali configurate.) Tj
+T*
+(Serve a:) Tj
+T*
+(- Cercare prospect per ruolo/località.) Tj
+T*
+(- Trovare email su dominio.) Tj
+T*
+(- Verificare email.) Tj
+T*
+(- Arricchire profilo da email.) Tj
+T*
+(    9.7 -reviews.ts) Tj
+T*
+(Usa Google Places API per recuperare rating e recensioni. Poi OpenAI analizza:) Tj
+T*
+(- Temi positivi.) Tj
+T*
+(- Temi negativi.) Tj
+T*
+(- Sentiment.) Tj
+T*
+(- Opportunità commerciali.) Tj
+T*
+(    9.8 -analysis.ts) Tj
+T*
+(Trova competitor locali con Google Places e usa OpenAI per:) Tj
+T*
+(- Competition score.) Tj
+T*
+(- Posizionamento mercato.) Tj
+T*
+(- Punti di forza/debolezza.) Tj
+T*
+(- Messaggio di urgenza commerciale.) Tj
+T*
+(    9.9 -analysis.ts) Tj
+T*
+(Analizza presenza advertising:) Tj
+T*
+(- Facebook Ads Library.) Tj
+T*
+(- Stima Google Ads via AI.) Tj
+T*
+(- Budget stimato.) Tj
+T*
+(- Opportunità per vendere servizi ads.) Tj
+T*
+(    9.10 -analysis.ts) Tj
+T*
+(Prima prova backend Hetzner con pytrends. Se non disponibile, fallback OpenAI.) Tj
+T*
+(Output:) Tj
+T*
+(- Trend crescente/stabile/in calo.) Tj
+T*
+(- Percentuale crescita stimata.) Tj
+T*
+(- Mesi di picco.) Tj
+T*
+(- Miglior momento per contattare.) Tj
+T*
+(- Opportunità mercato.) Tj
+T*
+(    9.11 -analysis.ts) Tj
+T*
+(Stima presenza social e opportunità:) Tj
+T*
+(- Instagram.) Tj
+T*
+(- Facebook.) Tj
+T*
+(- TikTok.) Tj
+T*
+(- LinkedIn.) Tj
+T*
+(- Score social.) Tj
+T*
+(- Piattaforme mancanti/inattive.) Tj
+T*
+(    9.12 -analysis.ts) Tj
+T*
+(Profilo aziendale sintetico tramite AI:) Tj
+T*
+(- Anno fondazione stimato.) Tj
+T*
+(- Forma giuridica.) Tj
+T*
+(- Dipendenti.) Tj
+T*
+(- Fatturato qualitativo.) Tj
+T*
+(- Insight.) Tj
+T*
+(Importante: se non è sicuro, deve usare  o stime qualitative.) Tj
+T*
+(---) Tj
+T*
+(  10. SCORING E SEGNALI COMMERCIALI) Tj
+T*
+(    10.1 Opportunity score) Tj
+T*
+ET
+endstream
+endobj
+11 0 obj
+<< /Length 2320 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(Serve a dire quanto il lead è interessante commercialmente.) Tj
+T*
+(Esempi di segnali:) Tj
+T*
+(- No sito web: forte opportunità.) Tj
+T*
+(- No Meta Pixel: opportunità ads/tracking.) Tj
+T*
+(- No GTM/GA4: opportunità analytics.) Tj
+T*
+(- No DMARC: opportunità email deliverability.) Tj
+T*
+(- Sito lento: opportunità performance.) Tj
+T*
+(- Poche recensioni: opportunità reputation.) Tj
+T*
+(- Rating basso: opportunità reputation/marketing.) Tj
+T*
+(- Scheda Google non rivendicata: opportunità local SEO.) Tj
+T*
+(    10.2 Freshness score) Tj
+T*
+(Serve a capire quanto è recente l'audit. Più passano i giorni, più il punteggio scende.) Tj
+T*
+(    10.3 Tech stack labels) Tj
+T*
+(_stack non è solo tecnologia: contiene anche assenze/opportunità, ad esempio:) Tj
+T*
+(- , , .) Tj
+T*
+(-  FB PIXEL.) Tj
+T*
+(-  GTM.) Tj
+T*
+(-  IN SPAM \(NO DMARC\).) Tj
+T*
+(-  SEO \(NO H1/TITLE\).) Tj
+T*
+(-  NON RIVENDICATA.) Tj
+T*
+(---) Tj
+T*
+(  11. BILLING, PIANI E CREDITI) Tj
+T*
+(    11.1 Piani) Tj
+T*
+(Piano  Crediti) Tj
+T*
+(---  ---:) Tj
+T*
+(Free/Esplora  100 una tantum lato UI; alcune API inizializzano 10 se profilo nuovo) Tj
+T*
+(Starter  1.200/mese) Tj
+T*
+(Pro  3.000/mese) Tj
+T*
+(Agency  10.000/mese) Tj
+T*
+(    11.2 Come funziona upgrade Stripe) Tj
+T*
+(/dashboard/billing) Tj
+T*
+(  ? POST /api/stripe/checkout) Tj
+T*
+(Stripe Checkout) Tj
+T*
+(  ? ritorno utente su /dashboard/billing?success=true) Tj
+T*
+(Stripe Webhook) Tj
+T*
+(  ? aggiorna profiles) Tj
+T*
+(piano + crediti + customer/subscription id) Tj
+T*
+(    11.3 Come funziona upgrade PayPal) Tj
+T*
+(/dashboard/billing) Tj
+T*
+(  ? POST /api/paypal/create-order) Tj
+T*
+(PayPal approval page) Tj
+T*
+(  ? ritorno con token) Tj
+T*
+(POST /api/paypal/capture-order) Tj
+T*
+(  ? aggiorna profiles) Tj
+T*
+(piano + crediti + paypal_order_id) Tj
+T*
+(    11.4 Come i crediti si collegano alla ricerca) Tj
+T*
+(- Il profilo contiene .) Tj
+T*
+(- La dashboard mostra crediti via .) Tj
+T*
+(- Quando l'utente cerca, l'API verifica crediti.) Tj
+T*
+(- Se insufficienti, blocca ricerca.) Tj
+T*
+(- Se sufficienti, crea job e scala crediti.) Tj
+T*
+(---) Tj
+T*
+(  12. WEBHOOK E INTEGRAZIONI ESTERNE) Tj
+T*
+(    12.1 A cosa servono) Tj
+T*
+(Permettono di mandare eventi Mirax a CRM e automazioni.) Tj
+T*
+(Esempi:) Tj
+T*
+(- Lead arricchito.) Tj
+T*
+(- Ricerca completata.) Tj
+T*
+ET
+endstream
+endobj
+12 0 obj
+<< /Length 1776 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(- Pipeline aggiornata.) Tj
+T*
+(    12.2 Flusso webhook) Tj
+T*
+(Evento interno Mirax) Tj
+T*
+(  ?) Tj
+T*
+(Legge user_webhooks) Tj
+T*
+(  ?) Tj
+T*
+(sendToWebhook\(\)) Tj
+T*
+(  ?) Tj
+T*
+(POST JSON all'URL utente) Tj
+T*
+(  ?) Tj
+T*
+(CRM/Make/Zapier riceve evento) Tj
+T*
+(    12.3 Sicurezza webhook) Tj
+T*
+(Il webhook ha timeout breve e non deve bloccare l'operazione principale. Se fallisce, Mirax) Tj
+T*
+(deve loggare ma non rompere la UX.) Tj
+T*
+(---) Tj
+T*
+(  13. RE-AUDIT) Tj
+T*
+(    13.1 A cosa serve) Tj
+T*
+(I dati dei lead cambiano: siti nuovi, pixel installati, recensioni aumentate, social) Tj
+T*
+(aggiunti. Il re-audit aggiorna lead già salvati.) Tj
+T*
+(    13.2 Flusso) Tj
+T*
+(Cron /api/cron/reaudit o worker --reaudit) Tj
+T*
+(  ?) Tj
+T*
+(Seleziona lead vecchi in lead_pipeline) Tj
+T*
+(  ?) Tj
+T*
+(Rifà audit sito) Tj
+T*
+(  ?) Tj
+T*
+(Confronta vecchio vs nuovo) Tj
+T*
+(  ?) Tj
+T*
+(Se trova cambiamenti, aggiorna lead_data) Tj
+T*
+(    13.3 Cambiamenti monitorati) Tj
+T*
+(- Meta Pixel installato/rimosso.) Tj
+T*
+(- GTM installato/rimosso.) Tj
+T*
+(- Instagram/Facebook aggiunti o rimossi.) Tj
+T*
+(- Sito creato/offline.) Tj
+T*
+(- Email trovata/persa.) Tj
+T*
+(- Rating Google variato.) Tj
+T*
+(---) Tj
+T*
+(  14. VARIABILI AMBIENTE PER CATEGORIA) Tj
+T*
+(    14.1 Supabase) Tj
+T*
+(- _PUBLIC_SUPABASE_URL) Tj
+T*
+(- _PUBLIC_SUPABASE_ANON_KEY) Tj
+T*
+(- _SERVICE_ROLE_KEY) Tj
+T*
+(    14.2 AI) Tj
+T*
+(- _API_KEY) Tj
+T*
+(    14.3 Google e Ads) Tj
+T*
+(- _PLACES_API_KEY) Tj
+T*
+(- _ADS_TOKEN) Tj
+T*
+(    14.4 Backend) Tj
+T*
+(- _URL) Tj
+T*
+(    14.5 Apollo/Snov) Tj
+T*
+(- _API_KEY) Tj
+T*
+(- _CLIENT_ID) Tj
+T*
+(- _CLIENT_SECRET) Tj
+T*
+(    14.6 Pagamenti) Tj
+T*
+(- _SECRET_KEY) Tj
+T*
+(- _WEBHOOK_SECRET) Tj
+T*
+(- _PRICE_STARTER) Tj
+T*
+(- _PRICE_PRO) Tj
+T*
+ET
+endstream
+endobj
+13 0 obj
+<< /Length 1660 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(- _PRICE_AGENCY) Tj
+T*
+(- _CLIENT_ID) Tj
+T*
+(- _CLIENT_SECRET) Tj
+T*
+(- _MODE) Tj
+T*
+(    14.7 Email) Tj
+T*
+(- _API_KEY) Tj
+T*
+(**Regola:** mai mettere secret nel frontend o in PDF destinati a clienti.) Tj
+T*
+(---) Tj
+T*
+(  15. FLUSSI COMPLETI END-TO-END) Tj
+T*
+(    15.1 Ricerca lead) Tj
+T*
+(Utente su /dashboard) Tj
+T*
+(  ? compila categoria/città) Tj
+T*
+(POST /api/search) Tj
+T*
+(  ? crea searches.pending) Tj
+T*
+(Worker Python) Tj
+T*
+(  ? claim searches.processing) Tj
+T*
+(Google Maps + audit sito) Tj
+T*
+(  ? salva searches.results) Tj
+T*
+(GET /api/search/status) Tj
+T*
+(  ? UI mostra lead) Tj
+T*
+(    15.2 Arricchimento lead) Tj
+T*
+(Utente apre lead detail) Tj
+T*
+(  ?) Tj
+T*
+(POST /api/enrich-lead) Tj
+T*
+(  ? controlla leads_cache) Tj
+T*
+(  ? se cache miss: clayEnrichLead) Tj
+T*
+(  ?? sito ufficiale) Tj
+T*
+(  ?? fonti pubbliche) Tj
+T*
+(  ?? recensioni) Tj
+T*
+(  ?? competitor) Tj
+T*
+(  ?? ads) Tj
+T*
+(  ?? social) Tj
+T*
+(  ?? trend) Tj
+T*
+(  ?? AI) Tj
+T*
+(  ?) Tj
+T*
+(Salva cache) Tj
+T*
+(  ?) Tj
+T*
+(Mostra lead completo) Tj
+T*
+(    15.3 Salvataggio in pipeline) Tj
+T*
+(Lead arricchito) Tj
+T*
+(  ? click "aggiungi a pipeline") Tj
+T*
+(POST /api/pipeline) Tj
+T*
+(  ? scrive lead_pipeline) Tj
+T*
+(/dashboard/pipeline) Tj
+T*
+(  ? visualizza kanban) Tj
+T*
+(Utente aggiorna stage/note/value) Tj
+T*
+(  ? PUT /api/pipeline) Tj
+T*
+(    15.4 Insight AI) Tj
+T*
+(lead_pipeline contiene deal) Tj
+T*
+(  ?) Tj
+T*
+(/dashboard/insights) Tj
+T*
+(  ? GET /api/insights/ai) Tj
+T*
+(API aggrega numeri senza PII raw) Tj
+T*
+(  ?) Tj
+T*
+(OpenAI genera insight) Tj
+T*
+(  ?) Tj
+T*
+(UI mostra consigli commerciali) Tj
+T*
+(    15.5 Billing) Tj
+T*
+ET
+endstream
+endobj
+14 0 obj
+<< /Length 2906 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(/dashboard/billing) Tj
+T*
+(  ? selezione piano) Tj
+T*
+(Stripe o PayPal) Tj
+T*
+(  ? pagamento) Tj
+T*
+(Webhook/capture) Tj
+T*
+(  ? aggiorna profiles) Tj
+T*
+(DashboardContext) Tj
+T*
+(  ? aggiorna piano e crediti) Tj
+T*
+(---) Tj
+T*
+(  16. MAPPA INTERCONNESSIONI RAPIDA) Tj
+T*
+(Se tocchi  Impatta) Tj
+T*
+(---  ---) Tj
+T*
+(.credits  Dashboard, ricerca, billing, admin) Tj
+T*
+(.status  Worker, polling frontend, storico ricerche) Tj
+T*
+(.results  Tabella risultati, lead detail, export) Tj
+T*
+(_pipeline.lead_data  Pipeline, insights, re-audit, dettaglio lead) Tj
+T*
+(_cache.data  Velocità enrichment, costi API/OpenAI) Tj
+T*
+(_supabase.py  Tutta la generazione lead da Google Maps) Tj
+T*
+(-enrichment.ts  Qualità del lead detail e dati arricchiti) Tj
+T*
+(  Piano/crediti mostrati in tutta dashboard) Tj
+T*
+(Stripe webhook  Attivazione abbonamenti e rinnovo crediti) Tj
+T*
+(PayPal capture  Upgrade piano via PayPal) Tj
+T*
+(Supabase RLS  Sicurezza accesso dati utente) Tj
+T*
+(---) Tj
+T*
+(  17. COME SPIEGARE MIRAX A UN CLIENTE TECNICO) Tj
+T*
+(Mirax è composto da tre livelli:) Tj
+T*
+(1. **Applicazione web Next.js**: login, dashboard, UI, API serverless, billing e CRM.) Tj
+T*
+(2. **Database Supabase**: conserva utenti, job, risultati, pipeline, cache e webhook.) Tj
+T*
+(3. **Worker Python su VPS**: fa il lavoro pesante di scraping/audit e aggiorna Supabase.) Tj
+T*
+(Le API esterne sono connesse come moduli opzionali:) Tj
+T*
+(- Google/Maps: fonte lead e recensioni.) Tj
+T*
+(- OpenAI: analisi e insight.) Tj
+T*
+(- Apollo/Snov: contatti B2B avanzati.) Tj
+T*
+(- Stripe/PayPal: pagamenti.) Tj
+T*
+(- Resend: email.) Tj
+T*
+(- Webhook: invio dati verso strumenti del cliente.) Tj
+T*
+(Il punto centrale è Supabase: il frontend scrive richieste, i worker le leggono, i risultati) Tj
+T*
+(tornano in Supabase, e il frontend li mostra.) Tj
+T*
+(---) Tj
+T*
+(  18. PUNTI CRITICI DA CONOSCERE) Tj
+T*
+(    18.1 Worker bloccati) Tj
+T*
+(Se un job resta  troppo a lungo, può essere un worker bloccato o crashato. Serve recovery) Tj
+T*
+(che marchi vecchi job come errore e riavvii worker.) Tj
+T*
+(    18.2 Crediti incoerenti) Tj
+T*
+(Ci sono due valori storici per free: alcune UI parlano di 100 crediti, alcune) Tj
+T*
+(inizializzazioni profilo usano 10. Va uniformato se serve coerenza prodotto.) Tj
+T*
+(    18.3 Cache enrichment) Tj
+T*
+(La cache accelera molto, ma può mostrare dati non freschi fino a 90 giorni. Il re-audit) Tj
+T*
+(compensa parzialmente.) Tj
+T*
+(    18.4 API key mancanti) Tj
+T*
+(Se mancano chiavi:) Tj
+T*
+(- OpenAI: niente insight AI avanzati.) Tj
+T*
+(- Google Places: recensioni/competitor limitati.) Tj
+T*
+(- Apollo/Snov: niente contatti premium.) Tj
+T*
+(- Stripe/PayPal: billing non funziona.) Tj
+T*
+(- Service role: operazioni admin/cache possono fallire.) Tj
+T*
+(    18.5 Separazione client/server) Tj
+T*
+(Mai importare moduli con secret o -only in componenti client.) Tj
+T*
+ET
+endstream
+endobj
+15 0 obj
+<< /Length 1284 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(---) Tj
+T*
+(  19. GLOSSARIO RAPIDO) Tj
+T*
+(Termine  Significato) Tj
+T*
+(---  ---) Tj
+T*
+(Lead  Azienda trovata da Google Maps o inserita in pipeline) Tj
+T*
+(Job  Riga  che rappresenta una ricerca da processare) Tj
+T*
+(Worker  Processo Python che prende job e produce risultati) Tj
+T*
+(Enrichment  Processo di arricchimento dati del lead) Tj
+T*
+(Pipeline  CRM interno con fasi commerciali) Tj
+T*
+(Opportunity score  Punteggio di potenziale commerciale) Tj
+T*
+(Freshness score  Quanto è recente l'audit) Tj
+T*
+(RLS  Row Level Security Supabase) Tj
+T*
+(Service role  Chiave server Supabase con permessi elevati) Tj
+T*
+(Webhook  Invio automatico evento a URL esterno) Tj
+T*
+(---) Tj
+T*
+(  20. CONCLUSIONE) Tj
+T*
+(Mirax funziona come una piattaforma a coda: il frontend crea richieste, Supabase le) Tj
+T*
+(conserva, i worker Python le processano, i risultati tornano nel database, il frontend li) Tj
+T*
+(mostra e li trasforma in pipeline CRM. Gli arricchimenti e le analisi AI aggiungono valore) Tj
+T*
+(commerciale al dato grezzo di Google Maps. Billing, crediti, webhook e insights completano) Tj
+T*
+(il prodotto SaaS.) Tj
+T*
+(Questo documento descrive ogni blocco principale, a cosa serve, chi lo usa e come si collega) Tj
+T*
+(agli altri elementi.) Tj
+T*
+ET
+endstream
+endobj
+16 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 2 0 R >>
+endobj
+17 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 3 0 R >>
+endobj
+18 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 4 0 R >>
+endobj
+19 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 5 0 R >>
+endobj
+20 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 6 0 R >>
+endobj
+21 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 7 0 R >>
+endobj
+22 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 8 0 R >>
+endobj
+23 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 9 0 R >>
+endobj
+24 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 10 0 R >>
+endobj
+25 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 11 0 R >>
+endobj
+26 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 12 0 R >>
+endobj
+27 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 13 0 R >>
+endobj
+28 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 14 0 R >>
+endobj
+29 0 obj
+<< /Type /Page /Parent 30 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 15 0 R >>
+endobj
+30 0 obj
+<< /Type /Pages /Kids [ 16 0 R 17 0 R 18 0 R 19 0 R 20 0 R 21 0 R 22 0 R 23 0 R 24 0 R 25 0 R 26 0 R 27 0 R 28 0 R 29 0 R ] /Count 14 >>
+endobj
+31 0 obj
+<< /Type /Catalog /Pages 30 0 R >>
+endobj
+xref
+0 32
+0000000000 65535 f 
+0000000015 00000 n 
+0000000085 00000 n 
+0000003210 00000 n 
+0000006108 00000 n 
+0000008922 00000 n 
+0000011623 00000 n 
+0000014204 00000 n 
+0000016593 00000 n 
+0000018991 00000 n 
+0000021011 00000 n 
+0000023090 00000 n 
+0000025463 00000 n 
+0000027292 00000 n 
+0000029005 00000 n 
+0000031964 00000 n 
+0000033301 00000 n 
+0000033429 00000 n 
+0000033557 00000 n 
+0000033685 00000 n 
+0000033813 00000 n 
+0000033941 00000 n 
+0000034069 00000 n 
+0000034197 00000 n 
+0000034325 00000 n 
+0000034454 00000 n 
+0000034583 00000 n 
+0000034712 00000 n 
+0000034841 00000 n 
+0000034970 00000 n 
+0000035099 00000 n 
+0000035252 00000 n 
+trailer
+<< /Size 32 /Root 31 0 R >>
+startxref
+35303
+%%EOF

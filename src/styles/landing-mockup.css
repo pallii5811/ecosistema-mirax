@@ -1,0 +1,26 @@
+/* MIRAX Landing — shared typography + mockup frame tokens */
+.landing-main {
+  --landing-font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --landing-mockup-radius: 20px;
+}
+
+@media (max-width: 639px) {
+  .landing-main {
+    --landing-mockup-radius: 16px;
+  }
+}
+
+.landing-mockup-shell {
+  border-radius: var(--landing-mockup-radius);
+}
+
+.landing-mockup-inner {
+  border-radius: calc(var(--landing-mockup-radius) - 1px);
+  overflow: hidden;
+}
+
+.landing-mockup-ui {
+  overflow: hidden;
+  border-bottom-left-radius: calc(var(--landing-mockup-radius) - 1px);
+  border-bottom-right-radius: calc(var(--landing-mockup-radius) - 1px);
+}

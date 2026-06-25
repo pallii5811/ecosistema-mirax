@@ -1,0 +1,254 @@
+/* MIRAX How It Works — dark band (palette unificata con Guarantee) */
+
+.landing-how {
+  --how-bg: var(--mx-dark, #110f18);
+  --how-ink: var(--mx-dark-ink, #f4f4f5);
+  --how-muted: var(--mx-dark-muted, #9490a0);
+  --how-muted-2: var(--mx-dark-muted-2, #6b6678);
+  --how-border: var(--mx-dark-border, rgba(255, 255, 255, 0.09));
+  --how-card: var(--mx-dark-card, rgba(255, 255, 255, 0.045));
+  --how-accent: var(--mx-accent, #7c3aed);
+  --how-accent-hover: var(--mx-accent-hover, #8b5cf6);
+  --how-link: var(--mx-accent-light, #a78bfa);
+  background: var(--how-bg);
+  color: var(--how-ink);
+  font-family: var(--landing-font-sans, 'Inter', ui-sans-serif, system-ui, sans-serif);
+}
+
+.landing-how__glow {
+  background:
+    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(124, 58, 237, 0.2) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 35% at 85% 25%, rgba(139, 92, 246, 0.08) 0%, transparent 55%);
+}
+
+.landing-how__block {
+  padding-bottom: 4rem;
+}
+
+.landing-how__block + .landing-how__block {
+  padding-top: 4rem;
+  border-top: 1px solid var(--how-border);
+}
+
+@media (min-width: 1024px) {
+  .landing-how__block {
+    padding-bottom: 5.5rem;
+  }
+
+  .landing-how__block + .landing-how__block {
+    padding-top: 5.5rem;
+  }
+}
+
+.landing-how__headline {
+  font-size: clamp(1.65rem, 3.8vw, 2.35rem);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.25;
+  color: var(--how-ink);
+  max-width: 52rem;
+}
+
+.landing-how__headline-muted {
+  color: var(--how-muted);
+  font-weight: 400;
+}
+
+.landing-how__sub {
+  margin-top: 1.25rem;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--how-muted);
+  max-width: 36rem;
+}
+
+.landing-how__ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.75rem;
+}
+
+.landing-how__btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--how-accent);
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0.625rem 1.25rem;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 4px 20px -6px rgba(124, 58, 237, 0.55);
+}
+
+.landing-how__btn-primary:hover {
+  background: var(--how-accent-hover);
+}
+
+.landing-how__btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: transparent;
+  color: var(--how-ink);
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0.625rem 1.25rem;
+  border-radius: 999px;
+  border: 1px solid rgba(167, 139, 250, 0.45);
+  text-decoration: none;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.landing-how__btn-secondary:hover {
+  border-color: rgba(196, 181, 253, 0.7);
+  background: rgba(124, 58, 237, 0.08);
+}
+
+/* —— Integration diagram (part 1) —— */
+.landing-how__integrate {
+  margin-top: 3rem;
+  position: relative;
+}
+
+.landing-how__integrate-head {
+  margin-bottom: 1.5rem;
+}
+
+.landing-how__integrate-title {
+  font-size: clamp(1.25rem, 2.5vw, 1.65rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.3;
+  color: var(--how-ink);
+  max-width: 40rem;
+}
+
+.landing-how__integrate-panel {
+  position: relative;
+  border: 1px solid var(--how-border);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(26, 23, 36, 0.7) 0%, rgba(17, 15, 24, 0.95) 100%);
+  padding: 2rem 1.25rem 2.5rem;
+  overflow: hidden;
+}
+
+.landing-how__integrate-dots {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(167, 139, 250, 0.1) 1px, transparent 1px);
+  background-size: 18px 18px;
+  pointer-events: none;
+}
+
+.landing-how__integrate-svg {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: auto;
+  min-height: 280px;
+}
+
+@media (min-width: 768px) {
+  .landing-how__integrate-panel {
+    padding: 2.5rem 2rem 3rem;
+  }
+
+  .landing-how__integrate-svg {
+    min-height: 320px;
+  }
+}
+
+/* —— Abstract ribbon (part 2) —— */
+.landing-how__ribbon-wrap {
+  margin-top: 2.5rem;
+  margin-bottom: 2.5rem;
+  position: relative;
+  height: 220px;
+  overflow: hidden;
+}
+
+@media (min-width: 768px) {
+  .landing-how__ribbon-wrap {
+    height: 280px;
+    margin-top: 3rem;
+    margin-bottom: 3rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .landing-how__ribbon-wrap {
+    height: 320px;
+  }
+}
+
+.landing-how__ribbon-fade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, var(--how-bg) 0%, transparent 18%, transparent 82%, var(--how-bg) 100%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.landing-how__ribbon-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.landing-how__ribbon-svg path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-width: 1.2;
+  animation: landing-how-ribbon-drift 5s ease-in-out infinite alternate;
+}
+
+@keyframes landing-how-ribbon-drift {
+  0% { transform: translateY(0); opacity: 0.35; }
+  100% { transform: translateY(-6px); opacity: 0.75; }
+}
+
+/* —— Scale stats —— */
+.landing-how__scale-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+  border-top: 1px solid var(--how-border);
+  padding-top: 2rem;
+}
+
+.landing-how__scale-value {
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  color: var(--how-ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.landing-how__scale-label {
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--how-muted);
+}
+
+@media (max-width: 639px) {
+  .landing-how__scale-stats {
+    gap: 1rem;
+  }
+
+  .landing-how__scale-label {
+    font-size: 0.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-how__ribbon-svg path {
+    animation: none !important;
+  }
+}
