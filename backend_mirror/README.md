@@ -11,10 +11,7 @@ Copia locale dei file backend/worker dal server `116.203.137.39`.
 | `worker_supabase.py` | Worker principale che processa i job di scraping dalla tabella `searches` |
 | `main.py` | Backend FastAPI con scraper Google Maps (Playwright), audit siti, estrazione email |
 | `audit_engine.py` | Engine di audit tecnico per siti web |
-| `ckb_endpoints.py` | Endpoint CKB aggiuntivi |
-| `report_generator.py` | Generatore report |
-| `demo_main.py` | Versione demo del main |
-| `demo_real.py` | Versione demo reale |
+| `report_generator.py` | Generatore report PDF audit |
 | `requirements.txt` | Dipendenze Python |
 | `.env` | Variabili d'ambiente (Supabase URL/key, DEMO_MAX_RESULTS) |
 
@@ -27,6 +24,10 @@ In `systemd/all_services.txt` ci sono tutte le configurazioni dei servizi system
 - `mirax-worker-6.service`, `mirax-worker-7.service` — Worker aggiuntivi
 - `mirax-audit-api.service` — FastAPI audit API sulla porta 8001
 
-## NON MODIFICARE
+## NON MODIFICARE (riferimento)
 
-Questi file sono una copia di riferimento. Le modifiche vanno fatte direttamente sul server.
+Questi file sono una copia di riferimento sincronizzata dal server. Per deploy:
+
+- Staging: `backend_mirror/scripts/deploy-staging.sh`
+- Prod: `backend_mirror/scripts/deploy-prod.sh` (richiede `CONFIRM_PROD=1`)
+- Checklist: `DEPLOY_CHECKLIST.md`
