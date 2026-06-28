@@ -21,6 +21,7 @@ const files = [
   'db/migrations/2026_10_01_gmail_connections.sql',
   'db/migrations/2026_11_01_signal_intent_expand.sql',
   'db/migrations/2026_11_02_list_leads_foreign_keys.sql',
+  'db/migrations/2026_12_01_signal_quality.sql',
 ]
 
 function parseEnv(text) {

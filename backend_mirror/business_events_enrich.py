@@ -767,24 +767,35 @@ async def enrich_results_business_events(
                 sigs = enrich_lead_audit_only(lead)
                 total_signals += len(sigs)
             elif external_only:
-                existing = list(lead.get("business_signals") or [])
-                try:
-                    extra = await enrich_lead_external_signals(lead, location, want_hiring=(i < 8), want_tender=True)
-                except Exception:
-                    extra = []
-                merged = existing + extra
-                seen: Set[str] = set()
-                unique: List[Dict[str, Any]] = []
-                for s in merged:
-                    if not isinstance(s, dict):
-                        continue
-                    key = f"{s.get('type')}::{s.get('title')}"
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    unique.append(s)
-                apply_signals_to_lead(lead, unique)
-                lead["business_events_enriched_at"] = _utc_now_iso()
+                use_wf = os.getenv("USE_WATERFALL_ENRICH", "1").strip().lower() in {"1", "true", "yes"}
+                if use_wf:
+                    try:
+                        from waterfall_enrich import get_waterfall_enricher
+
+                        wf = get_waterfall_enricher()
+                        required = ["hiring", "tender_won", "funding_received", "executive_change", "website_changed"]
+                        await wf.enrich_lead(lead, location, required_signals=required, skip_audit=True)
+                    except Exception as e:
+                        print(f"[enrich] waterfall external skip: {e}", flush=True)
+                else:
+                    existing = list(lead.get("business_signals") or [])
+                    try:
+                        extra = await enrich_lead_external_signals(lead, location, want_hiring=(i < 8), want_tender=True)
+                    except Exception:
+                        extra = []
+                    merged = existing + extra
+                    seen: Set[str] = set()
+                    unique: List[Dict[str, Any]] = []
+                    for s in merged:
+                        if not isinstance(s, dict):
+                            continue
+                        key = f"{s.get('type')}::{s.get('title')}"
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        unique.append(s)
+                    apply_signals_to_lead(lead, unique)
+                    lead["business_events_enriched_at"] = _utc_now_iso()
                 total_signals += count_lead_signals(lead)
             else:
                 await enrich_lead_business_events(
