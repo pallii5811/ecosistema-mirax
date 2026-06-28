@@ -5,8 +5,12 @@ const SINGLE_TIMEOUT = 15_000
 const BATCH_TIMEOUT = 25_000
 
 async function postContact(accessToken: string, lead: NousLead): Promise<{ ok: boolean; id?: string; error?: string }> {
-  const opp = buildOpportunityString(lead.raw)
-  const controller = new AbortController()
+    const opp = buildOpportunityString(lead.raw)
+    const miraxProps =
+      lead.raw?.mirax_crm_properties && typeof lead.raw.mirax_crm_properties === 'object'
+        ? (lead.raw.mirax_crm_properties as Record<string, string>)
+        : {}
+    const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), SINGLE_TIMEOUT)
 
   try {
@@ -25,6 +29,7 @@ async function postContact(accessToken: string, lead: NousLead): Promise<{ ok: b
           city: lead.citta || '',
           hs_lead_status: 'NEW',
           description: `Lead MiraX — Score: ${lead.score} — Opportunità: ${opp}`,
+          ...miraxProps,
         },
       }),
       signal: controller.signal,
@@ -79,6 +84,9 @@ export const hubspotAdapter: NousAdapter = {
               city: l.citta || '',
               hs_lead_status: 'NEW',
               description: `Lead MiraX — Score: ${l.score} — Opportunità: ${buildOpportunityString(l.raw)}`,
+              ...(l.raw?.mirax_crm_properties && typeof l.raw.mirax_crm_properties === 'object'
+                ? (l.raw.mirax_crm_properties as Record<string, string>)
+                : {}),
             },
           })),
         }

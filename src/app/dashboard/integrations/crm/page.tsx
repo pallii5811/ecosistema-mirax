@@ -14,6 +14,7 @@ import {
   History,
   Unplug,
   XCircle,
+  Zap,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { createClient } from '@/utils/supabase/client'
@@ -38,6 +39,7 @@ export default function CrmIntegrationsPage() {
   const [hubspotTest, setHubspotTest] = useState<TestState>({ status: 'idle', message: null })
   const [webhookTest, setWebhookTest] = useState<TestState>({ status: 'idle', message: null })
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null)
+  const [syncSavingId, setSyncSavingId] = useState<string | null>(null)
   const [salesforceNotice, setSalesforceNotice] = useState<string | null>(null)
 
   useEffect(() => {
@@ -197,6 +199,30 @@ export default function CrmIntegrationsPage() {
       alert(e?.message || 'Errore di rete.')
     } finally {
       setDisconnectingId(null)
+    }
+  }
+
+  const updateSyncSetting = async (
+    id: string,
+    patch: { auto_sync_hot_leads?: boolean; auto_create_deals?: boolean },
+  ) => {
+    setSyncSavingId(id)
+    try {
+      const res = await fetch('/api/crm/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...patch }),
+      })
+      const data = await res.json().catch(() => null)
+      if (data?.ok && data.integration) {
+        setIntegrations((prev) => prev.map((i) => (i.id === id ? { ...i, ...data.integration } : i)))
+      } else {
+        alert(data?.error || 'Errore salvataggio impostazioni.')
+      }
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Errore di rete.')
+    } finally {
+      setSyncSavingId(null)
     }
   }
 
@@ -466,6 +492,62 @@ export default function CrmIntegrationsPage() {
               )}
             </div>
           </div>
+
+          {integrations.length > 0 ? (
+            <div className="bg-white border rounded-xl overflow-hidden mb-6">
+              <div className="p-4 border-b bg-violet-50 flex items-center gap-2">
+                <Zap className="w-4 h-4 text-violet-600 flex-shrink-0" />
+                <div>
+                  <span className="font-medium text-sm">Sincronizzazione automatica MIRAX</span>
+                  <p className="text-xs text-slate-500">
+                    I hot lead (Intent ≥ 60) vengono inviati al CRM senza click manuale
+                  </p>
+                </div>
+              </div>
+              <div className="divide-y">
+                {integrations.map((i) => (
+                  <div key={`sync-${i.id}`} className="p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-medium text-sm">{i.name}</div>
+                      {syncSavingId === i.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-500" />
+                      ) : null}
+                    </div>
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(i.auto_sync_hot_leads)}
+                        disabled={syncSavingId === i.id}
+                        onChange={(e) => updateSyncSetting(i.id, { auto_sync_hot_leads: e.target.checked })}
+                        className="mt-0.5 rounded border-slate-300"
+                      />
+                      <span className="text-sm">
+                        <span className="font-medium">Auto-sync hot lead</span>
+                        <span className="block text-xs text-slate-500">Intent Score ≥ 60 → contatto nel CRM</span>
+                      </span>
+                    </label>
+                    <label
+                      className={`flex items-start gap-3 ${i.auto_sync_hot_leads ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={Boolean(i.auto_create_deals)}
+                        disabled={syncSavingId === i.id || !i.auto_sync_hot_leads}
+                        onChange={(e) => updateSyncSetting(i.id, { auto_create_deals: e.target.checked })}
+                        className="mt-0.5 rounded border-slate-300"
+                      />
+                      <span className="text-sm">
+                        <span className="font-medium">Crea deal automaticamente</span>
+                        <span className="block text-xs text-slate-500">
+                          Intent Score ≥ 80 → deal associato (HubSpot)
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {integrations.length > 0 ? (
             <div className="bg-white border rounded-xl overflow-hidden">

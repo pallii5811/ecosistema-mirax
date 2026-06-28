@@ -47,6 +47,7 @@ import { SearchIntelBanner, type SearchCacheMeta } from '@/components/ecosistema
 import { clampSearchMaxLeads, MAX_LEADS_PER_SEARCH } from '@/lib/search-job-payload'
 import { filterLeadsByBusinessSignals } from '@/lib/business-events/filters'
 import { filterLeadsByMinIntentScore, calculateIntentScoreFromLead } from '@/lib/scoring/intent-score'
+import { leadSyncDedupeKey } from '@/lib/crm/hub-core'
 import { HotLeadsSection, type HotLeadAlert } from '@/components/HotLeadsSection'
 import {
   applyRealtimeSignalToResults,
@@ -507,7 +508,23 @@ export default function DashboardShell() {
   const supabase = useMemo(() => createClient(), [])
 
   const intentScoreByWebsiteRef = useRef(new Map<string, number>())
+  const crmSyncedKeysRef = useRef(new Set<string>())
   const pollRef = useRef<number | null>(null)
+
+  const maybeAutoSyncCrm = useCallback((lead: Record<string, unknown>) => {
+    const score = calculateIntentScoreFromLead(lead).score
+    if (score < 60) return
+    const key = leadSyncDedupeKey(lead)
+    if (crmSyncedKeysRef.current.has(key)) return
+    crmSyncedKeysRef.current.add(key)
+    void fetch('/api/crm/auto-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lead, intentScore: score }),
+    }).catch(() => {
+      crmSyncedKeysRef.current.delete(key)
+    })
+  }, [])
 
   const searchIdRef = useRef<string | null>(null)
   const activeSearchQueryRef = useRef('')
@@ -649,7 +666,10 @@ export default function DashboardShell() {
       if (site) m.set(site, calculateIntentScoreFromLead(lead).score)
     }
     intentScoreByWebsiteRef.current = m
-  }, [results])
+    for (const item of Array.isArray(results) ? results : []) {
+      if (item && typeof item === 'object') maybeAutoSyncCrm(item as Record<string, unknown>)
+    }
+  }, [results, maybeAutoSyncCrm])
 
   useEffect(() => {
     if (!authUserId || !isRestored) return
@@ -683,6 +703,7 @@ export default function DashboardShell() {
               `${alert.leadName} è diventato Hot Lead (Intent ${nextScore}/100) — ${signal.title}`,
               '🔥 Hot Lead',
             )
+            maybeAutoSyncCrm(lead)
           }
           break
         }
@@ -693,7 +714,7 @@ export default function DashboardShell() {
     })
 
     return unsubscribe
-  }, [authUserId, isRestored, supabase, toastInfo, toastSuccess])
+  }, [authUserId, isRestored, supabase, toastInfo, toastSuccess, maybeAutoSyncCrm])
 
   useEffect(() => {
     if (!isRestored) return
