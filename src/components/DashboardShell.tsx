@@ -46,6 +46,7 @@ import {
 import { SearchIntelBanner, type SearchCacheMeta } from '@/components/ecosistema/SearchIntelBanner'
 import { clampSearchMaxLeads, MAX_LEADS_PER_SEARCH } from '@/lib/search-job-payload'
 import { filterLeadsByBusinessSignals } from '@/lib/business-events/filters'
+import { filterLeadsByMinIntentScore } from '@/lib/scoring/intent-score'
 import type { BusinessSignalType } from '@/lib/business-events/types'
 import {
   filterLeadsBySignalIntent,
@@ -522,6 +523,7 @@ export default function DashboardShell() {
   const [activeFilters, setActiveFilters] = useState<Record<string, unknown> | null>(null)
 
   const [businessSignalFilters, setBusinessSignalFilters] = useState<BusinessSignalType[]>([])
+  const [minIntentScore, setMinIntentScore] = useState(0)
   const [signalIntent, setSignalIntent] = useState<SignalIntentSpec | null>(null)
 
   const [aiDebug, setAiDebug] = useState<unknown>(null)
@@ -559,6 +561,8 @@ export default function DashboardShell() {
           }
         } catch { /* ignore */ }
       }
+      const savedIntentMin = sessionStorage.getItem('ckb_min_intent_score')
+      if (savedIntentMin === '60') setMinIntentScore(60)
       const savedAiDebug = sessionStorage.getItem('ckb_aiDebug')
       if (savedAiDebug) setAiDebug(JSON.parse(savedAiDebug))
       const savedSearchId = sessionStorage.getItem('ckb_searchId')
@@ -611,6 +615,11 @@ export default function DashboardShell() {
     if (!isRestored) return
     try { sessionStorage.setItem('ckb_business_signal_filters', JSON.stringify(businessSignalFilters)) } catch {}
   }, [businessSignalFilters, isRestored])
+
+  useEffect(() => {
+    if (!isRestored) return
+    try { sessionStorage.setItem('ckb_min_intent_score', minIntentScore >= 60 ? '60' : '0') } catch {}
+  }, [minIntentScore, isRestored])
 
   useEffect(() => {
     if (!isRestored) return
@@ -1034,8 +1043,9 @@ export default function DashboardShell() {
   const displayResults = useMemo(() => {
     const base = Array.isArray(results) ? results : []
     const byIntent = filterLeadsBySignalIntent(base, signalIntent)
-    return filterLeadsByBusinessSignals(byIntent, businessSignalFilters)
-  }, [results, businessSignalFilters, signalIntent])
+    const byBusiness = filterLeadsByBusinessSignals(byIntent, businessSignalFilters)
+    return filterLeadsByMinIntentScore(byBusiness, minIntentScore)
+  }, [results, businessSignalFilters, signalIntent, minIntentScore])
 
   const resolveCompletedSearchId = async (filters: any) => {
 
@@ -2073,6 +2083,26 @@ export default function DashboardShell() {
               {' '}· {displayResults.length} lead su {Array.isArray(results) ? results.length : 0} matchano i segnali richiesti
             </span>
           ) : null}
+        </div>
+      ) : null}
+
+      {(searchMode === 'maps' || searchMode === 'ambiente') && Array.isArray(results) && results.length > 0 ? (
+        <div className="mb-3 mx-1 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setMinIntentScore((v) => (v >= 60 ? 0 : 60))}
+            title="Mostra solo lead con Intent Score ≥ 60 — segnali business forti e recenti"
+            className={`text-xs px-3 py-1.5 rounded-lg border font-semibold transition-all ${
+              minIntentScore >= 60
+                ? 'bg-violet-600 text-white border-violet-600'
+                : 'bg-white text-violet-700 border-violet-200 hover:border-violet-400'
+            }`}
+          >
+            Intent Score &gt; 60
+            {minIntentScore >= 60 && displayResults.length !== results.length
+              ? ` (${displayResults.length}/${results.length})`
+              : ''}
+          </button>
         </div>
       ) : null}
 

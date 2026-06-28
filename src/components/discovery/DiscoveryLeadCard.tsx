@@ -2,6 +2,8 @@
 
 import { MessageCircle, MapPin, Building2 } from 'lucide-react'
 import { analyzeMiraxSignals } from '@/lib/mirax-signals'
+import { calculateIntentScoreFromLead } from '@/lib/scoring/intent-score'
+import { IntentScoreBadge } from '@/components/IntentScoreBadge'
 import { discoveryMotivo, discoveryPitch } from '@/lib/discovery-copy'
 import { OutreachLauncher } from '@/components/OutreachLauncher'
 import { LeadComplianceBadge } from '@/components/LeadComplianceBadge'
@@ -22,6 +24,7 @@ function readString(obj: Record<string, unknown>, keys: string[]) {
 
 export function DiscoveryLeadCard({ lead, searchId }: Props) {
   const summary = analyzeMiraxSignals(lead)
+  const intentBreakdown = calculateIntentScoreFromLead(lead)
   const name = readString(lead, ['azienda', 'nome', 'company', 'name']) || 'Azienda'
   const city = readString(lead, ['citta', 'city', 'localita'])
   const categoria = readString(lead, ['categoria', 'category'])
@@ -58,6 +61,7 @@ export function DiscoveryLeadCard({ lead, searchId }: Props) {
           )}
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
+          <IntentScoreBadge breakdown={intentBreakdown} compact />
           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${labelTone}`}>
             {summary.label}
           </span>

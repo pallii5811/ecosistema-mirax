@@ -16,6 +16,8 @@ import { analyzeBuyingSignals } from '@/utils/buyingSignals'
 import type { BuyingSignalSummary } from '@/utils/buyingSignals'
 import { analyzeMiraxSignals } from '@/lib/mirax-signals'
 import { BusinessSignalBadge } from '@/components/BusinessSignalBadge'
+import { IntentScoreBadge } from '@/components/IntentScoreBadge'
+import { calculateIntentScoreFromLead } from '@/lib/scoring/intent-score'
 import { LeadComplianceBadge } from '@/components/LeadComplianceBadge'
 import { MarketingInvestorBadge } from '@/components/MarketingInvestorBadge'
 import { isAuditPendingLead } from '@/lib/lead-audit-status'
@@ -342,6 +344,18 @@ const ResultsTable = ({ query, results, isLoading, isScraping, searchId, filters
     for (const item of results) {
       try {
         map.set(item, analyzeMiraxSignals(asRecord(item) || {}))
+      } catch {
+        /* ignore */
+      }
+    }
+    return map
+  }, [results])
+
+  const intentByItem = useMemo(() => {
+    const map = new Map<unknown, ReturnType<typeof calculateIntentScoreFromLead>>()
+    for (const item of results) {
+      try {
+        map.set(item, calculateIntentScoreFromLead(item))
       } catch {
         /* ignore */
       }
@@ -1105,6 +1119,7 @@ const ResultsTable = ({ query, results, isLoading, isScraping, searchId, filters
                         </div>
                       </div>
                       <div className="shrink-0 flex flex-col items-end gap-1">
+                        <IntentScoreBadge breakdown={intentByItem.get(item) ?? { score: 0, basePoints: 0, recentMultiplier: 1, strengthMultiplier: 1, relationshipMultiplier: 1, contributors: [], signalTypes: [] }} compact />
                         <ScoreBadge score={score} />
                         <BuyingBadge summary={buyingByItem.get(item)} compact />
                         <BusinessSignalBadge signals={miraxByItem.get(item)?.businessSignals ?? []} compact />
@@ -1320,6 +1335,7 @@ const ResultsTable = ({ query, results, isLoading, isScraping, searchId, filters
 
                       <td className="px-2 py-3 align-top">
                         <div className="flex flex-col items-center gap-1">
+                          <IntentScoreBadge breakdown={intentByItem.get(item) ?? { score: 0, basePoints: 0, recentMultiplier: 1, strengthMultiplier: 1, relationshipMultiplier: 1, contributors: [], signalTypes: [] }} compact />
                           <ScoreBadge score={calcOpportunityScore(item as Record<string, unknown>)} />
                           <FreshnessBadge lead={item as Record<string, unknown>} />
                           <BuyingBadge summary={buyingByItem.get(item)} compact />
