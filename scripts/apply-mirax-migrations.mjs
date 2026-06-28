@@ -25,6 +25,7 @@ const files = [
   'db/migrations/2026_12_02_research_cache.sql',
   'db/migrations/2026_12_03_signal_relationships.sql',
   'db/migrations/2026_12_04_realtime_business_signals.sql',
+  'db/migrations/2026_12_05_outbound_queue.sql',
 ]
 
 function parseEnv(text) {
@@ -95,7 +96,7 @@ async function applyFile(client, relPath) {
 try {
   const client = await connectClient()
   for (const f of files) await applyFile(client, f)
-  console.log('\n✅ MIRAX migrations applied (Fase 1–8)')
+  console.log('\n✅ MIRAX migrations applied (Fase 1–9)')
   await client.end()
 } catch (e) {
   console.error('Errore apply MIRAX migrations:', e.message)

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ReplyClassificationPanel } from '@/components/outreach/ReplyClassificationPanel'
+import { OutboundQueuePanel } from '@/components/outreach/OutboundQueuePanel'
+import { OutboundEnqueueButton } from '@/components/outreach/OutboundEnqueueButton'
 import { GmailInboxPanel } from '@/components/inbox/GmailInboxPanel'
 import {
   Activity,
@@ -14,6 +16,7 @@ import {
   Database,
   Filter,
   Loader2,
+  Mail,
   MapPin,
   Radar,
   RefreshCw,
@@ -92,7 +95,7 @@ export default function OutreachConsolePage() {
 
   const [mode, setMode] = useState<OutreachMode>('sell_service')
   const [onlyTodo, setOnlyTodo] = useState(false)
-  const [viewMode, setViewMode] = useState<'queue' | 'agent'>('queue')
+  const [viewMode, setViewMode] = useState<'queue' | 'agent' | 'outbound'>('queue')
 
   const loadStatus = useCallback(async () => {
     try {
@@ -534,13 +537,24 @@ export default function OutreachConsolePage() {
         {/* Queue */}
         <div>
           {!selectedList ? (
+            viewMode === 'outbound' ? (
+              <OutboundQueuePanel />
+            ) : (
             <Card className="flex flex-col items-center justify-center gap-3 p-12 text-center">
               <Radar className="h-10 w-10 text-slate-300" />
               <div className="text-sm font-medium text-slate-600">Seleziona una lista per iniziare</div>
               <p className="max-w-sm text-xs text-slate-400">
                 Ogni lead avrà un pulsante &quot;Contatta&quot; con messaggio generato e canali pronti all&apos;uso.
               </p>
+              <button
+                type="button"
+                onClick={() => setViewMode('outbound')}
+                className="mt-2 text-xs font-semibold text-violet-600 hover:underline"
+              >
+                Oppure apri la coda Outbound HITL →
+              </button>
             </Card>
+            )
           ) : (
             <>
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -560,6 +574,15 @@ export default function OutreachConsolePage() {
                       }`}
                     >
                       Coda
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('outbound')}
+                      className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
+                        viewMode === 'outbound' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500'
+                      }`}
+                    >
+                      <Mail className="h-3 w-3" /> Outbound
                     </button>
                     <button
                       type="button"
@@ -609,6 +632,8 @@ export default function OutreachConsolePage() {
                 <div className="flex items-center gap-2 p-8 text-sm text-slate-400">
                   <Loader2 className="h-4 w-4 animate-spin" /> Carico i lead…
                 </div>
+              ) : viewMode === 'outbound' ? (
+                <OutboundQueuePanel />
               ) : viewMode === 'agent' ? (
                 <CampaignAgent
                   leads={leads}
@@ -672,6 +697,10 @@ export default function OutreachConsolePage() {
                               )}
                             </div>
                           </div>
+                          <OutboundEnqueueButton
+                            lead={lead}
+                            onEnqueued={() => setViewMode('outbound')}
+                          />
                           <OutreachLauncher
                             nome={lead.name || ''}
                             citta={lead.city || ''}
