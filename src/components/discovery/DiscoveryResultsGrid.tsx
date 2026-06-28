@@ -10,6 +10,9 @@ type Props = {
   isScraping?: boolean
   searchId?: string | null
   totalUnfilteredCount?: number
+  missingSignals?: boolean
+  hasActiveBusinessFilter?: boolean
+  onClearBusinessFilters?: () => void
 }
 
 export function DiscoveryResultsGrid({
@@ -19,6 +22,9 @@ export function DiscoveryResultsGrid({
   isScraping,
   searchId,
   totalUnfilteredCount,
+  missingSignals = false,
+  hasActiveBusinessFilter = false,
+  onClearBusinessFilters,
 }: Props) {
   if (isLoading && results.length === 0) {
     return (
@@ -41,6 +47,21 @@ export function DiscoveryResultsGrid({
 
   return (
     <div className="space-y-4">
+      {missingSignals && hasActiveBusinessFilter && totalUnfilteredCount ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <span className="font-semibold">Cercando segnali business...</span>
+          {' '}I badge appariranno entro 2-3 minuti. I lead sono visibili senza filtro.
+          {onClearBusinessFilters ? (
+            <button
+              type="button"
+              onClick={onClearBusinessFilters}
+              className="ml-2 underline font-medium text-amber-900"
+            >
+              Mostra tutti i lead
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="flex items-center justify-between px-1">
         <p className="text-sm text-slate-600">
           {isScraping ? (
@@ -48,6 +69,8 @@ export function DiscoveryResultsGrid({
               <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-500" />
               Analisi in corso…
             </span>
+          ) : missingSignals && hasActiveBusinessFilter && totalUnfilteredCount ? (
+            `${totalUnfilteredCount} lead trovati — filtro attivo, segnali in arrivo`
           ) : totalUnfilteredCount && totalUnfilteredCount !== results.length ? (
             `${results.length} di ${totalUnfilteredCount} lead`
           ) : (

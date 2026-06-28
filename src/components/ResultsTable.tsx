@@ -127,6 +127,9 @@ type ResultsTableProps = {
   filters?: Record<string, unknown> | null
   aiDebug?: unknown
   totalUnfilteredCount?: number
+  missingSignals?: boolean
+  hasActiveBusinessFilter?: boolean
+  onClearBusinessFilters?: () => void
 }
 
 type UserList = {
@@ -134,7 +137,19 @@ type UserList = {
   name: string
 }
 
-const ResultsTable = ({ query, results, isLoading, isScraping, searchId, filters, aiDebug, totalUnfilteredCount }: ResultsTableProps) => {
+const ResultsTable = ({
+  query,
+  results,
+  isLoading,
+  isScraping,
+  searchId,
+  filters,
+  aiDebug,
+  totalUnfilteredCount,
+  missingSignals = false,
+  hasActiveBusinessFilter = false,
+  onClearBusinessFilters,
+}: ResultsTableProps) => {
   const [activeCRM, setActiveCRM] = useState<{ id: string; type: string; name?: string } | null>(null)
   const [pitchOpen, setPitchOpen] = useState(false)
   const [pitchLoading, setPitchLoading] = useState(false)
@@ -991,6 +1006,21 @@ const ResultsTable = ({ query, results, isLoading, isScraping, searchId, filters
       />
     )}
     <Card className="bg-white border border-zinc-200 rounded-2xl overflow-hidden shadow-sm">
+      {missingSignals && hasActiveBusinessFilter && totalUnfilteredCount ? (
+        <div className="mx-6 mt-5 mb-0 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <span className="font-semibold">Cercando segnali business...</span>
+          {' '}I badge appariranno entro 2-3 minuti. I lead sono visibili senza filtro.
+          {onClearBusinessFilters ? (
+            <button
+              type="button"
+              onClick={onClearBusinessFilters}
+              className="ml-2 underline font-medium text-amber-900"
+            >
+              Mostra tutti i lead
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="px-6 py-5 border-b border-zinc-100">
         <div className="flex items-center justify-between">
           <div>
@@ -998,9 +1028,11 @@ const ResultsTable = ({ query, results, isLoading, isScraping, searchId, filters
             <p className="text-sm text-zinc-500 mt-0.5">
               {isLoading
                 ? 'Ricerca in corso…'
-                : totalUnfilteredCount && totalUnfilteredCount !== results.length
-                  ? `${results.length} di ${totalUnfilteredCount} risultati (filtro business attivo) per "${query || '—'}"`
-                  : `${results.length} risultati per "${query || '—'}"`}
+                : missingSignals && hasActiveBusinessFilter && totalUnfilteredCount
+                  ? `${totalUnfilteredCount} lead trovati — filtro business attivo ma nessun segnale ancora disponibile per "${query || '—'}"`
+                  : totalUnfilteredCount && totalUnfilteredCount !== results.length
+                    ? `${results.length} di ${totalUnfilteredCount} risultati (filtro business attivo) per "${query || '—'}"`
+                    : `${results.length} risultati per "${query || '—'}"`}
             </p>
           </div>
           <div className="flex items-center space-x-2">

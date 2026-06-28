@@ -2,7 +2,7 @@
 
 
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import SniperArea from '@/components/SniperArea'
 
@@ -1114,12 +1114,59 @@ export default function DashboardShell() {
 
     currentJobId
 
-  const displayResults = useMemo(() => {
+  const leadFilterMeta = useMemo(() => {
     const base = Array.isArray(results) ? results : []
-    const byIntent = filterLeadsBySignalIntent(base, signalIntent)
-    const byBusiness = filterLeadsByBusinessSignals(byIntent, businessSignalFilters)
-    return filterLeadsByMinIntentScore(byBusiness, minIntentScore)
+    if (!base.length) {
+      return { visible: [] as unknown[], hasActiveFilter: false, missingSignals: false }
+    }
+
+    let visible = base
+    let hasActiveFilter = false
+    let missingSignals = false
+
+    if (signalIntent?.required_signals?.length) {
+      hasActiveFilter = true
+      const intentFiltered = filterLeadsBySignalIntent(base, signalIntent)
+      if (intentFiltered.length === 0) {
+        missingSignals = true
+        visible = base
+      } else {
+        visible = intentFiltered
+      }
+    }
+
+    const biz = filterLeadsByBusinessSignals(visible, businessSignalFilters)
+    if (biz.hasActiveFilter) hasActiveFilter = true
+    if (biz.missingSignals) {
+      missingSignals = true
+      visible = base
+    } else {
+      visible = biz.visible
+    }
+
+    if (minIntentScore > 0) {
+      hasActiveFilter = true
+      const intentFiltered = filterLeadsByMinIntentScore(visible, minIntentScore)
+      if (intentFiltered.length === 0) {
+        missingSignals = true
+        visible = base
+      } else {
+        visible = intentFiltered
+      }
+    }
+
+    return { visible, hasActiveFilter, missingSignals }
   }, [results, businessSignalFilters, signalIntent, minIntentScore])
+
+  const displayResults = leadFilterMeta.visible
+  const missingBusinessSignals = leadFilterMeta.missingSignals
+  const hasActiveLeadFilter = leadFilterMeta.hasActiveFilter
+
+  const clearBusinessFilters = useCallback(() => {
+    setBusinessSignalFilters([])
+    setMinIntentScore(0)
+    setSignalIntent(null)
+  }, [])
 
   const resolveCompletedSearchId = async (filters: any) => {
 
@@ -2465,6 +2512,9 @@ export default function DashboardShell() {
             isScraping={isScraping || autoScrapeLoading}
             searchId={effectiveSearchId}
             totalUnfilteredCount={Array.isArray(results) ? results.length : 0}
+            missingSignals={missingBusinessSignals}
+            hasActiveBusinessFilter={hasActiveLeadFilter}
+            onClearBusinessFilters={clearBusinessFilters}
           />
           ) : (
           <ResultsTable
@@ -2476,6 +2526,9 @@ export default function DashboardShell() {
             filters={activeFilters}
             aiDebug={aiDebug}
             totalUnfilteredCount={Array.isArray(results) ? results.length : 0}
+            missingSignals={missingBusinessSignals}
+            hasActiveBusinessFilter={hasActiveLeadFilter}
+            onClearBusinessFilters={clearBusinessFilters}
           />
           )}
 

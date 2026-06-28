@@ -60,7 +60,23 @@ def _utc_now_iso() -> str:
 
 
 def _lead_name(lead: Dict[str, Any]) -> str:
-    return str(lead.get("business_name") or lead.get("azienda") or "").strip()
+    for key in ("business_name", "azienda", "nome", "name", "company"):
+        val = str(lead.get(key) or "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _lead_has_valid_website(lead: Dict[str, Any]) -> bool:
+    raw = _lead_website(lead)
+    if not raw or raw in {"none", "n/a", "null", "no website", "no-website"}:
+        return False
+    if "no website" in raw:
+        return False
+    stack = _tech_stack_text(lead).lower()
+    if "no website" in stack:
+        return False
+    return True
 
 
 def _lead_website(lead: Dict[str, Any]) -> str:
@@ -480,21 +496,64 @@ async def detect_hiring_signal(company_name: str, city: str) -> List[Dict[str, A
 
 
 async def detect_tender_signals(company_name: str) -> List[Dict[str, Any]]:
-    """ANAC Open Data — best effort."""
+    """ANAC Open Data — best effort, fallback silenzioso se HTML/non-JSON."""
     name = (company_name or "").strip()
     if len(name) < 3:
         return []
+
+    def _records_from_payload(data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not data:
+            return []
+        result = data.get("result") if isinstance(data.get("result"), dict) else {}
+        records = result.get("records") or []
+        if records:
+            return [r for r in records if isinstance(r, dict)]
+        packages = result.get("results") or []
+        out: List[Dict[str, Any]] = []
+        for pkg in packages:
+            if not isinstance(pkg, dict):
+                continue
+            resources = pkg.get("resources") or []
+            for res in resources:
+                if isinstance(res, dict) and res.get("datastore_active"):
+                    out.append(res)
+        return out
+
     try:
         import httpx
 
-        url = "https://dati.anticorruzione.it/opendata/api/3/action/datastore_search"
-        params = {"q": name[:40], "limit": 8}
+        attempts = [
+            (
+                "https://dati.anticorruzione.it/opendata/api/3/action/datastore_search",
+                {"q": name[:40], "limit": 8},
+            ),
+            (
+                "https://dati.anticorruzione.it/opendata/api/3/action/package_search",
+                {"q": name[:40], "rows": 5},
+            ),
+        ]
+        records: List[Dict[str, Any]] = []
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            resp = await client.get(url, params=params)
-            if resp.status_code != 200:
-                return []
-            data = resp.json() or {}
-        records = (data.get("result") or {}).get("records") or []
+            for url, params in attempts:
+                resp = await client.get(
+                    url,
+                    params=params,
+                    headers={"Accept": "application/json"},
+                )
+                if resp.status_code != 200:
+                    continue
+                ctype = (resp.headers.get("content-type") or "").lower()
+                body = resp.text or ""
+                if "json" not in ctype and (body.lstrip().startswith("<") or "<html" in body[:300].lower()):
+                    continue
+                try:
+                    data = resp.json() or {}
+                except Exception:
+                    continue
+                records = _records_from_payload(data)
+                if records:
+                    break
+
         if not records:
             return []
 
@@ -535,8 +594,7 @@ async def detect_tender_signals(company_name: str) -> List[Dict[str, Any]]:
                 ],
             )
         ]
-    except Exception as e:
-        print(f"[enrich] ANAC error per {name[:30]}: {e}", flush=True)
+    except Exception:
         return []
 
 
@@ -590,6 +648,19 @@ def persist_signals_to_db(
         except Exception as e:
             print(f"[enrich] DB upsert skip: {e}", flush=True)
     return saved
+
+
+async def enrich_poor_lead_fallback(lead: Dict[str, Any], location: str = "") -> List[Dict[str, Any]]:
+    """Lead senza sito valido: prova OpenAPI registry (piva) come segnale minimo."""
+    if _lead_has_valid_website(lead):
+        return []
+    piva = _lead_piva(lead)
+    if not piva:
+        return []
+    try:
+        return await asyncio.wait_for(detect_registry_signals_api(piva), timeout=9.0)
+    except Exception:
+        return []
 
 
 async def enrich_lead_external_signals(
@@ -666,6 +737,13 @@ async def enrich_lead_business_events(
     signals.extend(detect_signals_from_audit(lead))
     signals.extend(detect_registry_signals_from_lead(lead))
 
+    if not _lead_has_valid_website(lead):
+        try:
+            fallback = await enrich_poor_lead_fallback(lead, location)
+            signals.extend(fallback)
+        except Exception:
+            pass
+
     if not skip_external:
         try:
             external = await asyncio.wait_for(
@@ -699,6 +777,8 @@ def enrich_lead_audit_only(lead: Dict[str, Any]) -> List[Dict[str, Any]]:
     signals: List[Dict[str, Any]] = []
     signals.extend(detect_signals_from_audit(lead))
     signals.extend(detect_registry_signals_from_lead(lead))
+    if not signals and not _lead_has_valid_website(lead) and _lead_piva(lead):
+        lead.setdefault("enrich_note", "no_website_piva_only")
     text_parts = [str(lead.get("category") or lead.get("categoria") or ""), _lead_name(lead)]
     sector_hits = detect_sector_hits("\n".join(text_parts))
     if sector_hits:
