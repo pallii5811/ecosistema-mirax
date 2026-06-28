@@ -526,6 +526,11 @@ async function resolvePiva(lead: Record<string, unknown>) {
   return { piva: verified.piva || '', source: 'openapi_search_company_verified', searchHit: verified.hit }
 }
 
+function pivaResolvedFromLeadWebsite(resolved: { source?: string }) {
+  // P.IVA letta dal sito del lead (o già presente sul lead da audit/scrape): fidati del sito, non del match nome.
+  return resolved.source === 'website_labeled_piva' || resolved.source === 'lead_labeled_piva'
+}
+
 function companyProfileMatchesLead(company: OpenApiEnrichedCompany, lead: Record<string, unknown>) {
   const companyName = pickString(lead, ['nome', 'azienda', 'business_name', 'company', 'name'])
   const city = pickString(lead, ['citta', 'city', 'location'])
@@ -686,7 +691,11 @@ export async function POST(req: NextRequest) {
 
   const company = await enrichCompanyByPiva(resolved.piva)
   if (!company) return NextResponse.json({ error: `Dati aziendali non disponibili per la P.IVA ${resolved.piva}.` }, { status: 502 })
-  if (resolved.reason === 'piva_found_unverified' && !companyProfileMatchesLead(company, lead)) {
+  if (
+    resolved.reason === 'piva_found_unverified' &&
+    !pivaResolvedFromLeadWebsite(resolved) &&
+    !companyProfileMatchesLead(company, lead)
+  ) {
     return NextResponse.json({
       error: 'P.IVA trovata da fonte pubblica, ma il profilo camerale non combacia in modo sicuro con il lead.',
       reason: 'piva_profile_mismatch',
