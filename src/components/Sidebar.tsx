@@ -1,6 +1,6 @@
 'use client'
 
-import { Search, List, Plug, CreditCard, LogOut, Folder, User, Kanban, Brain, Send, Flame, Target, Layers, ShieldCheck, MailCheck } from 'lucide-react'
+import { Search, List, Plug, CreditCard, LogOut, Folder, User, Kanban, Brain, Send, Flame, Target, Layers, ShieldCheck, MailCheck, Map } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -39,6 +39,7 @@ const Sidebar = ({ credits, variant = 'desktop', open = false, onClose, onNaviga
     { icon: Target, label: 'Centro Outreach', href: '/dashboard/outreach', tooltip: 'Contatta i tuoi lead in serie sul canale giusto, con messaggi AI e tracciamento' },
     { icon: Kanban, label: 'Pipeline', href: '/dashboard/pipeline', tooltip: 'Gestisci il funnel commerciale: da lead freddo a cliente acquisito' },
     { icon: Brain, label: 'Smart Insights', href: '/dashboard/insights', tooltip: 'Analisi AI del tuo processo di vendita: forecast, azioni urgenti e coach personale' },
+    { icon: Map, label: 'Market Map', href: '/dashboard/market-map', tooltip: 'Mappa competitiva: maturità digitale, crescita e intent score su lead e competitor' },
     ...(SHOW_CENTRO_COMANDO
       ? [{ icon: Layers, label: 'Centro Comando', href: '/dashboard/ecosistema', tooltip: 'Multi-Agent, NOUS/CRM, EDAT, intelligence e API enterprise' }]
       : []),

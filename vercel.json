@@ -24,6 +24,10 @@
       "schedule": "0 */6 * * *"
     },
     {
+      "path": "/api/cron/competitor-signals",
+      "schedule": "0 6 * * *"
+    },
+    {
       "path": "/api/ops/worker-health",
       "schedule": "0 5 * * *"
     }

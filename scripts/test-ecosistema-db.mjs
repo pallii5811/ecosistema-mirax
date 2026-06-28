@@ -33,6 +33,8 @@ const tables = [
   'compliance_checks',
   'inbound_reply_classifications',
   'gmail_connections',
+  'competitors',
+  'competitor_alerts',
 ]
 
 const missing = []

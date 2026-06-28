@@ -37,6 +37,9 @@ const PHASE_TABLES = [
   'compliance_checks',
   'inbound_reply_classifications',
   'gmail_connections',
+  'outbound_queue',
+  'competitors',
+  'competitor_alerts',
 ]
 
 let passed = 0
@@ -139,6 +142,8 @@ async function checkHttpRoutes() {
     await expectUnauth('/api/outreach/classify-reply', 'POST', { action: 'classify', replySnippet: 'test reply here' })
     await expectUnauth('/api/compliance/check', 'POST', { channel: 'email', target: 'test@example.com' })
     await expectUnauth('/api/v1/classify-reply', 'POST', { replySnippet: 'Mi interessa la proposta' })
+    await expectUnauth('/api/competitors')
+    await expectUnauth('/api/competitors/market-map')
   } catch (e) {
     fail('API HTTP', e instanceof Error ? e.message : 'fetch failed')
   }

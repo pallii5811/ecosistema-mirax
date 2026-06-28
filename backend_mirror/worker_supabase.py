@@ -3086,6 +3086,19 @@ async def scrape_competitors(data: dict):
         return {"competitors": [], "error": str(e)}
 
 
+@app.post("/track-competitor-signals")
+async def track_competitor_signals(data: dict):
+    """Fase 10 — waterfall segnali su competitor tracciato."""
+    try:
+        from competitor_track import track_competitor
+
+        location = str(data.get("city") or data.get("citta") or data.get("location") or "Italia")
+        result = await asyncio.wait_for(track_competitor(data, location), timeout=50.0)
+        return result
+    except Exception as e:
+        return {"ok": False, "signals": [], "error": str(e)}
+
+
 @app.post("/scrape-social")
 async def scrape_social(data: dict):
     instagram_url = data.get("instagram_url", "")
