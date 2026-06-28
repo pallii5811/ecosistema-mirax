@@ -46,7 +46,13 @@ import {
 import { SearchIntelBanner, type SearchCacheMeta } from '@/components/ecosistema/SearchIntelBanner'
 import { clampSearchMaxLeads, MAX_LEADS_PER_SEARCH } from '@/lib/search-job-payload'
 import { filterLeadsByBusinessSignals } from '@/lib/business-events/filters'
-import { filterLeadsByMinIntentScore } from '@/lib/scoring/intent-score'
+import { filterLeadsByMinIntentScore, calculateIntentScoreFromLead } from '@/lib/scoring/intent-score'
+import { HotLeadsSection, type HotLeadAlert } from '@/components/HotLeadsSection'
+import {
+  applyRealtimeSignalToResults,
+  subscribeToSignals,
+  type RealtimeBusinessSignal,
+} from '@/lib/realtime/signal-stream'
 import type { BusinessSignalType } from '@/lib/business-events/types'
 import {
   filterLeadsBySignalIntent,
@@ -500,6 +506,7 @@ export default function DashboardShell() {
 
   const supabase = useMemo(() => createClient(), [])
 
+  const intentScoreByWebsiteRef = useRef(new Map<string, number>())
   const pollRef = useRef<number | null>(null)
 
   const searchIdRef = useRef<string | null>(null)
@@ -524,6 +531,8 @@ export default function DashboardShell() {
 
   const [businessSignalFilters, setBusinessSignalFilters] = useState<BusinessSignalType[]>([])
   const [minIntentScore, setMinIntentScore] = useState(0)
+  const [authUserId, setAuthUserId] = useState<string | null>(null)
+  const [hotLeadAlerts, setHotLeadAlerts] = useState<HotLeadAlert[]>([])
   const [signalIntent, setSignalIntent] = useState<SignalIntentSpec | null>(null)
 
   const [aiDebug, setAiDebug] = useState<unknown>(null)
@@ -620,6 +629,71 @@ export default function DashboardShell() {
     if (!isRestored) return
     try { sessionStorage.setItem('ckb_min_intent_score', minIntentScore >= 60 ? '60' : '0') } catch {}
   }, [minIntentScore, isRestored])
+
+  useEffect(() => {
+    let cancelled = false
+    supabase.auth.getUser().then(({ data }) => {
+      if (!cancelled) setAuthUserId(data.user?.id ?? null)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [supabase])
+
+  useEffect(() => {
+    const m = new Map<string, number>()
+    for (const item of Array.isArray(results) ? results : []) {
+      if (!item || typeof item !== 'object') continue
+      const lead = item as Record<string, unknown>
+      const site = String(lead.sito || lead.website || '').trim().toLowerCase()
+      if (site) m.set(site, calculateIntentScoreFromLead(lead).score)
+    }
+    intentScoreByWebsiteRef.current = m
+  }, [results])
+
+  useEffect(() => {
+    if (!authUserId || !isRestored) return
+
+    const unsubscribe = subscribeToSignals(supabase, authUserId, (signal: RealtimeBusinessSignal) => {
+      const siteKey = signal.lead_website.toLowerCase()
+      const prevScore = intentScoreByWebsiteRef.current.get(siteKey) ?? 0
+
+      setResults((prev) => {
+        const merged = applyRealtimeSignalToResults(prev, signal)
+        if (merged === prev) return prev
+
+        for (const item of merged) {
+          if (!item || typeof item !== 'object') continue
+          const lead = item as Record<string, unknown>
+          const site = String(lead.sito || lead.website || '').trim().toLowerCase()
+          if (!site || (!site.includes(siteKey.replace(/^https?:\/\//, '')) && siteKey !== site)) continue
+          const nextScore = calculateIntentScoreFromLead(lead).score
+          intentScoreByWebsiteRef.current.set(siteKey, nextScore)
+          if (prevScore < 60 && nextScore >= 60) {
+            const alert: HotLeadAlert = {
+              id: signal.id,
+              leadName: signal.lead_name || signal.lead_website,
+              website: signal.lead_website,
+              score: nextScore,
+              signalTitle: signal.title,
+              at: signal.detected_at,
+            }
+            setHotLeadAlerts((a) => [alert, ...a].slice(0, 8))
+            toastSuccess(
+              `${alert.leadName} è diventato Hot Lead (Intent ${nextScore}/100) — ${signal.title}`,
+              '🔥 Hot Lead',
+            )
+          }
+          break
+        }
+        return merged
+      })
+
+      toastInfo(`Nuovo segnale: ${signal.title}`, signal.signal_type)
+    })
+
+    return unsubscribe
+  }, [authUserId, isRestored, supabase, toastInfo, toastSuccess])
 
   useEffect(() => {
     if (!isRestored) return
@@ -2380,6 +2454,8 @@ export default function DashboardShell() {
               </div>
             </>
           ) : null}
+
+          <HotLeadsSection results={displayResults} liveAlerts={hotLeadAlerts} />
 
           {uiMode === 'discovery' ? (
           <DiscoveryResultsGrid

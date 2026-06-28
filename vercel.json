@@ -20,6 +20,10 @@
       "schedule": "30 4 * * *"
     },
     {
+      "path": "/api/cron/website-change-detect",
+      "schedule": "0 */6 * * *"
+    },
+    {
       "path": "/api/ops/worker-health",
       "schedule": "0 5 * * *"
     }
