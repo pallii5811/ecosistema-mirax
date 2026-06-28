@@ -152,6 +152,28 @@ export function coerceSignalIntent(raw: unknown): SignalIntentSpec {
         ? Math.round(o.time_window_days)
         : null,
     intent_summary: typeof o.intent_summary === 'string' ? o.intent_summary : null,
+    category: typeof o.category === 'string' ? o.category : null,
+    location: typeof o.location === 'string' ? o.location : null,
+    technical_filters:
+      o.technical_filters && typeof o.technical_filters === 'object'
+        ? (o.technical_filters as SignalIntentSpec['technical_filters'])
+        : {},
+    social_filters:
+      o.social_filters && typeof o.social_filters === 'object'
+        ? (o.social_filters as SignalIntentSpec['social_filters'])
+        : {},
+    business_filters:
+      o.business_filters && typeof o.business_filters === 'object'
+        ? (o.business_filters as SignalIntentSpec['business_filters'])
+        : {},
+    reasoning: typeof o.reasoning === 'string' ? o.reasoning : null,
+    parse_source:
+      o.parse_source === 'heuristic' ||
+      o.parse_source === 'semantic_ai' ||
+      o.parse_source === 'semantic_graph' ||
+      o.parse_source === 'merged'
+        ? o.parse_source
+        : undefined,
   }
   if (!spec.intent_summary) spec.intent_summary = buildSummary(spec)
   return spec

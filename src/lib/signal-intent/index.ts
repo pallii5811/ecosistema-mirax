@@ -7,6 +7,17 @@ export {
   coerceSignalIntent,
 } from '@/lib/signal-intent/parse-heuristic'
 export {
+  parseSignalIntent,
+  parseSignalIntentOffline,
+  intentSpecHasMatches,
+} from '@/lib/signal-intent/parse-semantic'
+export { inferFromSemanticGraph } from '@/lib/signal-intent/semantic-graph-fallback'
+export {
+  filterLeadsByIntentSpec,
+  leadMatchesIntentSpec,
+  intentTechnicalToLegacy,
+} from '@/lib/signal-intent/apply-filters'
+export {
   leadMatchesSignalIntent,
   filterLeadsBySignalIntent,
   signalIntentToBusinessFilters,

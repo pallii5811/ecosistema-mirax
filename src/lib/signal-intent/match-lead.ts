@@ -5,6 +5,7 @@ import { detectSectorInvestmentSignals } from '@/lib/business-events/sector-inve
 import { detectTenderWinSignals } from '@/lib/business-events/tender-wins'
 import type { MiraxSignalRequirement, SignalIntentSpec } from '@/lib/signal-intent/types'
 import { EMPTY_SIGNAL_INTENT } from '@/lib/signal-intent/types'
+import { intentSpecHasMatches } from '@/lib/signal-intent/parse-semantic'
 import { hasBusinessSignalType } from '@/lib/mirax-signals'
 import { analyzeMiraxSignals } from '@/lib/mirax-signals'
 
@@ -110,6 +111,8 @@ export function signalIntentToBusinessFilters(intent: SignalIntentSpec): import(
 }
 
 export function describeSignalIntent(intent: SignalIntentSpec | null | undefined): string | null {
-  if (!intent?.required_signals?.length) return null
+  if (!intent) return null
+  if (intent.reasoning) return intent.reasoning
+  if (!intent.required_signals?.length && !intentSpecHasMatches(intent)) return null
   return intent.intent_summary || intent.required_signals.join(', ')
 }

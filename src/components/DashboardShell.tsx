@@ -61,6 +61,8 @@ import {
   describeSignalIntent,
   coerceSignalIntent,
   type SignalIntentSpec,
+  filterLeadsByIntentSpec,
+  intentSpecHasMatches,
 } from '@/lib/signal-intent'
 import { DiscoverySearchWizard } from '@/components/discovery/DiscoverySearchWizard'
 import { DiscoveryResultsGrid } from '@/components/discovery/DiscoveryResultsGrid'
@@ -1176,6 +1178,17 @@ export default function DashboardShell() {
       }
     }
 
+    if (signalIntent && intentSpecHasMatches(signalIntent)) {
+      hasActiveFilter = true
+      const specFiltered = filterLeadsByIntentSpec(visible, signalIntent)
+      if (specFiltered.length === 0 && visible.length > 0) {
+        missingSignals = true
+        visible = base
+      } else {
+        visible = specFiltered
+      }
+    }
+
     return { visible, hasActiveFilter, missingSignals }
   }, [results, businessSignalFilters, signalIntent, minIntentScore])
 
@@ -2272,6 +2285,15 @@ export default function DashboardShell() {
         <div className="mb-4 flex items-center gap-2 text-xs text-slate-600">
           <span className="h-3 w-3 rounded-full border-2 border-slate-300 border-t-slate-700 animate-spin" />
           <span>L'AI sta ragionando, potrebbe volerci qualche secondo…</span>
+        </div>
+      ) : null}
+
+      {signalIntent?.reasoning && !aiAnalyzing ? (
+        <div className="mb-3 mx-4 flex items-start gap-2 text-xs text-purple-700 bg-purple-50 border border-purple-200 px-3 py-2 rounded-xl">
+          <Sparkles className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+          <span>
+            <span className="font-semibold">Interpretato:</span> {signalIntent.reasoning}
+          </span>
         </div>
       ) : null}
 

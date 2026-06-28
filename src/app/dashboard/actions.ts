@@ -15,8 +15,11 @@ import {
 } from '@/lib/search-cache'
 import {
   coerceSignalIntent,
+  intentTechnicalToLegacy,
   mergeSignalIntent,
+  parseSignalIntent,
   parseSignalIntentHeuristic,
+  parseSignalIntentOffline,
   type SignalIntentSpec,
 } from '@/lib/signal-intent'
 
@@ -434,13 +437,22 @@ export async function textToFilterSearchActionExpanded(userQuery: string): Promi
 
 
 
+    const semanticIntent = await parseSignalIntent(query)
+
     nlp = {
 
       ...nlp,
 
+      city: typeof nlp.city === 'string' && nlp.city.trim() ? nlp.city : semanticIntent.location ?? nlp.city,
+
+      category:
+        typeof nlp.category === 'string' && nlp.category.trim() ? nlp.category : semanticIntent.category ?? nlp.category,
+
       technical_filters: {
 
         ...nlp.technical_filters,
+
+        ...intentTechnicalToLegacy(semanticIntent.technical_filters),
 
         no_website: nlp.technical_filters.no_website === true || heur.technical_filters.no_website === true,
 
@@ -450,28 +462,28 @@ export async function textToFilterSearchActionExpanded(userQuery: string): Promi
 
         no_tiktok: nlp.technical_filters.no_tiktok === true || heur.technical_filters.no_tiktok === true,
 
-        no_pixel: nlp.technical_filters.no_pixel === true || heur.technical_filters.no_pixel === true,
+        no_pixel: nlp.technical_filters.no_pixel === true || heur.technical_filters.no_pixel === true || semanticIntent.technical_filters?.has_meta_pixel === false,
 
-        no_gtm: nlp.technical_filters.no_gtm === true || heur.technical_filters.no_gtm === true,
+        no_gtm: nlp.technical_filters.no_gtm === true || heur.technical_filters.no_gtm === true || semanticIntent.technical_filters?.has_gtm === false,
 
-        no_ga4: nlp.technical_filters.no_ga4 === true || heur.technical_filters.no_ga4 === true,
+        no_ga4: nlp.technical_filters.no_ga4 === true || heur.technical_filters.no_ga4 === true || semanticIntent.technical_filters?.has_google_analytics === false,
 
         no_google_ads: nlp.technical_filters.no_google_ads === true || heur.technical_filters.no_google_ads === true,
 
-        seo_errors: nlp.technical_filters.seo_errors === true || heur.technical_filters.seo_errors === true,
+        seo_errors: nlp.technical_filters.seo_errors === true || heur.technical_filters.seo_errors === true || semanticIntent.technical_filters?.errors_seo === true,
 
-        no_ssl: nlp.technical_filters.no_ssl === true || heur.technical_filters.no_ssl === true,
+        no_ssl: nlp.technical_filters.no_ssl === true || heur.technical_filters.no_ssl === true || semanticIntent.technical_filters?.has_ssl === false,
 
-        no_mobile: nlp.technical_filters.no_mobile === true || heur.technical_filters.no_mobile === true,
+        no_mobile: nlp.technical_filters.no_mobile === true || heur.technical_filters.no_mobile === true || semanticIntent.technical_filters?.mobile_friendly === false,
 
         spam_risk: nlp.technical_filters.spam_risk === true || heur.technical_filters.spam_risk === true,
 
-        slow_speed: nlp.technical_filters.slow_speed === true || heur.technical_filters.slow_speed === true,
+        slow_speed: nlp.technical_filters.slow_speed === true || heur.technical_filters.slow_speed === true || semanticIntent.technical_filters?.site_speed === 'slow',
 
       },
 
       signal_intent: mergeSignalIntent(
-        parseSignalIntentHeuristic(query),
+        semanticIntent,
         mergeSignalIntent(
           coerceSignalIntent(heur.signal_intent),
           coerceSignalIntent((nlp as SearchNlpParams).signal_intent),
@@ -2345,7 +2357,7 @@ const heuristicSearchNlpParams = (userQuery: string): SearchNlpParams => {
 
 
 
-  return { city, category, keywords: [], excluded_keywords: [], technical_filters: { ...technical_filters, tech_terms }, signal_intent: parseSignalIntentHeuristic(userQuery) }
+  return { city, category, keywords: [], excluded_keywords: [], technical_filters: { ...technical_filters, tech_terms }, signal_intent: parseSignalIntentOffline(userQuery) }
 
 }
 
@@ -4079,13 +4091,22 @@ export async function textToFilterSearchAction(
 
 
 
+    const semanticIntent = await parseSignalIntent(query)
+
     nlp = {
 
       ...nlp,
 
+      city: typeof nlp.city === 'string' && nlp.city.trim() ? nlp.city : semanticIntent.location ?? nlp.city,
+
+      category:
+        typeof nlp.category === 'string' && nlp.category.trim() ? nlp.category : semanticIntent.category ?? nlp.category,
+
       technical_filters: {
 
         ...nlp.technical_filters,
+
+        ...intentTechnicalToLegacy(semanticIntent.technical_filters),
 
         no_website: nlp.technical_filters.no_website === true || heur.technical_filters.no_website === true,
 
@@ -4095,28 +4116,28 @@ export async function textToFilterSearchAction(
 
         no_tiktok: nlp.technical_filters.no_tiktok === true || heur.technical_filters.no_tiktok === true,
 
-        no_pixel: nlp.technical_filters.no_pixel === true || heur.technical_filters.no_pixel === true,
+        no_pixel: nlp.technical_filters.no_pixel === true || heur.technical_filters.no_pixel === true || semanticIntent.technical_filters?.has_meta_pixel === false,
 
-        no_gtm: nlp.technical_filters.no_gtm === true || heur.technical_filters.no_gtm === true,
+        no_gtm: nlp.technical_filters.no_gtm === true || heur.technical_filters.no_gtm === true || semanticIntent.technical_filters?.has_gtm === false,
 
-        no_ga4: nlp.technical_filters.no_ga4 === true || heur.technical_filters.no_ga4 === true,
+        no_ga4: nlp.technical_filters.no_ga4 === true || heur.technical_filters.no_ga4 === true || semanticIntent.technical_filters?.has_google_analytics === false,
 
         no_google_ads: nlp.technical_filters.no_google_ads === true || heur.technical_filters.no_google_ads === true,
 
-        seo_errors: nlp.technical_filters.seo_errors === true || heur.technical_filters.seo_errors === true,
+        seo_errors: nlp.technical_filters.seo_errors === true || heur.technical_filters.seo_errors === true || semanticIntent.technical_filters?.errors_seo === true,
 
-        no_ssl: nlp.technical_filters.no_ssl === true || heur.technical_filters.no_ssl === true,
+        no_ssl: nlp.technical_filters.no_ssl === true || heur.technical_filters.no_ssl === true || semanticIntent.technical_filters?.has_ssl === false,
 
-        no_mobile: nlp.technical_filters.no_mobile === true || heur.technical_filters.no_mobile === true,
+        no_mobile: nlp.technical_filters.no_mobile === true || heur.technical_filters.no_mobile === true || semanticIntent.technical_filters?.mobile_friendly === false,
 
         spam_risk: nlp.technical_filters.spam_risk === true || heur.technical_filters.spam_risk === true,
 
-        slow_speed: nlp.technical_filters.slow_speed === true || heur.technical_filters.slow_speed === true,
+        slow_speed: nlp.technical_filters.slow_speed === true || heur.technical_filters.slow_speed === true || semanticIntent.technical_filters?.site_speed === 'slow',
 
       },
 
       signal_intent: mergeSignalIntent(
-        parseSignalIntentHeuristic(query),
+        semanticIntent,
         mergeSignalIntent(
           coerceSignalIntent(heur.signal_intent),
           coerceSignalIntent((nlp as SearchNlpParams).signal_intent),
