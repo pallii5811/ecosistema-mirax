@@ -1,13 +1,16 @@
 'use client'
 
-import { Sparkles, CreditCard, Search } from 'lucide-react'
+import { Search, Briefcase } from 'lucide-react'
+import { MAX_LEADS_PER_SEARCH } from '@/lib/search-job-payload'
+import { BUSINESS_SIGNAL_FILTER_OPTIONS, type BusinessSignalType } from '@/lib/business-events/types'
+import { useDashboard } from '@/components/DashboardContext'
+import { searchLocaleHint, t } from '@/lib/i18n'
 
-const BASE_LEAD_OPTIONS = [10, 25, 50, 100, 200, 300, 400, 500, 750, 1000, 2000, 5000]
+const BASE_LEAD_OPTIONS = [10, 25, 50, 100, 200, 300, 400, 500]
 
 function buildLeadOptions(credits: number): number[] {
-  const out = BASE_LEAD_OPTIONS.filter((n) => n <= credits)
-  if (credits > 500 && !out.includes(credits)) out.push(credits)
-  return Array.from(new Set(out)).sort((a, b) => a - b)
+  const cap = Math.min(MAX_LEADS_PER_SEARCH, Math.max(10, credits))
+  return BASE_LEAD_OPTIONS.filter((n) => n <= cap)
 }
 
 type SniperAreaProps = {
@@ -20,11 +23,35 @@ type SniperAreaProps = {
   maxLeads: number
   onMaxLeadsChange: (value: number) => void
   credits: number
+  businessSignalFilters?: BusinessSignalType[]
+  onBusinessSignalFiltersChange?: (value: BusinessSignalType[]) => void
 }
 
-const SniperArea = ({ query, onQueryChange, onStart, isLoading, error, aiDebug, maxLeads, onMaxLeadsChange, credits }: SniperAreaProps) => {
+const SniperArea = ({
+  query,
+  onQueryChange,
+  onStart,
+  isLoading,
+  error,
+  aiDebug,
+  maxLeads,
+  onMaxLeadsChange,
+  credits,
+  businessSignalFilters = [],
+  onBusinessSignalFiltersChange,
+}: SniperAreaProps) => {
+  const { locale } = useDashboard()
+  const localeHint = searchLocaleHint(locale)
   const leadOptions = buildLeadOptions(Math.max(credits, 10))
   const selectValue = leadOptions.includes(maxLeads) ? maxLeads : (leadOptions[leadOptions.length - 1] ?? maxLeads)
+
+  const toggleBusinessFilter = (id: BusinessSignalType) => {
+    if (!onBusinessSignalFiltersChange) return
+    const set = new Set(businessSignalFilters)
+    if (set.has(id)) set.delete(id)
+    else set.add(id)
+    onBusinessSignalFiltersChange(Array.from(set))
+  }
 
   return (
     <div className="relative mb-4">
@@ -44,8 +71,8 @@ const SniperArea = ({ query, onQueryChange, onStart, isLoading, error, aiDebug, 
           <Search className="w-7 h-7 text-violet-500 flex-shrink-0" />
           <input
             type="text"
-            placeholder="Cerca aziende... es. Ristoranti a Roma senza sito"
-            title="Scrivi categoria + città per trovare lead. Puoi aggiungere filtri come 'senza sito', 'senza Pixel', 'errori SEO'."
+            placeholder={t(locale, 'search_placeholder')}
+            title="Scrivi in linguaggio naturale: assunzioni, gare d'appalto, investimenti settoriali, cambi CRM, filtri tecnici…"
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
             className="flex-1 bg-transparent text-base sm:text-[22px] text-slate-900 placeholder:text-slate-400 outline-none py-4 sm:py-5 min-w-0 font-medium tracking-[-0.01em]"
@@ -60,7 +87,7 @@ const SniperArea = ({ query, onQueryChange, onStart, isLoading, error, aiDebug, 
             >
               {leadOptions.map((n) => (
                 <option key={n} value={n}>
-                  {n === credits && n > 500 ? `Tutti (${n} crediti)` : `${n} lead`}
+                  {n} {t(locale, 'max_leads')}
                 </option>
               ))}
             </select>
@@ -74,12 +101,12 @@ const SniperArea = ({ query, onQueryChange, onStart, isLoading, error, aiDebug, 
               {isLoading ? (
                 <>
                   <div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                  <span>Ricerca...</span>
+                  <span>{t(locale, 'searching')}</span>
                 </>
               ) : (
                 <>
                   <Search className="h-4 w-4" />
-                  <span>Cerca</span>
+                  <span>{t(locale, 'search_button')}</span>
                 </>
               )}
             </button>
@@ -106,36 +133,72 @@ const SniperArea = ({ query, onQueryChange, onStart, isLoading, error, aiDebug, 
           >
             {leadOptions.map((n) => (
               <option key={n} value={n}>
-                {n === credits && n > 500 ? `Tutti (${n})` : `${n} lead`}
+                {n === credits && n > 500 ? `Tutti (${n})` : `${n} ${t(locale, 'max_leads')}`}
               </option>
             ))}
           </select>
           <span className="text-[11px] font-semibold text-slate-400">
-            {Math.min(maxLeads, credits)} crediti
+            Max {Math.min(maxLeads, credits, MAX_LEADS_PER_SEARCH)} {t(locale, 'max_leads')}
           </span>
         </div>
       </form>
+
+      {onBusinessSignalFiltersChange ? (
+        <div className="mt-3 px-2">
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <Briefcase className="h-3.5 w-3.5 text-violet-500" />
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Segnale business</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {BUSINESS_SIGNAL_FILTER_OPTIONS.map((opt) => {
+              const active = businessSignalFilters.includes(opt.id)
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  title={opt.hint}
+                  disabled={isLoading}
+                  onClick={() => toggleBusinessFilter(opt.id)}
+                  className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+                    active
+                      ? 'border-violet-400 bg-violet-50 text-violet-700'
+                      : 'border-slate-200 bg-white text-slate-500 hover:border-violet-200 hover:text-violet-600'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
 
       {/* Info row below search */}
       <div className="flex items-center justify-between px-6 mt-2">
         <div className="flex items-center gap-4">
           <span className="hidden sm:flex items-center gap-1.5 text-[12px] text-slate-400 font-medium">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            Database verificato
+            {t(locale, 'database_verified')}
           </span>
           <span className="hidden sm:flex items-center gap-1.5 text-[12px] text-slate-400 font-medium">
             <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
-            Ricerca AI
+            {t(locale, 'ai_search')}
           </span>
           <span className="hidden sm:flex items-center gap-1.5 text-[12px] text-slate-400 font-medium">
             <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
-            GDPR
+            {t(locale, 'gdpr')}
           </span>
         </div>
         <span className="text-[12px] font-semibold text-slate-400">
-          {Math.min(maxLeads, credits)} crediti
+          Max {Math.min(maxLeads, credits, MAX_LEADS_PER_SEARCH)} {t(locale, 'max_leads')} · {credits.toLocaleString(locale === 'es' ? 'es-ES' : 'it-IT')} {t(locale, 'credits')}
         </span>
       </div>
+
+      {localeHint ? (
+        <p className="mt-2 px-6 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg py-2 mx-2">
+          {localeHint}
+        </p>
+      ) : null}
 
       {isLoading && aiDebug ? (
         <p className="text-[11px] text-violet-600 font-medium animate-pulse text-center mt-1">

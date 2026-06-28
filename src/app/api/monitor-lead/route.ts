@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { createClient, createServiceRoleClient } from '@/utils/supabase/server'
+import { emitMiraxEvent } from '@/lib/events/emit'
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -31,8 +32,13 @@ export async function POST(req: NextRequest) {
       .maybeSingle()
 
     if (existingError) {
-      console.log('[monitor-lead] query error (table may not exist):', existingError.message)
-      return NextResponse.json({ error: 'Funzionalità monitor non ancora disponibile. La tabella verrà creata a breve.' }, { status: 503 })
+      if (/relation .* does not exist|lead_monitors/i.test(existingError.message)) {
+        return NextResponse.json(
+          { error: 'Funzionalità monitor non ancora disponibile. Esegui migration EDAT su Supabase dev.' },
+          { status: 503 },
+        )
+      }
+      return NextResponse.json({ error: existingError.message }, { status: 500 })
     }
 
     if (existing?.id) {
@@ -49,14 +55,31 @@ export async function POST(req: NextRequest) {
         lead_website: leadWebsite,
         lead_city: leadCity,
         lead_category: leadCategory,
+        last_checked_at: new Date().toISOString(),
       })
       .select()
       .single()
 
     if (error) {
-      console.log('[monitor-lead] insert error:', error.message)
       return NextResponse.json({ error: 'Impossibile salvare il monitor' }, { status: 500 })
     }
+
+    try {
+      const service = createServiceRoleClient()
+      await emitMiraxEvent(service, {
+        userId: user.id,
+        eventType: 'lead.monitored',
+        payload: {
+          search_id: searchId,
+          lead_index: leadIndex,
+          lead_name: leadName,
+          website: leadWebsite,
+        },
+      })
+    } catch {
+      /* non-blocking */
+    }
+
     return NextResponse.json({ success: true, monitor: data })
   } catch (e) {
     console.error('[monitor-lead] unexpected error:', e)

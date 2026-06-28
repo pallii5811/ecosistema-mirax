@@ -81,6 +81,74 @@ export function canonicalKey(website: string | null | undefined, name: string | 
   return nm ? `n:${nm}` : null
 }
 
+export type OutreachComplianceChannel = 'email' | 'phone' | 'whatsapp'
+
+export type OutreachComplianceResult = {
+  allowed: boolean
+  status: 'clear' | 'blocked' | 'unknown' | 'manual_review'
+  message: string
+  requiresConfirmation: boolean
+}
+
+/** Client-side helper: chiama API compliance prima di aprire canale outreach. */
+export async function verifyOutreachCompliance(params: {
+  channel: OutreachComplianceChannel
+  email?: string | null
+  phone?: string | null
+  logBasis?: boolean
+}): Promise<OutreachComplianceResult> {
+  const target =
+    params.channel === 'email'
+      ? params.email?.trim()
+      : params.phone?.trim()
+
+  if (!target) {
+    return {
+      allowed: true,
+      status: 'unknown',
+      message: 'Nessun target da verificare.',
+      requiresConfirmation: false,
+    }
+  }
+
+  try {
+    const res = await fetch('/api/compliance/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        channel: params.channel,
+        target,
+        email: params.email,
+        phone: params.phone,
+        logBasis: params.logBasis ?? false,
+      }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      return {
+        allowed: true,
+        status: 'unknown',
+        message: typeof data.error === 'string' ? data.error : 'Verifica non disponibile.',
+        requiresConfirmation: true,
+      }
+    }
+    const status = data.status as OutreachComplianceResult['status']
+    return {
+      allowed: status !== 'blocked',
+      status,
+      message: typeof data.message === 'string' ? data.message : 'Verifica completata.',
+      requiresConfirmation: status === 'unknown' || status === 'manual_review',
+    }
+  } catch {
+    return {
+      allowed: true,
+      status: 'unknown',
+      message: 'Verifica compliance non disponibile — procedi con cautela.',
+      requiresConfirmation: true,
+    }
+  }
+}
+
 export function daysSince(iso: string | null | undefined): number | null {
   if (!iso) return null
   const t = Date.parse(iso)
@@ -275,6 +343,11 @@ export async function logOutreach(payload: {
   rationale?: string
   mode?: OutreachMode
   status?: string
+  leadScore?: number
+  leadPhone?: string
+  leadEmail?: string
+  leadCity?: string
+  leadCategory?: string
 }): Promise<void> {
   try {
     await fetch('/api/outreach/log', {

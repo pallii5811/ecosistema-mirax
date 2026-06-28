@@ -14,6 +14,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
+import { SHOW_CENTRO_COMANDO } from '@/lib/feature-flags'
 
 type IntegrationId = 'webhook'
 
@@ -162,14 +163,45 @@ export default function IntegrationsPage() {
       </div>
 
       <Card className="rounded-lg border border-slate-200 bg-white p-5">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Deliverability email (SPF / DKIM / DMARC)</div>
+            <div className="mt-1 text-sm text-slate-600">Verifica i record DNS del tuo dominio prima di inviare outreach in volume.</div>
+          </div>
+          <Button asChild variant="outline" className="rounded-md border-slate-200">
+            <Link href="/dashboard/deliverability">Apri checker</Link>
+          </Button>
+        </div>
+      </Card>
+
+      <Card className="rounded-lg border border-slate-200 bg-white p-5">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">API Keys (Jarvis / automazioni)</div>
+            <div className="mt-1 text-sm text-slate-600">Integra MIRAX con Jarvis o altri tool via REST API v1.</div>
+          </div>
+          <Button asChild className="rounded-md bg-violet-600 hover:bg-violet-700 text-white font-medium">
+            <Link href="/dashboard/integrations/api-keys">Gestisci chiavi</Link>
+          </Button>
+        </div>
+      </Card>
+
+      <Card className="rounded-lg border border-slate-200 bg-white p-5">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <div className="text-sm font-semibold text-slate-900">CRM Sync (HubSpot / Webhook)</div>
             <div className="mt-1 text-sm text-slate-600">Configura l'invio dei lead al tuo CRM e usa il bottone “CRM” nella tabella risultati.</div>
           </div>
-          <Button asChild className="rounded-md bg-slate-900 hover:bg-slate-800 text-white font-medium">
-            <Link href="/dashboard/integrations/crm">Configura</Link>
-          </Button>
+          <div className="flex gap-2 flex-wrap">
+            <Button asChild className="rounded-md bg-slate-900 hover:bg-slate-800 text-white font-medium">
+              <Link href="/dashboard/integrations/crm">Configura</Link>
+            </Button>
+            {SHOW_CENTRO_COMANDO ? (
+            <Button asChild variant="outline" className="rounded-md border-slate-200">
+              <Link href="/dashboard/ecosistema">Centro Comando</Link>
+            </Button>
+            ) : null}
+          </div>
         </div>
       </Card>
 

@@ -14,7 +14,12 @@ import { LeadActionButtons } from '@/components/LeadActionButtons'
 import { InviaCRMButton } from '@/components/InviaCRMButton'
 import { analyzeBuyingSignals } from '@/utils/buyingSignals'
 import type { BuyingSignalSummary } from '@/utils/buyingSignals'
+import { analyzeMiraxSignals } from '@/lib/mirax-signals'
+import { BusinessSignalBadge } from '@/components/BusinessSignalBadge'
+import { LeadComplianceBadge } from '@/components/LeadComplianceBadge'
+import { MarketingInvestorBadge } from '@/components/MarketingInvestorBadge'
 import { isAuditPendingLead } from '@/lib/lead-audit-status'
+import { computeFreshnessScore, freshnessLabel } from '@/lib/lead-object'
 
 type LeadRecord = Record<string, unknown>
 
@@ -48,6 +53,30 @@ export function calcOpportunityScore(obj: Record<string, unknown>): number {
   if (tr?.has_dmarc === false || stack.includes('no dmarc')) score += 10
 
   return Math.min(score, 100)
+}
+
+/** Rule-based opportunity score — see docs/SCORE_AI_RULES.md */
+function FreshnessBadge({ lead }: { lead: Record<string, unknown> }) {
+  const score =
+    typeof lead.freshness_score === 'number' && Number.isFinite(lead.freshness_score)
+      ? Math.round(lead.freshness_score)
+      : computeFreshnessScore(lead.last_audited_at)
+  const label = freshnessLabel(score)
+  const tone =
+    score >= 80 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+    score >= 50 ? 'bg-sky-50 text-sky-700 border-sky-200' :
+    score > 0 ? 'bg-amber-50 text-amber-700 border-amber-200' :
+    'bg-zinc-100 text-zinc-500 border-zinc-200'
+
+  return (
+    <span
+      title={`Freshness ${score}/100 — ${label}`}
+      className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wide leading-none ${tone}`}
+    >
+      <Gauge className="h-2.5 w-2.5" />
+      {score}
+    </span>
+  )
 }
 
 function ScoreBadge({ score }: { score: number }) {
@@ -95,6 +124,7 @@ type ResultsTableProps = {
   searchId?: string | null
   filters?: Record<string, unknown> | null
   aiDebug?: unknown
+  totalUnfilteredCount?: number
 }
 
 type UserList = {
@@ -102,7 +132,7 @@ type UserList = {
   name: string
 }
 
-const ResultsTable = ({ query, results, isLoading, isScraping, searchId, filters, aiDebug }: ResultsTableProps) => {
+const ResultsTable = ({ query, results, isLoading, isScraping, searchId, filters, aiDebug, totalUnfilteredCount }: ResultsTableProps) => {
   const [activeCRM, setActiveCRM] = useState<{ id: string; type: string; name?: string } | null>(null)
   const [pitchOpen, setPitchOpen] = useState(false)
   const [pitchLoading, setPitchLoading] = useState(false)
@@ -302,6 +332,18 @@ const ResultsTable = ({ query, results, isLoading, isScraping, searchId, filters
         map.set(item, analyzeBuyingSignals(asRecord(item) || {}))
       } catch {
         // un lead malformato non deve mai rompere la tabella
+      }
+    }
+    return map
+  }, [results])
+
+  const miraxByItem = useMemo(() => {
+    const map = new Map<unknown, ReturnType<typeof analyzeMiraxSignals>>()
+    for (const item of results) {
+      try {
+        map.set(item, analyzeMiraxSignals(asRecord(item) || {}))
+      } catch {
+        /* ignore */
       }
     }
     return map
@@ -940,7 +982,11 @@ const ResultsTable = ({ query, results, isLoading, isScraping, searchId, filters
           <div>
             <h3 className="text-lg font-bold text-zinc-900 tracking-tight">Risultati della Ricerca</h3>
             <p className="text-sm text-zinc-500 mt-0.5">
-              {isLoading ? 'Ricerca in corso…' : `${results.length} risultati per "${query || '—'}"`}
+              {isLoading
+                ? 'Ricerca in corso…'
+                : totalUnfilteredCount && totalUnfilteredCount !== results.length
+                  ? `${results.length} di ${totalUnfilteredCount} risultati (filtro business attivo) per "${query || '—'}"`
+                  : `${results.length} risultati per "${query || '—'}"`}
             </p>
           </div>
           <div className="flex items-center space-x-2">
@@ -1061,6 +1107,11 @@ const ResultsTable = ({ query, results, isLoading, isScraping, searchId, filters
                       <div className="shrink-0 flex flex-col items-end gap-1">
                         <ScoreBadge score={score} />
                         <BuyingBadge summary={buyingByItem.get(item)} compact />
+                        <BusinessSignalBadge signals={miraxByItem.get(item)?.businessSignals ?? []} compact />
+                        {(miraxByItem.get(item)?.intentSignals?.length ?? 0) > 0 ? (
+                          <MarketingInvestorBadge compact />
+                        ) : null}
+                        <LeadComplianceBadge status="unknown" compact />
                       </div>
                     </div>
 
@@ -1270,7 +1321,13 @@ const ResultsTable = ({ query, results, isLoading, isScraping, searchId, filters
                       <td className="px-2 py-3 align-top">
                         <div className="flex flex-col items-center gap-1">
                           <ScoreBadge score={calcOpportunityScore(item as Record<string, unknown>)} />
+                          <FreshnessBadge lead={item as Record<string, unknown>} />
                           <BuyingBadge summary={buyingByItem.get(item)} compact />
+                          <BusinessSignalBadge signals={miraxByItem.get(item)?.businessSignals ?? []} compact />
+                          {(miraxByItem.get(item)?.intentSignals?.length ?? 0) > 0 ? (
+                            <MarketingInvestorBadge compact />
+                          ) : null}
+                          <LeadComplianceBadge status="unknown" compact />
                         </div>
                       </td>
 

@@ -1,17 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { runInsightsAgent } from '@/lib/agents/insights-agent'
 
 /**
  * GET /api/insights/ai
- * Genera 3-5 insight commerciali AI basati sui dati REALI della pipeline dell'utente.
- * Differente dai tips hardcoded della pagina: qui analizziamo pattern, stagnazione,
- * concentrazione settoriale, opportunità di follow-up con GPT-4o-mini.
- *
- * Cache lato client: il chiamante decide. Lato server è gratis (no cache),
- * ma il modello costa pochissimo perché passiamo solo il riassunto aggregato.
- *
- * Response:
- *   { insights: [{ icon, title, body, severity }], usedAI: boolean, generatedAt }
+ * Sales Coach AI — powered by Insights Agent (PKI + knowledge + pipeline).
  */
 
 type Insight = {
@@ -21,10 +14,17 @@ type Insight = {
   severity: 'info' | 'warning' | 'success' | 'critical'
 }
 
-function fallbackInsights(summary: any): Insight[] {
-  // Fallback offline se OpenAI non risponde — mai lasciare l'utente senza nulla
+function fallbackInsights(summary: Record<string, unknown>): Insight[] {
   const tips: Insight[] = []
-  if (summary.total === 0) {
+  const total = Number(summary.total) || 0
+  const winRate = Number(summary.winRate) || 0
+  const stagnantCount = Number(summary.stagnantCount) || 0
+  const topCategory = String(summary.topCategory ?? '')
+  const topCategoryRevenue = Number(summary.topCategoryRevenue) || 0
+  const avgDealSize = Number(summary.avgDealSize) || 0
+  const pki = summary.pki as { score?: number; topLiftPattern?: string } | undefined
+
+  if (total === 0) {
     tips.push({
       icon: 'focus',
       title: 'Inizia ad aggiungere lead alla pipeline',
@@ -33,45 +33,61 @@ function fallbackInsights(summary: any): Insight[] {
     })
     return tips
   }
-  if (summary.winRate >= 40) {
+
+  if (typeof pki?.score === 'number' && pki.score >= 70) {
     tips.push({
       icon: 'win',
-      title: `Win rate del ${summary.winRate}% — top performance`,
+      title: `PKI ${pki.score}/100 — performance solida`,
+      body: pki.topLiftPattern
+        ? `Pattern vincente: ${pki.topLiftPattern}. Replica su lead simili questa settimana.`
+        : 'Mantieni il ritmo su outreach e follow-up entro 48 ore.',
+      severity: 'success',
+    })
+  }
+
+  if (winRate >= 40) {
+    tips.push({
+      icon: 'win',
+      title: `Win rate del ${winRate}% — top performance`,
       body: 'Il tuo tasso di chiusura è sopra la media B2B italiana (28-32%). Concentrati su deal con valore alto per scalare.',
       severity: 'success',
     })
-  } else if (summary.winRate > 0 && summary.winRate < 20) {
+  } else if (winRate > 0 && winRate < 20) {
     tips.push({
       icon: 'risk',
-      title: `Win rate basso (${summary.winRate}%)`,
+      title: `Win rate basso (${winRate}%)`,
       body: 'Qualifica meglio i lead prima di contattarli. Filtra per score >= 60 e usa Smart Insights per identificare le categorie che convertono.',
       severity: 'warning',
     })
   }
-  if (summary.stagnantCount > 0) {
+
+  if (stagnantCount > 0) {
     tips.push({
       icon: 'risk',
-      title: `${summary.stagnantCount} deal fermi da oltre 7 giorni`,
-      body: 'I deal stagnanti perdono il 60% di probabilità di chiusura ogni settimana. Riprendili oggi con una sequenza email.',
+      title: `${stagnantCount} deal fermi da oltre 7 giorni`,
+      body: 'I deal stagnanti perdono probabilità di chiusura ogni settimana. Riprendili oggi con una sequenza email.',
       severity: 'warning',
     })
   }
-  if (summary.topCategory && summary.topCategoryRevenue > 0) {
+
+  if (topCategory && topCategoryRevenue > 0) {
     tips.push({
       icon: 'opportunity',
-      title: `Specializzati in "${summary.topCategory}"`,
-      body: `Questa categoria ti ha portato ${Math.round(summary.topCategoryRevenue)}€ di revenue. Cerca altri lead simili per replicare il successo.`,
+      title: `Specializzati in "${topCategory}"`,
+      body: `Questa categoria ti ha portato ${Math.round(topCategoryRevenue)}€ di revenue. Cerca altri lead simili per replicare il successo.`,
       severity: 'success',
     })
   }
-  if (summary.avgDealSize > 0) {
+
+  if (avgDealSize > 0) {
     tips.push({
       icon: 'trend',
-      title: `Deal medio: ${Math.round(summary.avgDealSize)}€`,
+      title: `Deal medio: ${Math.round(avgDealSize)}€`,
       body: 'Per crescere senza aumentare i contatti, lavora sull\'up-sell e sui pacchetti retainer mensili.',
       severity: 'info',
     })
   }
+
   if (tips.length === 0) {
     tips.push({
       icon: 'focus',
@@ -80,107 +96,52 @@ function fallbackInsights(summary: any): Insight[] {
       severity: 'info',
     })
   }
+
   return tips
 }
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ insights: [], usedAI: false }, { status: 401 })
 
-  // Aggrega dati pipeline lato server (niente PII raw a OpenAI)
-  const { data: items } = await supabase
-    .from('lead_pipeline')
-    .select('stage, deal_value, lead_category, lead_city, lead_score, created_at, updated_at')
-    .eq('user_id', user.id)
-    .limit(500)
+  const knowledgeQuery = req.nextUrl.searchParams.get('q') || 'pattern conversione pipeline'
 
-  const pipeline = Array.isArray(items) ? items : []
+  const agent = await runInsightsAgent(supabase, {
+    userId: user.id,
+    knowledgeQuery,
+    knowledgeLimit: 5,
+  })
 
-  const won = pipeline.filter((p: any) => p.stage === 'vinto')
-  const lost = pipeline.filter((p: any) => p.stage === 'perso')
-  const active = pipeline.filter((p: any) => !['vinto', 'perso'].includes(p.stage))
-  const totalRevenue = won.reduce((s: number, p: any) => s + (Number(p.deal_value) || 0), 0)
-  const pipelineValue = active.reduce((s: number, p: any) => s + (Number(p.deal_value) || 0), 0)
-  const avgDealSize = won.length > 0 ? totalRevenue / won.length : 0
-  const winRate = won.length + lost.length > 0 ? Math.round((won.length / (won.length + lost.length)) * 100) : 0
-  const stagnantCount = active.filter((p: any) => {
-    const days = (Date.now() - new Date(p.updated_at).getTime()) / 86400000
-    return days > 7
-  }).length
-
-  // Top categories by revenue
-  const catMap = new Map<string, { won: number; total: number; revenue: number }>()
-  for (const p of pipeline as any[]) {
-    const cat = (typeof p.lead_category === 'string' && p.lead_category.trim()) || 'Altro'
-    const cur = catMap.get(cat) || { won: 0, total: 0, revenue: 0 }
-    cur.total++
-    if (p.stage === 'vinto') {
-      cur.won++
-      cur.revenue += Number(p.deal_value) || 0
-    }
-    catMap.set(cat, cur)
-  }
-  const bestCats = Array.from(catMap.entries())
-    .map(([cat, d]) => ({ cat, ...d }))
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 3)
-
-  const topCategory = bestCats[0]?.cat || ''
-  const topCategoryRevenue = bestCats[0]?.revenue || 0
-
-  // Avg score
-  const validScores = pipeline.map((p: any) => Number(p.lead_score)).filter((n) => Number.isFinite(n) && n > 0)
-  const avgScore = validScores.length > 0 ? Math.round(validScores.reduce((a, b) => a + b, 0) / validScores.length) : 0
-
-  // Stages distribution
-  const stageDistribution: Record<string, number> = {}
-  for (const p of pipeline as any[]) {
-    const s = String(p.stage || 'nuovo')
-    stageDistribution[s] = (stageDistribution[s] || 0) + 1
-  }
-
-  const summary = {
-    total: pipeline.length,
-    active: active.length,
-    won: won.length,
-    lost: lost.length,
-    totalRevenue,
-    pipelineValue,
-    avgDealSize,
-    winRate,
-    stagnantCount,
-    avgScore,
-    bestCategories: bestCats,
-    topCategory,
-    topCategoryRevenue,
-    stageDistribution,
-  }
+  const summary = agent.summary
 
   const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey || pipeline.length === 0) {
+  const total = Number(summary.total) || 0
+
+  if (!apiKey || total === 0) {
     return NextResponse.json({
       insights: fallbackInsights(summary),
       usedAI: false,
       generatedAt: new Date().toISOString(),
       summary,
+      agent: 'insights',
+      pkiGrade: agent.pkiGrade,
     })
   }
 
-  // Chiamata GPT-4o-mini con summary aggregato (nessun PII, solo metriche)
   const systemPrompt = `Sei un sales coach B2B italiano esperto di pipeline management.
 Analizzi i dati REALI di un venditore e produci 3-5 insight azionabili.
 
 Regole rigorose:
 - Lingua: italiano.
-- Cita SEMPRE i numeri reali del summary (revenue, win rate, deal count).
-- Niente frasi generiche tipo "fai più follow-up". Sii specifico: dì QUALE deal, QUALE fase, perché.
-- Ogni insight ha: title (max 70 char), body (max 220 char), severity (info/warning/success/critical), icon (trend/risk/opportunity/win/focus).
-- Tono: diretto, professionale, niente emoji.
-- Se i dati indicano qualcosa di buono → severity success/win. Se rischio → warning/critical. Se neutro → info.
-- Rispondi SOLO con JSON valido nel formato: { "insights": [{"icon":"...","title":"...","body":"...","severity":"..."}] }`
+- Cita SEMPRE i numeri reali del summary (revenue, win rate, deal count, PKI score).
+- Se presente pki.topLiftPattern o closure_patterns, suggerisci azioni basate su quei pattern.
+- Se knowledge_hits è presente, collega 1 insight a un pattern CKBase rilevante.
+- Niente frasi generiche. Sii specifico su fase pipeline e numeri.
+- Ogni insight: title (max 70 char), body (max 220 char), severity, icon (trend/risk/opportunity/win/focus).
+- Rispondi SOLO JSON: { "insights": [{"icon":"...","title":"...","body":"...","severity":"..."}] }`
 
   const userPrompt = `Analizza questa pipeline e produci 3-5 insight:
 ${JSON.stringify(summary, null, 2)}`
@@ -213,12 +174,13 @@ ${JSON.stringify(summary, null, 2)}`
         usedAI: false,
         generatedAt: new Date().toISOString(),
         summary,
+        agent: 'insights',
       })
     }
 
     const data = await res.json()
     const raw = data?.choices?.[0]?.message?.content || ''
-    let parsed: any = null
+    let parsed: { insights?: unknown[] } | null = null
     try {
       parsed = JSON.parse(raw)
     } catch {
@@ -227,13 +189,20 @@ ${JSON.stringify(summary, null, 2)}`
 
     const rawInsights = Array.isArray(parsed?.insights) ? parsed.insights : []
     const cleaned: Insight[] = rawInsights
-      .map((i: any) => ({
-        icon: ['trend', 'risk', 'opportunity', 'win', 'focus'].includes(i?.icon) ? i.icon : 'focus',
+      .map((item) => {
+        const i = item as Record<string, unknown>
+        return {
+        icon: ['trend', 'risk', 'opportunity', 'win', 'focus'].includes(String(i?.icon))
+          ? (i.icon as Insight['icon'])
+          : 'focus',
         title: typeof i?.title === 'string' ? i.title.slice(0, 100) : 'Insight',
         body: typeof i?.body === 'string' ? i.body.slice(0, 300) : '',
-        severity: ['info', 'warning', 'success', 'critical'].includes(i?.severity) ? i.severity : 'info',
-      }))
-      .filter((i: Insight) => !!i.body)
+        severity: ['info', 'warning', 'success', 'critical'].includes(String(i?.severity))
+          ? (i.severity as Insight['severity'])
+          : 'info',
+        }
+      })
+      .filter((i) => !!i.body)
       .slice(0, 5)
 
     if (cleaned.length === 0) {
@@ -242,6 +211,7 @@ ${JSON.stringify(summary, null, 2)}`
         usedAI: false,
         generatedAt: new Date().toISOString(),
         summary,
+        agent: 'insights',
       })
     }
 
@@ -250,6 +220,8 @@ ${JSON.stringify(summary, null, 2)}`
       usedAI: true,
       generatedAt: new Date().toISOString(),
       summary,
+      agent: 'insights',
+      pkiGrade: agent.pkiGrade,
     })
   } catch {
     return NextResponse.json({
@@ -257,6 +229,7 @@ ${JSON.stringify(summary, null, 2)}`
       usedAI: false,
       generatedAt: new Date().toISOString(),
       summary,
+      agent: 'insights',
     })
   }
 }

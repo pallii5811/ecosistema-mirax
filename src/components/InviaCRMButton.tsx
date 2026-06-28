@@ -17,7 +17,12 @@ export function InviaCRMButton({ lead, integrationId, integrationType }: Props) 
   const handleSend = async () => {
     setStatus('loading')
     try {
-      const endpoint = integrationType === 'hubspot' ? '/api/crm/hubspot' : '/api/crm/webhook'
+      const endpoint =
+        integrationType === 'hubspot'
+          ? '/api/crm/hubspot'
+          : integrationType === 'salesforce'
+            ? '/api/crm/salesforce'
+            : '/api/crm/webhook'
 
       const res = await fetch(endpoint, {
         method: 'POST',

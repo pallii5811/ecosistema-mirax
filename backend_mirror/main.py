@@ -1050,6 +1050,10 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                         "--lang=it-IT",
                         "--disable-blink-features=AutomationControlled",
                         "--no-default-browser-check",
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
                     ],
                 )
                 context = browser.new_context(

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import {
   CheckCircle,
   ExternalLink,
@@ -21,6 +22,7 @@ type TestState = { status: 'idle' | 'testing' | 'success' | 'error'; message: st
 
 export default function CrmIntegrationsPage() {
   const supabase = createClient()
+  const searchParams = useSearchParams()
 
   const [integrations, setIntegrations] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -36,9 +38,13 @@ export default function CrmIntegrationsPage() {
   const [hubspotTest, setHubspotTest] = useState<TestState>({ status: 'idle', message: null })
   const [webhookTest, setWebhookTest] = useState<TestState>({ status: 'idle', message: null })
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null)
+  const [salesforceNotice, setSalesforceNotice] = useState<string | null>(null)
 
   useEffect(() => {
     loadIntegrations()
+    const sf = searchParams.get('salesforce')
+    if (sf === 'connected') setSalesforceNotice('Salesforce connesso con successo.')
+    if (sf === 'error') setSalesforceNotice('Connessione Salesforce non riuscita. Riprova.')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -194,8 +200,48 @@ export default function CrmIntegrationsPage() {
     }
   }
 
+  const connectSalesforce = async () => {
+    setIsSaving(true)
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: row, error } = await supabase
+        .from('crm_integrations')
+        .insert({
+          user_id: user.id,
+          type: 'salesforce',
+          name: 'Salesforce',
+          config: {},
+          is_active: false,
+        })
+        .select('id')
+        .single()
+
+      if (error || !row?.id) {
+        setSalesforceNotice(error?.message || 'Impossibile creare integrazione Salesforce.')
+        return
+      }
+
+      const res = await fetch(`/api/crm/salesforce/oauth?integration_id=${row.id}`)
+      const data = await res.json().catch(() => null)
+      if (data?.url) {
+        window.location.href = data.url
+      } else {
+        setSalesforceNotice(data?.error || 'OAuth Salesforce non disponibile.')
+      }
+    } catch (e: unknown) {
+      setSalesforceNotice(e instanceof Error ? e.message : 'Errore di rete.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   const hasHubspot = integrations.some((i) => i.type === 'hubspot')
   const hasWebhook = integrations.some((i) => i.type === 'webhook')
+  const hasSalesforce = integrations.some((i) => i.type === 'salesforce')
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -207,13 +253,19 @@ export default function CrmIntegrationsPage() {
         </div>
       </div>
 
+      {salesforceNotice ? (
+        <div className="mb-4 text-sm px-3 py-2 rounded border border-slate-200 bg-slate-50 text-slate-700">
+          {salesforceNotice}
+        </div>
+      ) : null}
+
       {isLoading ? (
         <div className="p-8 flex justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-violet-500" />
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
             <div className="bg-white border rounded-xl p-5">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
@@ -295,6 +347,37 @@ export default function CrmIntegrationsPage() {
                   className="bg-orange-500 hover:bg-orange-600 text-white"
                 >
                   <Plus className="w-3 h-3 mr-1" /> Collega HubSpot
+                </Button>
+              )}
+            </div>
+
+            <div className="bg-white border rounded-xl p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 bg-sky-100 rounded-lg flex items-center justify-center">
+                  <span className="text-sky-700 font-bold text-sm">SF</span>
+                </div>
+                <div>
+                  <h3 className="font-semibold">Salesforce</h3>
+                  <p className="text-xs text-slate-500">OAuth + export Lead nativo</p>
+                </div>
+              </div>
+
+              {hasSalesforce ? (
+                <div className="flex items-center gap-2 text-emerald-600 text-sm">
+                  <CheckCircle className="w-4 h-4" /> Connesso
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  onClick={connectSalesforce}
+                  disabled={isSaving}
+                  className="bg-sky-600 hover:bg-sky-700 text-white"
+                >
+                  {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : (
+                    <>
+                      <Plus className="w-3 h-3 mr-1" /> Collega Salesforce
+                    </>
+                  )}
                 </Button>
               )}
             </div>

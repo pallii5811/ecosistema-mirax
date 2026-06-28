@@ -49,7 +49,7 @@ def _extract_context(html: str, needle: str, radius: int = 180) -> Optional[str]
     return snippet.strip()
 
 
-def fetch_homepage_html(url: str, timeout_s: float = 14.0) -> Tuple[str, str, int, float]:
+def fetch_homepage_html(url: str, timeout_s: float = 10.0) -> Tuple[str, str, int, float]:
     t0 = time.monotonic()
     r = requests.get(
         url,
@@ -162,7 +162,7 @@ def extract_phone_safe_from_html(html: Optional[str], existing_phone: Optional[s
         return None
 
 
-def run_technical_audit(url: str, timeout_s: float = 14.0, existing_phone: Optional[str] = None) -> Dict[str, Any]:
+def run_technical_audit(url: str, timeout_s: float = 10.0, existing_phone: Optional[str] = None) -> Dict[str, Any]:
     final_url, html, status, load_speed_seconds = fetch_homepage_html(url, timeout_s=timeout_s)
 
     issues: List[TechnicalIssue] = []

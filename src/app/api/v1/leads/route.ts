@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { apiError, apiResponse, authenticateApiKey } from '@/lib/api-auth'
 import { createServiceRoleClient } from '@/utils/supabase/server'
+import { normalizeLead } from '@/lib/nous/normalizer'
 
 function safeArray(v: any): any[] {
   if (!v) return []
@@ -79,4 +80,38 @@ export async function GET(req: NextRequest) {
   })
 
   return apiResponse({ data: clean, total, page, limit, pages })
+}
+
+export async function POST(req: NextRequest) {
+  const { userId, error } = await authenticateApiKey(req)
+  if (error || !userId) return apiError(error || 'Unauthorized', 401)
+
+  const body = (await req.json().catch(() => null)) as Record<string, unknown> | null
+  if (!body || typeof body !== 'object') return apiError('Invalid body', 400)
+
+  const lead = normalizeLead(body)
+  if (!lead.nome && !lead.sito && !lead.email) {
+    return apiError('Serve almeno nome, sito o email', 400)
+  }
+
+  const supabase = createServiceRoleClient()
+  const { data, error: insErr } = await supabase
+    .from('leads')
+    .insert({
+      user_id: userId,
+      name: lead.nome || null,
+      website: lead.sito || null,
+      email: lead.email || null,
+      phone: lead.telefono || null,
+      city: lead.citta || null,
+      category: lead.categoria || null,
+      score: lead.score || null,
+      raw: body,
+    })
+    .select('id, name, website, email, created_at')
+    .single()
+
+  if (insErr) return apiError(insErr.message || 'Insert failed', 500)
+
+  return apiResponse({ data }, 201)
 }

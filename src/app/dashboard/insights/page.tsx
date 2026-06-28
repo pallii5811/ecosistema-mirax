@@ -15,7 +15,29 @@ type PipelineItem = {
 }
 
 type ConversionStats = {
-  total_contacted: number; total_converted: number; total_rejected: number; conversion_rate: number
+  total_contacted: number
+  total_converted: number
+  total_rejected: number
+  conversion_rate: number
+  outreach_response_rate?: number
+  outreach_interest_rate?: number
+  pki_score?: number
+  pki_grade?: string
+  closure_patterns?: Array<{
+    signal: string
+    label: string
+    liftPts: number
+    segmentWinRate: number
+    baselineWinRate: number
+  }>
+}
+
+type PKIData = {
+  score: number
+  grade: string
+  components: Record<string, number>
+  signals: Array<{ key: string; label: string; value: number; unit: string; trend: string }>
+  top_lift_pattern: { label: string; liftPts: number; segmentWinRate: number } | null
 }
 
 type AIInsight = {
@@ -171,6 +193,7 @@ function formatCompactCurrency(v: number): string {
 export default function InsightsPage() {
   const [pipeline, setPipeline] = useState<PipelineItem[]>([])
   const [stats, setStats] = useState<ConversionStats | null>(null)
+  const [pkiData, setPkiData] = useState<PKIData | null>(null)
   const [aiData, setAiData] = useState<AIInsightsResponse | null>(null)
   const [actionsData, setActionsData] = useState<ActionsResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -194,10 +217,12 @@ export default function InsightsPage() {
       fetch('/api/pipeline', { cache: 'no-store' }).then(r => r.json()).catch(() => ({ items: [] })),
       fetch('/api/insights/stats', { cache: 'no-store' }).then(r => r.json()).catch(() => null),
       fetch('/api/insights/actions', { cache: 'no-store' }).then(r => r.json()).catch(() => null),
-    ]).then(([pData, sData, aData]) => {
+      fetch('/api/insights/pki', { cache: 'no-store' }).then(r => r.json()).catch(() => null),
+    ]).then(([pData, sData, aData, pki]) => {
       setPipeline(pData?.items || [])
       setStats(sData)
       if (aData && Array.isArray(aData.actions)) setActionsData(aData as ActionsResponse)
+      if (pki && typeof pki.score === 'number') setPkiData(pki as PKIData)
       setLoading(false)
       loadAI()
     })
@@ -296,6 +321,51 @@ export default function InsightsPage() {
               Vai alla Pipeline <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
+        </div>
+      )}
+
+      {/* PKI — Performance Analysis Indicator */}
+      {hasData && pkiData && (
+        <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Brain className="w-4 h-4 text-slate-400" strokeWidth={1.75} />
+              <span className="text-[11px] font-semibold text-slate-700 uppercase tracking-wider">PKI — Performance Index</span>
+            </div>
+            <span className={`text-xs font-bold px-2 py-0.5 rounded border ${
+              pkiData.grade === 'A' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : pkiData.grade === 'B' ? 'bg-blue-50 text-blue-700 border-blue-200'
+                  : pkiData.grade === 'C' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                    : 'bg-slate-50 text-slate-600 border-slate-200'
+            }`}>
+              Grado {pkiData.grade}
+            </span>
+          </div>
+          <div className="p-5 grid grid-cols-1 md:grid-cols-[auto_1fr] gap-6 items-center">
+            <div className="flex flex-col items-center justify-center">
+              <div className="text-4xl font-bold text-slate-900 tabular-nums">{pkiData.score}</div>
+              <div className="text-xs text-slate-500 mt-1">/ 100</div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {Object.entries(pkiData.components).map(([key, val]) => (
+                <div key={key} className="bg-slate-50 rounded-md px-3 py-2 border border-slate-100">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide truncate">
+                    {key.replace(/_/g, ' ')}
+                  </div>
+                  <div className="text-sm font-semibold text-slate-900 tabular-nums">{val}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          {pkiData.top_lift_pattern && (
+            <div className="px-5 pb-4">
+              <p className="text-xs text-slate-600 bg-violet-50 border border-violet-100 rounded-md px-3 py-2">
+                <span className="font-semibold text-violet-800">Pattern vincente:</span>{' '}
+                {pkiData.top_lift_pattern.label} — win rate {pkiData.top_lift_pattern.segmentWinRate}%
+                ({pkiData.top_lift_pattern.liftPts > 0 ? '+' : ''}{pkiData.top_lift_pattern.liftPts} pt vs baseline)
+              </p>
+            </div>
+          )}
         </div>
       )}
 
@@ -550,31 +620,55 @@ export default function InsightsPage() {
           )}
         </InsightCard>
 
-        {/* Conversion Stats from interactions */}
+        {/* Conversion Stats from outreach + pipeline */}
         <InsightCard icon={Target} color="bg-violet-500" title="Attività di Outreach">
           {stats ? (
-            <div className="grid grid-cols-2 gap-px bg-slate-200 border border-slate-200 rounded-md overflow-hidden">
-              <div className="bg-white p-3">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-500 uppercase tracking-wide mb-1"><Phone className="w-3 h-3" strokeWidth={1.75} /> Contattati</div>
-                <div className="text-xl font-semibold text-slate-900 tabular-nums">{stats.total_contacted}</div>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-px bg-slate-200 border border-slate-200 rounded-md overflow-hidden">
+                <div className="bg-white p-3">
+                  <div className="flex items-center gap-1 text-[11px] font-medium text-slate-500 uppercase tracking-wide mb-1"><Phone className="w-3 h-3" strokeWidth={1.75} /> Contattati</div>
+                  <div className="text-xl font-semibold text-slate-900 tabular-nums">{stats.total_contacted}</div>
+                </div>
+                <div className="bg-white p-3">
+                  <div className="flex items-center gap-1 text-[11px] font-medium text-slate-500 uppercase tracking-wide mb-1"><CheckCircle className="w-3 h-3 text-emerald-500" strokeWidth={1.75} /> Vinti</div>
+                  <div className="text-xl font-semibold text-slate-900 tabular-nums">{stats.total_converted}</div>
+                </div>
+                <div className="bg-white p-3">
+                  <div className="flex items-center gap-1 text-[11px] font-medium text-slate-500 uppercase tracking-wide mb-1"><XCircle className="w-3 h-3 text-red-500" strokeWidth={1.75} /> Persi</div>
+                  <div className="text-xl font-semibold text-slate-900 tabular-nums">{stats.total_rejected}</div>
+                </div>
+                <div className="bg-white p-3">
+                  <div className="flex items-center gap-1 text-[11px] font-medium text-slate-500 uppercase tracking-wide mb-1"><TrendingUp className="w-3 h-3" strokeWidth={1.75} /> Win rate</div>
+                  <div className="text-xl font-semibold text-slate-900 tabular-nums">{stats.conversion_rate}%</div>
+                </div>
               </div>
-              <div className="bg-white p-3">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-500 uppercase tracking-wide mb-1"><CheckCircle className="w-3 h-3 text-emerald-500" strokeWidth={1.75} /> Convertiti</div>
-                <div className="text-xl font-semibold text-slate-900 tabular-nums">{stats.total_converted}</div>
-              </div>
-              <div className="bg-white p-3">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-500 uppercase tracking-wide mb-1"><XCircle className="w-3 h-3 text-red-500" strokeWidth={1.75} /> Scartati</div>
-                <div className="text-xl font-semibold text-slate-900 tabular-nums">{stats.total_rejected}</div>
-              </div>
-              <div className="bg-white p-3">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-500 uppercase tracking-wide mb-1"><TrendingUp className="w-3 h-3" strokeWidth={1.75} /> Tasso</div>
-                <div className="text-xl font-semibold text-slate-900 tabular-nums">{stats.conversion_rate}%</div>
-              </div>
+              {(stats.outreach_interest_rate ?? 0) > 0 && (
+                <p className="text-xs text-slate-600">
+                  Tasso interesse outreach: <span className="font-semibold">{stats.outreach_interest_rate}%</span>
+                  {stats.outreach_response_rate ? ` · Risposte: ${stats.outreach_response_rate}%` : ''}
+                </p>
+              )}
             </div>
           ) : (
             <p className="text-sm text-slate-400">Contatta lead dalla tabella risultati per tracciare le conversioni.</p>
           )}
         </InsightCard>
+
+        {/* Closure patterns */}
+        {stats?.closure_patterns && stats.closure_patterns.length > 0 && (
+          <InsightCard icon={Zap} color="bg-amber-500" title="Pattern di Chiusura">
+            <div className="space-y-2">
+              {stats.closure_patterns.map((p) => (
+                <div key={p.signal} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-slate-700 truncate">{p.label}</span>
+                  <span className={`text-xs font-semibold tabular-nums flex-shrink-0 ${p.liftPts > 0 ? 'text-emerald-600' : p.liftPts < 0 ? 'text-red-500' : 'text-slate-500'}`}>
+                    {p.liftPts > 0 ? '+' : ''}{p.liftPts} pt ({p.segmentWinRate}%)
+                  </span>
+                </div>
+              ))}
+            </div>
+          </InsightCard>
+        )}
       </div>
       )}
     </div>

@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, Copy, Info, Linkedin, Loader2, Mail, MessageCircle, Phone, RefreshCw, Send, Sparkles, X } from 'lucide-react'
 import { generateWhatsAppPitchAction } from '@/app/dashboard/actions'
+import { ComplianceGateModal } from '@/components/ComplianceGateModal'
+import { verifyOutreachCompliance, type OutreachComplianceChannel } from '@/lib/outreach'
 
 type OutreachMode = 'sell_service' | 'mirax_promo'
 
@@ -81,6 +83,14 @@ export function OutreachLauncher({
   const [generatedOnce, setGeneratedOnce] = useState(false)
   const [mode, setMode] = useState<OutreachMode>(defaultMode)
   const [recontactAck, setRecontactAck] = useState(false)
+  const [complianceChecking, setComplianceChecking] = useState(false)
+  const [complianceGate, setComplianceGate] = useState<{
+    open: boolean
+    variant: 'blocked' | 'confirm'
+    title: string
+    message: string
+    pendingAction: (() => void) | null
+  }>({ open: false, variant: 'confirm', title: '', message: '', pendingAction: null })
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Esc to close + lock body scroll while the modal is open.
@@ -184,19 +194,70 @@ export function OutreachLauncher({
     logContact(channel)
   }
 
+  const runWithCompliance = async (channel: OutreachComplianceChannel, action: () => void) => {
+    if (blockedByGuardrail) return
+    setComplianceChecking(true)
+    try {
+      const result = await verifyOutreachCompliance({
+        channel,
+        email: channel === 'email' ? email : undefined,
+        phone: channel === 'email' ? undefined : telefono,
+        logBasis: false,
+      })
+
+      if (!result.allowed) {
+        setComplianceGate({
+          open: true,
+          variant: 'blocked',
+          title: 'Outreach non disponibile',
+          message: result.message,
+          pendingAction: null,
+        })
+        return
+      }
+
+      if (result.requiresConfirmation) {
+        setComplianceGate({
+          open: true,
+          variant: 'confirm',
+          title: 'Conferma compliance GDPR',
+          message: `${result.message} Procedendo confermi la base giuridica (legittimo interesse B2B, fonte pubblica) e la revisione umana del messaggio.`,
+          pendingAction: async () => {
+            await verifyOutreachCompliance({
+              channel,
+              email: channel === 'email' ? email : undefined,
+              phone: channel === 'email' ? undefined : telefono,
+              logBasis: true,
+            })
+            action()
+          },
+        })
+        return
+      }
+
+      action()
+    } finally {
+      setComplianceChecking(false)
+    }
+  }
+
   const openWhatsApp = () => {
     if (!waNumber) return
-    const text = encodeURIComponent(message.trim())
-    window.open(`https://wa.me/${waNumber}?text=${text}`, '_blank', 'noopener,noreferrer')
-    fireContacted('whatsapp')
+    void runWithCompliance('whatsapp', () => {
+      const text = encodeURIComponent(message.trim())
+      window.open(`https://wa.me/${waNumber}?text=${text}`, '_blank', 'noopener,noreferrer')
+      fireContacted('whatsapp')
+    })
   }
 
   const openEmail = () => {
     if (!hasEmail) return
-    const subject = encodeURIComponent(pitchSubject || `Proposta per ${nome}`)
-    const body = encodeURIComponent(message.trim() || pitchBody || '')
-    window.open(`mailto:${email}?subject=${subject}&body=${body}`, '_blank')
-    fireContacted('email')
+    void runWithCompliance('email', () => {
+      const subject = encodeURIComponent(pitchSubject || `Proposta per ${nome}`)
+      const body = encodeURIComponent(message.trim() || pitchBody || '')
+      window.open(`mailto:${email}?subject=${subject}&body=${body}`, '_blank')
+      fireContacted('email')
+    })
   }
 
   const openTelegram = () => {
@@ -214,8 +275,10 @@ export function OutreachLauncher({
 
   const openCall = () => {
     if (!telefono) return
-    window.open(`tel:${telefono.replace(/\s/g, '')}`, '_blank')
-    fireContacted('call')
+    void runWithCompliance('phone', () => {
+      window.open(`tel:${telefono.replace(/\s/g, '')}`, '_blank')
+      fireContacted('call')
+    })
   }
 
   const copyMessage = async () => {
@@ -383,7 +446,7 @@ export function OutreachLauncher({
               <button
                 type="button"
                 onClick={openWhatsApp}
-                disabled={!waNumber || !message.trim() || blockedByGuardrail}
+                disabled={!waNumber || !message.trim() || blockedByGuardrail || complianceChecking}
                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold py-2.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 title={waNumber ? 'Apri WhatsApp con messaggio precompilato' : 'Nessun numero disponibile'}
               >
@@ -392,7 +455,7 @@ export function OutreachLauncher({
               <button
                 type="button"
                 onClick={openEmail}
-                disabled={!hasEmail || blockedByGuardrail}
+                disabled={!hasEmail || blockedByGuardrail || complianceChecking}
                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold py-2.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 title={hasEmail ? 'Apri email precompilata' : 'Nessuna email disponibile'}
               >
@@ -420,7 +483,7 @@ export function OutreachLauncher({
                 <button
                   type="button"
                   onClick={openCall}
-                  disabled={blockedByGuardrail}
+                  disabled={blockedByGuardrail || complianceChecking}
                   className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold py-2.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   title="Chiama"
                 >
@@ -431,6 +494,19 @@ export function OutreachLauncher({
           </div>
         </div>
       )}
+
+      <ComplianceGateModal
+        open={complianceGate.open}
+        title={complianceGate.title}
+        message={complianceGate.message}
+        variant={complianceGate.variant}
+        onClose={() => setComplianceGate((g) => ({ ...g, open: false, pendingAction: null }))}
+        onConfirm={() => {
+          const fn = complianceGate.pendingAction
+          setComplianceGate((g) => ({ ...g, open: false, pendingAction: null }))
+          fn?.()
+        }}
+      />
     </>
   )
 }

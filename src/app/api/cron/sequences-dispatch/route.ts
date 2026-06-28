@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
+import { verifyCronBearer } from '@/lib/cron-auth'
+import { emitMiraxEvent } from '@/lib/events/emit'
 
 /**
  * GET/POST /api/cron/sequences-dispatch
@@ -78,18 +80,13 @@ async function sendViaResend(payload: {
 }
 
 async function handler(req: NextRequest) {
-  // Auth check
-  const authHeader = req.headers.get('authorization') || ''
-  const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
-  const cronSecret = process.env.CRON_SECRET || ''
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-
-  const expected = cronSecret || serviceRoleKey
-  if (!expected || bearer !== expected) {
-    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  const auth = verifyCronBearer(req)
+  if (!auth.ok) {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: auth.status })
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
   if (!supabaseUrl || !serviceRoleKey) {
     return NextResponse.json({ ok: false, error: 'Supabase env mancante' }, { status: 500 })
   }
@@ -128,7 +125,7 @@ async function handler(req: NextRequest) {
   const runIds = Array.from(new Set(dueEmails.map((e: any) => e.run_id)))
   const { data: activeRuns } = await supabase
     .from('sequence_runs')
-    .select('id, status, steps_total, steps_sent')
+    .select('id, user_id, status, steps_total, steps_sent')
     .in('id', runIds)
 
   const activeRunMap = new Map<string, any>()
@@ -162,6 +159,16 @@ async function handler(req: NextRequest) {
         .eq('id', (e as any).id)
       sent++
       runUpdates.set((e as any).run_id, (runUpdates.get((e as any).run_id) || 0) + 1)
+
+      await emitMiraxEvent(supabase, {
+        userId: (e as any).user_id,
+        eventType: 'sequence.email_sent',
+        payload: {
+          run_id: (e as any).run_id,
+          step_index: (e as any).step_index,
+          recipient_email: (e as any).recipient_email,
+        },
+      })
     } else {
       await supabase
         .from('scheduled_emails')
@@ -180,6 +187,14 @@ async function handler(req: NextRequest) {
     if (total > 0 && newSent >= total) {
       update.status = 'completed'
       update.completed_at = new Date().toISOString()
+      const runRow = activeRunMap.get(runId)
+      if (runRow?.user_id) {
+        await emitMiraxEvent(supabase, {
+          userId: runRow.user_id,
+          eventType: 'sequence.run_completed',
+          payload: { run_id: runId, steps_total: total },
+        })
+      }
     }
     await supabase.from('sequence_runs').update(update).eq('id', runId)
   }

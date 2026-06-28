@@ -1,6 +1,8 @@
 'use client'
 
 import { createContext, useContext } from 'react'
+import type { MiraxUiMode } from '@/lib/ui-mode'
+import type { MiraxLocale } from '@/lib/i18n'
 
 type PlanType = 'free' | 'starter' | 'pro' | 'agency'
 
@@ -24,6 +26,10 @@ type DashboardContextValue = {
   credits: number
   setCredits: (next: number) => void
   planType: PlanType
+  uiMode: MiraxUiMode
+  setUiMode: (mode: MiraxUiMode) => void
+  locale: MiraxLocale
+  setLocale: (locale: MiraxLocale) => void
 }
 
 const DashboardContext = createContext<DashboardContextValue | null>(null)

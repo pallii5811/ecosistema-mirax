@@ -253,12 +253,12 @@ async def process_single_url(url: str) -> Dict[str, Any]:
             
             page.on("request", lambda req: requests_log.append(req.url))
             
-            await page.goto(url, timeout=20000, wait_until="domcontentloaded")
+            await page.goto(url, timeout=15000, wait_until="domcontentloaded")
             try:
-                await page.wait_for_load_state("networkidle", timeout=5000)
+                await page.wait_for_load_state("networkidle", timeout=3000)
             except Exception:
                 pass
-            await page.wait_for_timeout(1500)
+            await page.wait_for_timeout(800)
             try:
                 page_title = await page.title()
             except Exception:
@@ -304,7 +304,7 @@ async def process_single_url(url: str) -> Dict[str, Any]:
             if not email:
                 email = _clean_business_email(await asyncio.wait_for(
                     deep_scrape_email_from_website(url, html_home=html),
-                    timeout=12,
+                    timeout=8,
                 ))
             light_contacts = None
             if not email:
@@ -360,6 +360,12 @@ async def process_single_url(url: str) -> Dict[str, Any]:
                 result["tech_stack"] = detect_tech_stack(html)
             except Exception:
                 pass
+
+            instagram = _extract_first_social_link(html, "instagram")
+            facebook = _extract_first_social_link(html, "facebook")
+            result["instagram"] = instagram
+            result["facebook"] = facebook
+            result["instagram_missing"] = not bool(instagram)
             
             # SSL
             result["has_ssl"] = url.startswith("https")
@@ -391,7 +397,7 @@ async def process_single_url(url: str) -> Dict[str, Any]:
             "has_facebook_pixel": bool(result.get("has_pixel")),
             "has_tiktok_pixel": False,
             "has_gtm": bool(result.get("has_gtm")),
-            "missing_instagram": False,
+            "missing_instagram": not bool(result.get("instagram")),
         }
     except Exception:
         pass
@@ -400,6 +406,10 @@ async def process_single_url(url: str) -> Dict[str, Any]:
 
 
 if app is not None:
+    @app.get("/health")
+    async def health() -> Dict[str, str]:
+        return {"status": "ok", "service": "mirax-worker-api"}
+
     class _AuditUrlRequest(BaseModel):
         url: str
 
@@ -412,6 +422,25 @@ if app is not None:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    class _ReauditRequest(BaseModel):
+        max: int = 20
+
+    @app.post("/reaudit")
+    async def trigger_reaudit(payload: _ReauditRequest) -> Dict[str, Any]:
+        """Avvia re-audit batch in background (per cron VPS o trigger manuale)."""
+        import threading
+
+        max_l = max(1, min(50, int(payload.max or 20)))
+
+        def _run() -> None:
+            try:
+                run_reaudit_worker(max_leads=max_l)
+            except Exception as e:
+                print(f"[reaudit] background error: {e}", flush=True)
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {"ok": True, "started": True, "max": max_l}
 
 
 async def _scrape_single_place_fallback(category: str, location: str, zone: Optional[str]) -> List[Dict[str, Any]]:
@@ -708,7 +737,7 @@ except Exception:  # pragma: no cover
     create_client = None
 
 
-SUPABASE_URL = "https://rtjmnjromqpsfqsgyfvp.supabase.co"
+SUPABASE_URL = (os.getenv("SUPABASE_URL") or "https://rtjmnjromqpsfqsgyfvp.supabase.co").strip()
 _SUPABASE_PUBLISHABLE_FALLBACK = "sb_publishable_oqwwYsG10z7HvPrJOifF-w_J7ARllCp"
 
 
@@ -751,6 +780,7 @@ def _calc_freshness_score(last_audited_iso: Optional[str]) -> int:
 
 
 def _calc_opportunity_score(r: Dict[str, Any]) -> int:
+    """Rule-based opportunity score (0-100). See docs/SCORE_AI_RULES.md — no ML."""
     score = 0
     try:
         tech = r.get("tech_stack") or []
@@ -917,11 +947,24 @@ def _format_results(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "html_errors": int(r.get("html_errors") or 0),
                 "technical_report": r.get("technical_report") or {},
 
-                # Freshness
+                # Freshness (Lead Object v2)
+                "lead_object_version": 2,
                 "last_audited_at": _utc_now_iso(),
                 "freshness_score": 100,
                 "audit_version": 2,
             }
+
+        for _bk in (
+            "business_hiring_jobs",
+            "business_tender_hits",
+            "detected_crm_stack",
+            "business_sector_hits",
+            "audit_changes",
+            "business_events_enriched_at",
+            "business_signals",
+        ):
+            if _bk in r and r.get(_bk) is not None:
+                result_dict[_bk] = r.get(_bk)
 
         try:
             result_dict["opportunity_score"] = _calc_opportunity_score(result_dict)
@@ -988,8 +1031,20 @@ def _apply_audit_url_payload_to_lead(lead: Dict[str, Any], audit: Dict[str, Any]
         updated["email"] = audit.get("email")
     if audit.get("telefono") and not lead.get("telefono"):
         updated["telefono"] = audit.get("telefono")
+    if audit.get("instagram") and not lead.get("instagram"):
+        updated["instagram"] = audit.get("instagram")
+    if audit.get("facebook") and not lead.get("facebook"):
+        updated["facebook"] = audit.get("facebook")
+    ig_missing = audit.get("instagram_missing")
+    if ig_missing is None and audit.get("audit") and isinstance(audit.get("audit"), dict):
+        ig_missing = audit["audit"].get("missing_instagram")
+    if ig_missing is not None:
+        updated["instagram_missing"] = bool(ig_missing)
+        prev_audit = updated.get("audit") if isinstance(updated.get("audit"), dict) else {}
+        updated["audit"] = {**prev_audit, "missing_instagram": bool(ig_missing)}
     updated["last_audited_at"] = _utc_now_iso()
     updated["freshness_score"] = 100
+    updated["lead_object_version"] = 2
     updated["audit_version"] = 2
     try:
         updated["opportunity_score"] = _calc_opportunity_score(updated)
@@ -1004,35 +1059,42 @@ async def _finish_pending_audits(formatted: List[Dict[str, Any]], publish_cb=Non
     if not pending_idxs:
         return out
     print(f"[worker_supabase] Completion pass: {len(pending_idxs)} lead con audit pending", flush=True)
-    for i in pending_idxs:
-        lead = out[i]
-        if not isinstance(lead, dict):
-            continue
-        site = (lead.get("sito") or lead.get("website") or "").strip()
-        if not site or site.upper() in {"N/D", "N/A", "N.D.", "N/D."}:
-            lead = dict(lead)
-            lead["tech_stack"] = ["NO WEBSITE"]
-            lead["technical_report"] = lead.get("technical_report") or {"has_google_ads": False}
-            lead["last_audited_at"] = _utc_now_iso()
-            out[i] = lead
-            if publish_cb:
-                try:
-                    publish_cb(out)
-                except Exception:
-                    pass
-            continue
-        url = site if site.startswith("http") else f"https://{site}"
-        try:
-            audit = await asyncio.wait_for(process_single_url(url), timeout=55.0)
-            if isinstance(audit, dict):
-                out[i] = _apply_audit_url_payload_to_lead(lead, audit)
+    sem = asyncio.Semaphore(3)
+
+    async def _audit_one(i: int) -> None:
+        async with sem:
+            lead = out[i]
+            if not isinstance(lead, dict):
+                return
+            site = (lead.get("sito") or lead.get("website") or "").strip()
+            if not site or site.upper() in {"N/D", "N/A", "N.D.", "N/D."}:
+                lead = dict(lead)
+                lead["tech_stack"] = ["NO WEBSITE"]
+                lead["technical_report"] = lead.get("technical_report") or {"has_google_ads": False}
+                lead["last_audited_at"] = _utc_now_iso()
+                lead["freshness_score"] = 100
+                lead["lead_object_version"] = 2
+                out[i] = lead
                 if publish_cb:
                     try:
                         publish_cb(out)
                     except Exception:
                         pass
-        except Exception as e:
-            print(f"[worker_supabase] completion-pass audit failed {url}: {e}", flush=True)
+                return
+            url = site if site.startswith("http") else f"https://{site}"
+            try:
+                audit = await asyncio.wait_for(process_single_url(url), timeout=45.0)
+                if isinstance(audit, dict):
+                    out[i] = _apply_audit_url_payload_to_lead(lead, audit)
+                    if publish_cb:
+                        try:
+                            publish_cb(out)
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"[worker_supabase] completion-pass audit failed {url}: {e}", flush=True)
+
+    await asyncio.gather(*[_audit_one(i) for i in pending_idxs])
     return out
 
 
@@ -1046,7 +1108,7 @@ def _organic_env_int(name: str, default: int, min_value: int, max_value: int) ->
 
 
 def _organic_enabled() -> bool:
-    raw = os.getenv("ORGANIC_DISCOVERY_ENABLED", "true")
+    raw = os.getenv("ORGANIC_DISCOVERY_ENABLED", "false")
     return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
 
@@ -1555,7 +1617,43 @@ def _lead_merge_quality(item: Dict[str, Any]) -> int:
     tr = item.get("technical_report")
     if isinstance(tr, dict) and tr:
         score += 10
+        if tr.get("load_speed_seconds") is not None or tr.get("html_errors") is not None:
+            score += 25
+    if item.get("last_audited_at"):
+        score += 15
+    try:
+        if int(item.get("audit_version") or 0) >= 2:
+            score += 10
+    except Exception:
+        pass
     return score
+
+
+def _merge_lead_pair(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge two lead records — never downgrade a complete audit to pending."""
+    ex_pending = _lead_has_pending_audit(existing)
+    inc_pending = _lead_has_pending_audit(incoming)
+    if inc_pending and not ex_pending:
+        return existing
+    if ex_pending and not inc_pending:
+        winner, loser = incoming, existing
+    elif _lead_merge_quality(incoming) > _lead_merge_quality(existing):
+        winner, loser = incoming, existing
+    elif _lead_merge_quality(existing) > _lead_merge_quality(incoming):
+        winner, loser = existing, incoming
+    else:
+        winner, loser = incoming, existing
+
+    merged = dict(loser)
+    merged.update(winner)
+    for field in ("telefono", "phone", "email", "nome", "azienda", "instagram", "facebook"):
+        if not merged.get(field) and loser.get(field):
+            merged[field] = loser.get(field)
+    if _lead_has_pending_audit(merged) and not _lead_has_pending_audit(loser):
+        merged["tech_stack"] = loser.get("tech_stack")
+        if isinstance(loser.get("technical_report"), dict):
+            merged["technical_report"] = loser.get("technical_report")
+    return merged
 
 
 def _merge_formatted_results(primary: List[Dict[str, Any]], extra: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1576,8 +1674,7 @@ def _merge_formatted_results(primary: List[Dict[str, Any]], extra: List[Dict[str
             order.append(k)
             by_key[k] = item
             continue
-        if _lead_merge_quality(item) > _lead_merge_quality(by_key[k]):
-            by_key[k] = item
+        by_key[k] = _merge_lead_pair(by_key[k], item)
     return [by_key[k] for k in order if k in by_key]
 
 
@@ -2043,26 +2140,93 @@ async def _run_core_scraper(category: str, location: str, zone: Optional[str] = 
             except Exception:
                 pass
 
-    # Arricchisci ogni lead con recensioni e competitor
-    # Lo facciamo DOPO il loop principale per non interferire con lo scraping
-    for lead in results:
-        try:
-            enrichment = await asyncio.wait_for(
-                _scrape_reviews_and_competitors(
-                    business_name=lead.get("business_name", ""),
-                    category=category,
-                    location=location,
-                ),
-                timeout=45.0
-            )
-            lead["google_reviews"] = enrichment.get("google_reviews", [])
-            lead["local_competitors"] = enrichment.get("local_competitors", [])
-            await asyncio.sleep(random.uniform(1.0, 2.0))
-        except Exception as e:
-            print(f"[enrichment] Errore per {lead.get('business_name','?')}: {e}")
-            # Non crashare — i campi restano liste vuote
+    # Reviews/competitors: optional enrichment — must NOT block job completion (Blocco 1.3).
+    enrich_reviews = os.getenv("ENRICH_REVIEWS", "0").strip().lower() in {"1", "true", "yes"}
+    if enrich_reviews and results:
+        for lead in results:
+            try:
+                enrichment = await asyncio.wait_for(
+                    _scrape_reviews_and_competitors(
+                        business_name=lead.get("business_name", ""),
+                        category=category,
+                        location=location,
+                    ),
+                    timeout=12.0,
+                )
+                lead["google_reviews"] = enrichment.get("google_reviews", [])
+                lead["local_competitors"] = enrichment.get("local_competitors", [])
+            except Exception as e:
+                print(f"[enrichment] Skipped for {lead.get('business_name','?')}: {e}")
+                lead["google_reviews"] = lead.get("google_reviews") or []
+                lead["local_competitors"] = lead.get("local_competitors") or []
 
     return results
+
+
+def _count_business_event_signals(leads: List[Dict[str, Any]]) -> int:
+    try:
+        from business_events_enrich import count_lead_signals
+
+        n = 0
+        for lead in leads or []:
+            if isinstance(lead, dict) and count_lead_signals(lead) > 0:
+                n += 1
+        return n
+    except Exception:
+        n = 0
+        for lead in leads or []:
+            if not isinstance(lead, dict):
+                continue
+            if (
+                lead.get("business_hiring_jobs")
+                or lead.get("business_tender_hits")
+                or lead.get("business_sector_hits")
+                or lead.get("detected_crm_stack")
+                or lead.get("business_signals")
+            ):
+                n += 1
+        return n
+
+
+async def _run_business_events_enrichment(
+    formatted: List[Dict[str, Any]],
+    location: str,
+    *,
+    supabase: Any = None,
+    user_id: Optional[str] = None,
+    publish_cb: Optional[Any] = None,
+    external_only: bool = False,
+) -> List[Dict[str, Any]]:
+    """Business events enrichment post-audit."""
+    enrich_business = os.getenv("ENRICH_BUSINESS_EVENTS", "0").strip().lower() in {"1", "true", "yes"}
+    if not enrich_business or not formatted:
+        return formatted
+    try:
+        from business_events_enrich import enrich_results_business_events
+
+        max_be = int(os.getenv("ENRICH_BUSINESS_EVENTS_MAX", "12") or "12")
+        cap = max(1, min(max_be, 25))
+        await enrich_results_business_events(
+            formatted,
+            location,
+            max_leads=cap,
+            supabase=supabase,
+            user_id=user_id,
+            audit_only=not external_only,
+            external_only=external_only,
+            on_progress=(lambda snap, _n: publish_cb(snap)) if publish_cb else None,
+        )
+        touched = min(len(formatted), cap)
+        signals = _count_business_event_signals(formatted[:cap])
+        phase = "external" if external_only else "audit"
+        print(
+            f"[business_events] post-audit enrich ({phase}): {{ status: 'done', total: {len(formatted)}, "
+            f"touched: {touched}, enrich: {signals} }}",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"[business_events] post-audit skip: {e}", flush=True)
+    return formatted
 
 
 def main() -> None:
@@ -2235,7 +2399,8 @@ def main() -> None:
     except Exception:
         cooldown_s = 20
     try:
-        user_recent_minutes = int(getattr(args, "user_recent_minutes", 10) or 10)
+        _ur = getattr(args, "user_recent_minutes", None)
+        user_recent_minutes = 10 if _ur is None else int(_ur)
     except Exception:
         user_recent_minutes = 10
 
@@ -2269,6 +2434,8 @@ def main() -> None:
                     .execute()
                 )
                 rows = getattr(resp, "data", None) or []
+                if not rows and mode == "user":
+                    print(f"[worker_supabase] Nessun job pending (mode={mode}, recent_min={user_recent_minutes})", flush=True)
 
             # Backlog selection
             if (not rows) and mode in {"all", "backlog"}:
@@ -2317,16 +2484,17 @@ def main() -> None:
 
             # Per-job scrape depth: zone may hold the requested lead cap from the frontend.
             try:
-                job_max = 500
+                default_max = int(os.getenv("DEMO_MAX_RESULTS", "50") or "50")
+                job_max = default_max
                 z = job.get("zone")
                 if isinstance(z, str) and z.strip().isdigit():
-                    job_max = max(100, int(z.strip()))
+                    job_max = min(500, max(5, int(z.strip())))
                 elif isinstance(z, dict) and z.get("max_results"):
-                    job_max = max(100, int(z.get("max_results") or 500))
+                    job_max = min(500, max(5, int(z.get("max_results") or default_max)))
                 os.environ["DEMO_MAX_RESULTS"] = str(job_max)
                 print(f"[worker_supabase] Job max_results={job_max}", flush=True)
             except Exception:
-                os.environ["DEMO_MAX_RESULTS"] = "500"
+                os.environ["DEMO_MAX_RESULTS"] = "50"
 
             # Atomic claim: only one worker should be able to update pending -> processing.
             claim = (
@@ -2566,6 +2734,9 @@ def main() -> None:
                 print(f"[worker_supabase] Organic website discovery skipped: {e}")
 
             formatted = _filter_non_domestic_refrigeration_results(category, formatted)
+            with _rt_lock:
+                if _rt_results:
+                    formatted = _merge_formatted_results(_rt_results, formatted)
 
             try:
                 if formatted:
@@ -2582,12 +2753,57 @@ def main() -> None:
             except Exception as e:
                 print(f"[worker_supabase] completion-pass skipped: {e}", flush=True)
 
+            try:
+                job_user_id = str(job.get("user_id") or "").strip() or None
+                formatted = asyncio.run(
+                    _run_business_events_enrichment(
+                        formatted,
+                        location,
+                        supabase=supabase,
+                        user_id=job_user_id,
+                        publish_cb=_publish_job_results_safe,
+                    )
+                )
+                formatted = _publish_job_results_safe(formatted)
+            except Exception as e:
+                print(f"[worker_supabase] business_events enrichment failed: {e}", flush=True)
+
             pending_left = sum(1 for l in formatted if isinstance(l, dict) and _lead_has_pending_audit(l))
-            final_status = "completed" if pending_left == 0 else "processing"
+            # Maps scrape finished → mark completed so UI stops spinner; resume-audits finishes light audits.
+            final_status = "completed"
             if pending_left > 0:
-                print(f"[worker_supabase] Job {job_id}: {pending_left} audit ancora pending — status={final_status}", flush=True)
+                print(
+                    f"[worker_supabase] Job {job_id}: {pending_left} audit leggeri pending — "
+                    f"status={final_status} (resume via frontend/worker)",
+                    flush=True,
+                )
 
             formatted = _publish_job_results_safe(formatted, status=final_status)
+
+            enrich_business = os.getenv("ENRICH_BUSINESS_EVENTS", "0").strip().lower() in {"1", "true", "yes"}
+            if enrich_business and formatted:
+                import threading
+
+                _bg_formatted = [dict(x) if isinstance(x, dict) else x for x in formatted]
+                _bg_user = str(job.get("user_id") or "").strip() or None
+
+                def _bg_external_enrich() -> None:
+                    try:
+                        asyncio.run(
+                            _run_business_events_enrichment(
+                                _bg_formatted,
+                                location,
+                                supabase=supabase,
+                                user_id=_bg_user,
+                                publish_cb=_publish_job_results_safe,
+                                external_only=True,
+                            )
+                        )
+                        _publish_job_results_safe(_bg_formatted)
+                    except Exception as ex:
+                        print(f"[worker_supabase] background enrich failed: {ex}", flush=True)
+
+                threading.Thread(target=_bg_external_enrich, daemon=True).start()
 
             # Cooldown between jobs (avoid hammering and give browser/OS time to settle)
             time.sleep(max(0, cooldown_s))
@@ -2619,7 +2835,7 @@ def main() -> None:
                         pending_left = sum(
                             1 for l in current_results if isinstance(l, dict) and _lead_has_pending_audit(l)
                         )
-                        err_status = "processing" if pending_left > 0 else "completed"
+                        err_status = "completed"
                         supabase.table("searches").update({"status": err_status, "results": current_results}).eq("id", locals()["job_id"]).execute()
                     else:
                         supabase.table("searches").update(
@@ -2648,33 +2864,9 @@ async def _reaudit_single_lead(
         if not website:
             return None
 
-        # Import from backend
+        url = website if website.startswith("http") else f"https://{website}"
         try:
-            for _p in (_BACKEND_DIR, _REPO_ROOT):
-                if _p not in sys.path:
-                    sys.path.insert(0, _p)
-            from backend import main as core  # type: ignore
-        except Exception:
-            return None
-
-        audit_fn = getattr(core, "audit_website_with_status", None)
-        if not audit_fn:
-            return None
-
-        try:
-            (
-                audit,
-                tech_stack,
-                load_speed_s,
-                domain_creation_date,
-                domain_expiration_date,
-                email,
-                http_status,
-                error,
-                html,
-                error_line,
-                error_hint,
-            ) = await asyncio.wait_for(audit_fn(website), timeout=20.0)
+            audit = await asyncio.wait_for(process_single_url(url), timeout=45.0)
         except asyncio.TimeoutError:
             try:
                 logger.warning(f"[reaudit] Timeout per {website}")
@@ -2688,32 +2880,11 @@ async def _reaudit_single_lead(
                 pass
             return None
 
-        updated: Dict[str, Any] = dict(lead_data)
-        try:
-            updated["meta_pixel"] = bool(getattr(audit, "has_facebook_pixel", False))
-        except Exception:
-            pass
-        try:
-            updated["google_tag_manager"] = bool(getattr(audit, "has_gtm", False))
-        except Exception:
-            pass
+        if not isinstance(audit, dict):
+            return None
 
-        updated["last_audited_at"] = _utc_now_iso()
-        updated["freshness_score"] = 100
-        updated["audit_version"] = 2
+        updated = _apply_audit_url_payload_to_lead(lead_data, audit)
 
-        try:
-            updated["opportunity_score"] = _calc_opportunity_score(updated)
-        except Exception:
-            pass
-
-        try:
-            if email and not lead_data.get("email"):
-                updated["email"] = email
-        except Exception:
-            pass
-
-        # Detect what changed
         try:
             changes = _detect_changes(lead_data, updated)
             existing_changes = lead_data.get("change_history") or []
@@ -2932,8 +3103,10 @@ async def scrape_social(data: dict):
                 args=[
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
-                    "--disable-blink-features=AutomationControlled"
-                ]
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-blink-features=AutomationControlled",
+                ],
             )
             context = await browser.new_context(
                 user_agent=(
@@ -3073,7 +3246,12 @@ async def scrape_registry(data: dict):
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox"]
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ],
             )
             context = await browser.new_context(
                 user_agent=(

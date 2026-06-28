@@ -19,7 +19,11 @@ export async function GET(_: NextRequest) {
   if (error) return Response.json({ error: error.message }, { status: 500 })
 
   const list = Array.isArray(data) ? data : []
-  const preferred = list.find((i) => i.type === 'hubspot') ?? list.find((i) => i.type === 'webhook') ?? null
+  const preferred =
+    list.find((i) => i.type === 'hubspot') ??
+    list.find((i) => i.type === 'salesforce') ??
+    list.find((i) => i.type === 'webhook') ??
+    null
 
   return Response.json({ integration: preferred })
 }

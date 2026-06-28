@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { Environment, EnvironmentListSummary } from '@/types/environments'
 import {
@@ -29,7 +29,28 @@ export function EnvironmentDetail({ environment, initialLeads, childLists = [] }
   const [leads] = useState(initialLeads)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [stats, setStats] = useState(environment.stats)
+  const [knowledge, setKnowledge] = useState<Array<{ id: string; title: string; object_type: string; confidence: number }>>([])
   const { success: toastSuccess, error: toastError } = useToast()
+
+  useEffect(() => {
+    fetch(`/api/knowledge?environment_id=${environment.id}&limit=8`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (Array.isArray(d?.items)) {
+          setKnowledge(
+            d.items.map((k: any) => ({
+              id: k.id,
+              title: k.title,
+              object_type: k.object_type,
+              confidence: Number(k.confidence) || 0.5,
+            })),
+          )
+        }
+      })
+      .catch(() => {
+        /* optional */
+      })
+  }, [environment.id])
 
   const handleRefreshStats = async () => {
     setIsRefreshing(true)
@@ -146,13 +167,35 @@ export function EnvironmentDetail({ environment, initialLeads, childLists = [] }
         </div>
       </div>
 
-      {childLists.length > 0 && (
-        <SemanticMap
-          envName={environment.name}
-          envColor={environment.color}
-          totalLeads={stats?.total_leads ?? leads.length}
-          lists={childLists}
-        />
+      <SemanticMap
+        environmentId={environment.id}
+        envName={environment.name}
+        envColor={environment.color}
+      />
+
+      {knowledge.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-lg p-5">
+          <h2 className="text-sm font-semibold text-slate-900 mb-1">Knowledge Objects</h2>
+          <p className="text-xs text-slate-500 mb-4">
+            Pattern e correlazioni estratti da pipeline, outreach e statistiche ambiente.
+          </p>
+          <div className="space-y-2">
+            {knowledge.map((k) => (
+              <div
+                key={k.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3"
+              >
+                <div className="min-w-0">
+                  <div className="font-medium text-slate-900 truncate">{k.title}</div>
+                  <div className="text-[11px] text-amber-700 uppercase tracking-wide mt-0.5">{k.object_type}</div>
+                </div>
+                <span className="text-xs font-semibold text-slate-500 tabular-nums">
+                  {Math.round(k.confidence * 100)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {childLists.length > 0 && (

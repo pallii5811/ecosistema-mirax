@@ -1,30 +1,37 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { loadInsightsSnapshot } from '@/lib/insights-data'
 
+/**
+ * GET /api/insights/stats
+ * Metriche reali: pipeline + outreach (no mock da lead_interactions).
+ */
 export async function GET() {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
-  const { data, error } = await supabase
-    .from('lead_interactions')
-    .select('action')
-    .eq('user_id', user.id)
-
-  if (error) {
-    return NextResponse.json({
-      total_contacted: 0, total_converted: 0, total_rejected: 0, conversion_rate: 0,
-    })
-  }
-
-  const contacted = data?.filter((i: any) => i.action === 'contacted').length || 0
-  const converted = data?.filter((i: any) => i.action === 'converted').length || 0
-  const rejected = data?.filter((i: any) => i.action === 'rejected').length || 0
+  const snapshot = await loadInsightsSnapshot(supabase, user.id)
+  const { pipeline, outreach } = snapshot
 
   return NextResponse.json({
-    total_contacted: contacted,
-    total_converted: converted,
-    total_rejected: rejected,
-    conversion_rate: contacted > 0 ? Math.round((converted / contacted) * 100) : 0,
+    total_contacted: outreach.contacted,
+    total_converted: pipeline.won,
+    total_rejected: pipeline.lost,
+    conversion_rate: pipeline.winRate,
+    outreach_response_rate: outreach.responseRate,
+    outreach_interest_rate: outreach.interestRate,
+    pipeline_active: pipeline.active,
+    pipeline_stagnant: pipeline.stagnant,
+    total_revenue: pipeline.totalRevenue,
+    pipeline_value: pipeline.pipelineValue,
+    avg_deal_size: Math.round(pipeline.avgDealSize),
+    avg_lead_score: pipeline.avgScore,
+    pki_score: snapshot.pki.score,
+    pki_grade: snapshot.pki.grade,
+    closure_patterns: snapshot.closurePatterns.slice(0, 5),
+    source: 'pipeline_outreach',
   })
 }

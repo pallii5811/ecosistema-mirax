@@ -1,0 +1,24 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/reaudit",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/process-events",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/sequences-dispatch",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/knowledge-feed",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/ops/worker-health",
+      "schedule": "0 * * * *"
+    }
+  ]
+}

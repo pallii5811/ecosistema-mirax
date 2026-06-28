@@ -1,4 +1,5 @@
 import { isAuditPendingLead } from '@/lib/lead-audit-status'
+import { LEAD_OBJECT_VERSION, normalizeLeadObject } from '@/lib/lead-object'
 
 const BLANK_SITES = new Set(['', 'n/d', 'n/a', 'n.d.', 'none', 'null', '-'])
 
@@ -66,7 +67,15 @@ export function mergeAuditIntoLead(
   const existingPhone = String(lead.telefono ?? lead.phone ?? '').replace(/\D/g, '')
   const auditPhone = String(audit.telefono ?? audit.phone ?? '').replace(/\D/g, '')
 
-  return {
+  const auditedAt = new Date().toISOString()
+  const igMissing =
+    typeof audit.instagram_missing === 'boolean'
+      ? audit.instagram_missing
+      : audit.audit && typeof audit.audit === 'object'
+        ? Boolean((audit.audit as Record<string, unknown>).missing_instagram)
+        : !String(audit.instagram ?? '').trim()
+
+  const merged = normalizeLeadObject({
     ...lead,
     meta_pixel: Boolean(audit.has_pixel ?? audit.meta_pixel),
     google_tag_manager: Boolean(audit.has_gtm ?? audit.google_tag_manager),
@@ -75,6 +84,9 @@ export function mergeAuditIntoLead(
       existingPhone.length >= 8
         ? lead.telefono ?? lead.phone
         : audit.telefono ?? audit.phone ?? lead.telefono ?? lead.phone,
+    instagram: String(audit.instagram ?? lead.instagram ?? '').trim() || null,
+    facebook: String(audit.facebook ?? lead.facebook ?? '').trim() || null,
+    instagram_missing: igMissing,
     tech_stack,
     technical_report: {
       ...prevTr,
@@ -86,19 +98,21 @@ export function mergeAuditIntoLead(
     },
     audit:
       audit.audit && typeof audit.audit === 'object'
-        ? audit.audit
+        ? { ...(audit.audit as Record<string, unknown>), missing_instagram: igMissing }
         : {
             has_ssl: audit.has_ssl !== false,
             has_facebook_pixel: Boolean(audit.has_pixel),
             has_gtm: Boolean(audit.has_gtm),
             has_tiktok_pixel: false,
             is_mobile_responsive: false,
-            missing_instagram: false,
+            missing_instagram: igMissing,
           },
-    last_audited_at: new Date().toISOString(),
+    last_audited_at: auditedAt,
     freshness_score: 100,
-    audit_version: 2,
-  }
+    audit_version: LEAD_OBJECT_VERSION,
+  })
+
+  return merged as Record<string, unknown>
 }
 
 export function leadNeedsResumeAudit(lead: unknown): boolean {

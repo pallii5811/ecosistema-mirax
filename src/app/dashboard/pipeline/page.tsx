@@ -4,8 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Plus, GripVertical, Phone, Mail, Globe, MapPin, Tag, Trophy,
   Sparkles, Calendar, FileText, XCircle, ChevronRight, Trash2,
-  DollarSign, StickyNote, X, Loader2, TrendingUp, Users, Target, Euro
+  DollarSign, StickyNote, X, Loader2, TrendingUp, Users, Target, Euro, MessageCircle
 } from 'lucide-react'
+import { PIPELINE_STAGE_META, PIPELINE_STAGES } from '@/lib/pipeline-stages'
+import { useOutreachStatus } from '@/hooks/useOutreachStatus'
+import { logOutreach, OUTCOME_META, type Outcome } from '@/lib/outreach'
 
 type PipelineItem = {
   id: string
@@ -21,18 +24,31 @@ type PipelineItem = {
   notes: string | null
   next_action: string | null
   next_action_date: string | null
+  last_outreach_channel?: string | null
+  last_outreach_at?: string | null
+  last_outreach_status?: string | null
   created_at: string
   updated_at: string
 }
 
-const STAGES = [
-  { id: 'nuovo', label: 'Nuovo', color: 'bg-slate-400', lightBg: 'bg-white', border: 'border-slate-200', text: 'text-slate-700', icon: Sparkles },
-  { id: 'contattato', label: 'Contattato', color: 'bg-blue-500', lightBg: 'bg-white', border: 'border-slate-200', text: 'text-slate-700', icon: Phone },
-  { id: 'meeting', label: 'Meeting', color: 'bg-violet-500', lightBg: 'bg-white', border: 'border-slate-200', text: 'text-slate-700', icon: Calendar },
-  { id: 'proposta', label: 'Proposta', color: 'bg-amber-500', lightBg: 'bg-white', border: 'border-slate-200', text: 'text-slate-700', icon: FileText },
-  { id: 'vinto', label: 'Vinto', color: 'bg-emerald-500', lightBg: 'bg-white', border: 'border-slate-200', text: 'text-slate-700', icon: Trophy },
-  { id: 'perso', label: 'Perso', color: 'bg-slate-300', lightBg: 'bg-white', border: 'border-slate-200', text: 'text-slate-500', icon: XCircle },
-]
+const STAGE_UI: Record<string, { color: string; icon: typeof Sparkles }> = {
+  nuovo: { color: 'bg-slate-400', icon: Sparkles },
+  contattato: { color: 'bg-blue-500', icon: Phone },
+  meeting: { color: 'bg-violet-500', icon: Calendar },
+  proposta: { color: 'bg-amber-500', icon: FileText },
+  vinto: { color: 'bg-emerald-500', icon: Trophy },
+  perso: { color: 'bg-slate-300', icon: XCircle },
+}
+
+const STAGES = PIPELINE_STAGES.map((id) => ({
+  id,
+  label: PIPELINE_STAGE_META[id].label,
+  color: STAGE_UI[id]?.color ?? 'bg-slate-400',
+  lightBg: 'bg-white',
+  border: 'border-slate-200',
+  text: 'text-slate-700',
+  icon: STAGE_UI[id]?.icon ?? Sparkles,
+}))
 
 const EMPTY_FORM = {
   lead_name: '', lead_website: '', lead_phone: '', lead_email: '',
@@ -68,6 +84,7 @@ export default function PipelinePage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dragOverStage, setDragOverStage] = useState<string | null>(null)
+  const { getOutcome, isContacted, reload: reloadOutreach } = useOutreachStatus()
 
   const fetchItems = useCallback(async () => {
     try {
@@ -123,8 +140,28 @@ export default function PipelinePage() {
         body: JSON.stringify({ id: item.id, stage: newStage }),
       })
       if (!res.ok) setItems(prev)
+      else await fetchItems()
     } catch { setItems(prev) }
   }
+
+  const recordOutcome = useCallback(
+    async (item: PipelineItem, outcome: Outcome) => {
+      await logOutreach({
+        website: item.lead_website,
+        name: item.lead_name,
+        channel: 'other',
+        status: outcome,
+        leadScore: item.lead_score,
+        leadPhone: item.lead_phone ?? undefined,
+        leadEmail: item.lead_email ?? undefined,
+        leadCity: item.lead_city ?? undefined,
+        leadCategory: item.lead_category ?? undefined,
+      })
+      reloadOutreach()
+      await fetchItems()
+    },
+    [fetchItems, reloadOutreach],
+  )
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, item: PipelineItem) => {
     setDraggedId(item.id)
@@ -304,6 +341,8 @@ export default function PipelinePage() {
                       const isDragging = draggedId === item.id
                       const stageIdx = STAGES.findIndex(s => s.id === item.stage)
                       const nextStage = stageIdx < STAGES.length - 2 ? STAGES[stageIdx + 1] : null
+                      const outcome = getOutcome(item.lead_website, item.lead_name)
+                      const contacted = isContacted(item.lead_website, item.lead_name) || !!item.last_outreach_at
                       return (
                         <div
                           key={item.id}
@@ -333,6 +372,16 @@ export default function PipelinePage() {
                               {item.deal_value > 0 && (
                                 <span className="text-[11px] font-semibold tabular-nums text-slate-700 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
                                   {formatCurrency(item.deal_value)}
+                                </span>
+                              )}
+                              {contacted && (
+                                <span className="text-[10px] font-medium text-blue-600 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5">
+                                  <MessageCircle className="w-2.5 h-2.5" /> Outreach
+                                </span>
+                              )}
+                              {outcome && OUTCOME_META[outcome as Outcome] && (
+                                <span className="text-[10px] font-medium text-slate-600 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
+                                  {OUTCOME_META[outcome as Outcome].label}
                                 </span>
                               )}
                               {item.lead_city && (
@@ -392,19 +441,35 @@ export default function PipelinePage() {
                                 </div>
 
                                 {item.stage !== 'vinto' && item.stage !== 'perso' && (
-                                  <div className="flex gap-1.5 pt-1">
-                                    <button
-                                      onClick={() => handleStageChange(item, 'vinto')}
-                                      className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-700 hover:border-emerald-300 hover:text-emerald-700 transition-colors"
-                                    >
-                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Vinto
-                                    </button>
-                                    <button
-                                      onClick={() => handleStageChange(item, 'perso')}
-                                      className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-700 hover:border-red-300 hover:text-red-700 transition-colors"
-                                    >
-                                      <span className="w-1.5 h-1.5 rounded-full bg-slate-300" /> Perso
-                                    </button>
+                                  <div className="flex flex-col gap-2 pt-1">
+                                    <div className="flex gap-1.5">
+                                      <button
+                                        onClick={() => handleStageChange(item, 'vinto')}
+                                        className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-700 hover:border-emerald-300 hover:text-emerald-700 transition-colors"
+                                      >
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Vinto
+                                      </button>
+                                      <button
+                                        onClick={() => handleStageChange(item, 'perso')}
+                                        className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-700 hover:border-red-300 hover:text-red-700 transition-colors"
+                                      >
+                                        <span className="w-1.5 h-1.5 rounded-full bg-slate-300" /> Perso
+                                      </button>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {(Object.keys(OUTCOME_META) as Outcome[]).map((key) => (
+                                        <button
+                                          key={key}
+                                          type="button"
+                                          onClick={() => recordOutcome(item, key)}
+                                          className={`text-[10px] font-medium px-2 py-0.5 rounded border transition-colors ${
+                                            outcome === key ? OUTCOME_META[key].active : OUTCOME_META[key].idle
+                                          }`}
+                                        >
+                                          {OUTCOME_META[key].label}
+                                        </button>
+                                      ))}
+                                    </div>
                                   </div>
                                 )}
                               </div>

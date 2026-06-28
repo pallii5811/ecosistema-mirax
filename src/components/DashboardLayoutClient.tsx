@@ -5,6 +5,9 @@ import Sidebar from '@/components/Sidebar'
 import TopHeader from '@/components/TopHeader'
 import { DashboardProvider } from '@/components/DashboardContext'
 import OnboardingModal from '@/components/OnboardingModal'
+import FirstRunModal from '@/components/onboarding/FirstRunModal'
+import { readUiMode, writeUiMode, type MiraxUiMode } from '@/lib/ui-mode'
+import { readLocale, writeLocale, type MiraxLocale } from '@/lib/i18n'
 
 type DashboardLayoutClientProps = {
   userId: string
@@ -23,7 +26,24 @@ export default function DashboardLayoutClient({
 }: DashboardLayoutClientProps) {
   const [credits, setCredits] = useState<number>(initialCredits)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  const [uiMode, setUiModeState] = useState<MiraxUiMode>('expert')
+  const [locale, setLocaleState] = useState<MiraxLocale>('it')
   const planType = (initialPlanType as 'free' | 'starter' | 'pro' | 'agency') || 'free'
+
+  useEffect(() => {
+    setUiModeState(readUiMode())
+    setLocaleState(readLocale())
+  }, [])
+
+  const setUiMode = (mode: MiraxUiMode) => {
+    writeUiMode(mode)
+    setUiModeState(mode)
+  }
+
+  const setLocale = (next: MiraxLocale) => {
+    writeLocale(next)
+    setLocaleState(next)
+  }
 
   // Always fetch fresh credits client-side on mount
   useEffect(() => {
@@ -38,7 +58,7 @@ export default function DashboardLayoutClient({
   }, [])
 
   return (
-    <DashboardProvider value={{ userId, email, credits, setCredits, planType }}>
+    <DashboardProvider value={{ userId, email, credits, setCredits, planType, uiMode, setUiMode, locale, setLocale }}>
       <div
         className="min-h-screen bg-slate-50 text-slate-900"
         style={{
@@ -78,6 +98,7 @@ export default function DashboardLayoutClient({
             <TopHeader email={email} onMenuClick={() => setMobileSidebarOpen(true)} />
             <div className="p-4 md:p-8">{children}</div>
             <OnboardingModal />
+            <FirstRunModal onSelect={setUiMode} />
           </div>
         </div>
       </div>

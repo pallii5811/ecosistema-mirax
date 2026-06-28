@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
+import { retrainUserScoringModel } from '@/lib/scoring-feedback'
 import type { LeadInteraction, ScoringWeights, UserScoringModel } from '@/types/scoring'
 
 export async function trackInteraction(
@@ -28,7 +29,7 @@ export async function trackInteraction(
   })
 
   if (action === 'converted' || action === 'rejected') {
-    await retrainModel(user.id)
+    await retrainUserScoringModel(supabase, user.id)
     revalidatePath('/dashboard/stats')
   }
 
@@ -118,39 +119,6 @@ export async function calculatePersonalizedScore(lead: {
   if (lead.has_google_ads === false) score += weights.weight_no_google_ads
 
   return Math.min(Math.round(score), 100)
-}
-
-async function retrainModel(userId: string) {
-  const supabase = await createClient()
-
-  const { data: interactions, error } = await supabase
-    .from('lead_interactions')
-    .select('*')
-    .eq('user_id', userId)
-    .in('action', ['converted', 'rejected'])
-    .order('created_at', { ascending: false })
-    .limit(50)
-
-  if (error) {
-    console.error('retrainModel read error:', error)
-    return
-  }
-
-  if (!interactions || interactions.length < 5) return
-
-  const conversions = interactions.filter((i: any) => i.action === 'converted')
-  const rejections = interactions.filter((i: any) => i.action === 'rejected')
-
-  await supabase.from('user_scoring_models').upsert(
-    {
-      user_id: userId,
-      total_conversions: conversions.length,
-      total_rejections: rejections.length,
-      last_trained_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    } as any,
-    { onConflict: 'user_id' }
-  )
 }
 
 export async function getConversionStats(): Promise<{

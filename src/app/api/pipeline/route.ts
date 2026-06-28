@@ -1,12 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-
-const VALID_STAGES = ['nuovo', 'contattato', 'meeting', 'proposta', 'vinto', 'perso'] as const
-type ValidStage = (typeof VALID_STAGES)[number]
-
-function sanitizeStage(s: unknown): ValidStage {
-  return VALID_STAGES.includes(s as ValidStage) ? (s as ValidStage) : 'nuovo'
-}
+import { sanitizePipelineStage, PIPELINE_STAGES } from '@/lib/pipeline-stages'
+import { recordPipelineStageFeedback } from '@/lib/scoring-feedback'
 
 function sanitizeScore(s: unknown): number {
   const n = typeof s === 'number' ? s : Number(s)
@@ -39,7 +34,7 @@ export async function GET() {
     .order('updated_at', { ascending: false })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ items: data || [] })
+  return NextResponse.json({ items: data || [], stages: PIPELINE_STAGES })
 }
 
 export async function POST(req: NextRequest) {
@@ -64,7 +59,7 @@ export async function POST(req: NextRequest) {
       lead_city: sanitizeText(lead_city, 100),
       lead_category: sanitizeText(lead_category, 100),
       lead_score: sanitizeScore(lead_score),
-      stage: sanitizeStage(stage),
+      stage: sanitizePipelineStage(stage),
       deal_value: sanitizeDealValue(deal_value),
       notes: sanitizeText(notes, 5000),
     })
@@ -85,6 +80,13 @@ export async function PUT(req: NextRequest) {
 
   if (!id || typeof id !== 'string') return NextResponse.json({ error: 'ID obbligatorio' }, { status: 400 })
 
+  const { data: prev } = await supabase
+    .from('lead_pipeline')
+    .select('stage, lead_website, lead_name, lead_score')
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .maybeSingle()
+
   const safeUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() }
 
   if ('lead_name' in updates) {
@@ -98,7 +100,7 @@ export async function PUT(req: NextRequest) {
   if ('lead_city' in updates) safeUpdates.lead_city = sanitizeText(updates.lead_city, 100)
   if ('lead_category' in updates) safeUpdates.lead_category = sanitizeText(updates.lead_category, 100)
   if ('lead_score' in updates) safeUpdates.lead_score = sanitizeScore(updates.lead_score)
-  if ('stage' in updates) safeUpdates.stage = sanitizeStage(updates.stage)
+  if ('stage' in updates) safeUpdates.stage = sanitizePipelineStage(updates.stage)
   if ('deal_value' in updates) safeUpdates.deal_value = sanitizeDealValue(updates.deal_value)
   if ('notes' in updates) safeUpdates.notes = sanitizeText(updates.notes, 5000)
   if ('next_action' in updates) safeUpdates.next_action = sanitizeText(updates.next_action, 500)
@@ -116,6 +118,21 @@ export async function PUT(req: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  const newStage = typeof safeUpdates.stage === 'string' ? safeUpdates.stage : prev?.stage
+  if (prev && newStage && prev.stage !== newStage && (newStage === 'vinto' || newStage === 'perso')) {
+    try {
+      await recordPipelineStageFeedback(supabase, user.id, {
+        website: prev.lead_website,
+        name: prev.lead_name,
+        stage: newStage,
+        scoreAtTime: Number(prev.lead_score) || null,
+      })
+    } catch {
+      /* non-blocking */
+    }
+  }
+
   return NextResponse.json({ item: data })
 }
 

@@ -29,8 +29,35 @@ import HowToUseGuide from '@/components/HowToUseGuide'
 import { createClient } from '@/utils/supabase/client'
 
 import { useDashboard } from '@/components/DashboardContext'
+import { t } from '@/lib/i18n'
 
 import { countPendingAudits, isAuditPendingLead } from '@/lib/lead-audit-status'
+import {
+  computeContactVisibilityStats,
+  formatContactVisibilityMessage,
+  formatSearchProgressMessage,
+  hasLeadContact,
+  shouldTreatScrapeAsExhausted,
+  SCRAPE_PLATEAU_STALE_POLLS,
+  SCRAPE_POLL_INTERVAL_MS,
+  stalePollsThreshold,
+  type ContactVisibilityStats,
+} from '@/lib/search-contact-quality'
+import { SearchIntelBanner, type SearchCacheMeta } from '@/components/ecosistema/SearchIntelBanner'
+import { clampSearchMaxLeads, MAX_LEADS_PER_SEARCH } from '@/lib/search-job-payload'
+import { filterLeadsByBusinessSignals } from '@/lib/business-events/filters'
+import type { BusinessSignalType } from '@/lib/business-events/types'
+import {
+  filterLeadsBySignalIntent,
+  signalIntentToBusinessFilters,
+  describeSignalIntent,
+  coerceSignalIntent,
+  type SignalIntentSpec,
+} from '@/lib/signal-intent'
+import { DiscoverySearchWizard } from '@/components/discovery/DiscoverySearchWizard'
+import { DiscoveryResultsGrid } from '@/components/discovery/DiscoveryResultsGrid'
+import { UiModeToggle } from '@/components/UiModeToggle'
+import { LocaleToggle } from '@/components/LocaleToggle'
 
 
 
@@ -326,9 +353,7 @@ function _isRealEmail(v: any): boolean {
   return !_FAKE_EMAIL_DOMAINS.has(domain)
 }
 function _hasContact(lead: any): boolean {
-  const _isVal = (v: any) => v && typeof v === 'string' && !['n/d','n/a','none','null',''].includes(v.trim().toLowerCase())
-  const hasPhone = _isVal(lead?.telefono ?? lead?.phone)
-  return hasPhone || _isRealEmail(lead?.email)
+  return hasLeadContact(lead)
 }
 
 function buildTechFilter(q: string): ((l: any) => boolean) | null {
@@ -412,12 +437,46 @@ function buildTechFilter(q: string): ((l: any) => boolean) | null {
 
 export default function DashboardShell() {
 
-  const { credits, setCredits } = useDashboard()
+  const { credits, setCredits, uiMode, setUiMode, locale, setLocale } = useDashboard()
   const { error: toastError, info: toastInfo, success: toastSuccess } = useToast()
 
   // Keep a ref for credits so polling closures always see latest value
   const creditsRef = useRef(credits)
+  /** Lead cap for the active search — fixed at start so display does not shrink as credits are deducted. */
+  const searchCreditBudgetRef = useRef(0)
   useEffect(() => { creditsRef.current = credits }, [credits])
+
+  const beginSearchCreditBudget = (overrideMax?: number) => {
+    const cap = clampSearchMaxLeads(typeof overrideMax === 'number' ? overrideMax : maxLeads, creditsRef.current)
+    searchCreditBudgetRef.current = cap
+  }
+
+  const getLeadDisplayCap = () => clampSearchMaxLeads(maxLeads, creditsRef.current)
+
+  const capLeadsForDisplay = <T,>(leads: T[]): T[] => leads.slice(0, getLeadDisplayCap())
+
+  const applySearchResults = (next: unknown[], allowShrink = false) => {
+    const len = Array.isArray(next) ? next.length : 0
+    if (allowShrink || len >= resultsCountRef.current) {
+      setResults(next)
+    }
+  }
+
+  const applySearchAiDebug = (debug: unknown) => {
+    setAiDebug(debug ?? null)
+    if (debug && typeof debug === 'object' && (debug as Record<string, unknown>).signal_intent) {
+      const intent = coerceSignalIntent((debug as Record<string, unknown>).signal_intent)
+      if (intent.required_signals.length) {
+        setSignalIntent(intent)
+        const autoFilters = signalIntentToBusinessFilters(intent)
+        if (autoFilters.length) {
+          setBusinessSignalFilters((prev) => [...new Set([...prev, ...autoFilters])])
+        }
+        return
+      }
+    }
+    setSignalIntent(null)
+  }
 
   // Helper: deduct N credits via API and update state/ref
   const deductCredits = async (amount: number): Promise<number> => {
@@ -462,6 +521,9 @@ export default function DashboardShell() {
 
   const [activeFilters, setActiveFilters] = useState<Record<string, unknown> | null>(null)
 
+  const [businessSignalFilters, setBusinessSignalFilters] = useState<BusinessSignalType[]>([])
+  const [signalIntent, setSignalIntent] = useState<SignalIntentSpec | null>(null)
+
   const [aiDebug, setAiDebug] = useState<unknown>(null)
 
   // Restore from sessionStorage after mount (batched with setIsRestored)
@@ -487,12 +549,22 @@ export default function DashboardShell() {
       }
       const savedFilters = sessionStorage.getItem('ckb_filters')
       if (savedFilters) setActiveFilters(JSON.parse(savedFilters))
+      const savedBiz = sessionStorage.getItem('ckb_business_signal_filters')
+      if (savedBiz) {
+        try {
+          const parsed = JSON.parse(savedBiz)
+          if (Array.isArray(parsed)) {
+            const allowed = new Set(['hiring', 'new_location', 'registry_change', 'funding_news', 'site_stale', 'meta_ads_started', 'google_ads_started'])
+            setBusinessSignalFilters(parsed.filter((x): x is BusinessSignalType => typeof x === 'string' && allowed.has(x)))
+          }
+        } catch { /* ignore */ }
+      }
       const savedAiDebug = sessionStorage.getItem('ckb_aiDebug')
       if (savedAiDebug) setAiDebug(JSON.parse(savedAiDebug))
       const savedSearchId = sessionStorage.getItem('ckb_searchId')
       if (savedSearchId) { setCurrentSearchId(savedSearchId); searchIdRef.current = savedSearchId }
       const savedMaxLeads = sessionStorage.getItem('ckb_maxLeads')
-      const restoredMax = savedMaxLeads ? Number(savedMaxLeads) || 10 : 10
+      const restoredMax = clampSearchMaxLeads(savedMaxLeads ? Number(savedMaxLeads) || 10 : 10)
       if (savedMaxLeads) setMaxLeads(restoredMax)
       if (restoredCount > 0 && restoredCount < restoredMax) {
         setSearchState('searching')
@@ -500,7 +572,11 @@ export default function DashboardShell() {
         setAutoScrapeTriggered(false)
       }
       const savedScrapeJobId = sessionStorage.getItem('ckb_scrapeJobId')
-      if (savedScrapeJobId) { setScrapeJobId(savedScrapeJobId); setIsScraping(true) }
+      const resumeJobId = savedScrapeJobId || savedSearchId || null
+      if (resumeJobId && restoredCount < restoredMax) {
+        setScrapeJobId(resumeJobId)
+        setIsScraping(true)
+      }
     } catch {}
     setIsRestored(true)
   }, [])
@@ -533,13 +609,19 @@ export default function DashboardShell() {
 
   useEffect(() => {
     if (!isRestored) return
+    try { sessionStorage.setItem('ckb_business_signal_filters', JSON.stringify(businessSignalFilters)) } catch {}
+  }, [businessSignalFilters, isRestored])
+
+  useEffect(() => {
+    if (!isRestored) return
     try { sessionStorage.setItem('ckb_aiDebug', JSON.stringify(aiDebug)) } catch {}
   }, [aiDebug, isRestored])
 
   useEffect(() => {
     if (!isRestored) return
-    sessionStorage.setItem('ckb_maxLeads', String(maxLeads))
-  }, [maxLeads, isRestored])
+    const clamped = clampSearchMaxLeads(maxLeads, credits)
+    if (clamped !== maxLeads) setMaxLeads(clamped)
+  }, [credits, isRestored])
 
   const [searchMode, setSearchMode] = useState<'maps' | 'database' | 'ambiente'>('maps')
   const [guideOpen, setGuideOpen] = useState(false)
@@ -547,6 +629,8 @@ export default function DashboardShell() {
   const [autoScrapeTriggered, setAutoScrapeTriggered] = useState(false)
   const [autoScrapeLoading, setAutoScrapeLoading] = useState(false)
   const [searchExhausted, setSearchExhausted] = useState(false)
+  const [contactStats, setContactStats] = useState<ContactVisibilityStats | null>(null)
+  const [searchCacheMeta, setSearchCacheMeta] = useState<SearchCacheMeta | null>(null)
   const prevQueryRef = useRef('')
   const autoscrapePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const resultsCountRef = useRef(0)
@@ -580,6 +664,7 @@ export default function DashboardShell() {
     setAutoScrapeTriggered(false)
     setAutoScrapeLoading(false)
     setSearchExhausted(false)
+    setSearchCacheMeta(null)
     if (pollRef.current != null) {
       window.clearInterval(pollRef.current)
       pollRef.current = null
@@ -630,6 +715,10 @@ export default function DashboardShell() {
       try {
         setAutoScrapeTriggered(true)
         setAutoScrapeLoading(true)
+        searchCreditBudgetRef.current = Math.min(
+          maxLeads,
+          Math.max(searchCreditBudgetRef.current, resultsCountRef.current + creditsRef.current),
+        )
 
         const { category, city } = parseCategoryCityFromQuery(query)
         if (!category || !city) {
@@ -702,6 +791,7 @@ export default function DashboardShell() {
                 }
 
                 if (scrapeResults.length > 0) {
+                  setContactStats(computeContactVisibilityStats(scrapeResults.map(normalizeLeadFields)))
                   if (scrapeResults.length === lastResultCount) stalePolls++
                   else { stalePolls = 0; lastResultCount = scrapeResults.length }
                 }
@@ -725,14 +815,14 @@ export default function DashboardShell() {
                   if (techFilterAuto) normalized = normalized.filter(techFilterAuto)
                   const prevLen = curArr.length
                   const updated = (deduplicateResults([...normalized, ...curArr]) as any[]).filter(_hasContact)
-                  const capped = updated.slice(0, Math.min(maxLeads, creditsRef.current))
+                  const capped = capLeadsForDisplay(updated)
                   const changed =
                     capped.length !== curArr.length ||
                     countPendingAudits(capped) < countPendingAudits(curArr)
                   if (changed) {
                     resultsArrRef.current = capped
                     resultsCountRef.current = capped.length
-                    setResults(capped)
+                    applySearchResults(capped)
                     const actualNewCount = Math.max(0, capped.length - prevLen)
                     if (actualNewCount > 0) deductCredits(actualNewCount)
                   }
@@ -744,10 +834,14 @@ export default function DashboardShell() {
                   }
                 }
 
-                if (jobData.status === 'completed' || jobData.status === 'error' || stalePolls >= 18) {
-                  console.log(`[AUTO-SCRAPE] done: status=${jobData.status} results=${scrapeResults.length} total=${resultsCountRef.current}/${maxLeads}`)
+                if (jobData.status === 'completed' || jobData.status === 'error' || stalePolls >= SCRAPE_PLATEAU_STALE_POLLS) {
+                  console.log(`[AUTO-SCRAPE] done: status=${jobData.status} results=${scrapeResults.length} total=${resultsCountRef.current}/${maxLeads} stale=${stalePolls}`)
                   clearInterval(pollInterval)
                   autoscrapePollRef.current = null
+                  if (resultsCountRef.current < maxLeads && scrapeResults.length > 0) {
+                    setSearchExhausted(true)
+                    setSearchState('done')
+                  }
                   resolve(resultsCountRef.current >= maxLeads)
                   return
                 }
@@ -779,9 +873,8 @@ export default function DashboardShell() {
           setSearchExhausted(false)
           setSearchState('done')
         } else if (resultsCountRef.current > 0) {
-          // Sotto il target: resta in ricerca e riprova (non segnare "terminata")
-          setSearchExhausted(false)
-          setSearchState('searching')
+          setSearchExhausted(true)
+          setSearchState('done')
           setAutoScrapeTriggered(false)
         }
       } catch (e) {
@@ -833,6 +926,54 @@ export default function DashboardShell() {
     if (!isRestored) return
     if (currentSearchId) sessionStorage.setItem('ckb_searchId', currentSearchId)
   }, [currentSearchId, isRestored])
+
+  // After refresh: re-sync incomplete searches from DB (session may have stale partial results).
+  useEffect(() => {
+    if (!isRestored) return
+    const jobId = scrapeJobId || currentSearchId || currentJobId
+    if (!jobId) return
+    if (searchState === 'done' && searchExhausted) return
+
+    if (searchCreditBudgetRef.current <= 0) {
+      searchCreditBudgetRef.current = Math.min(maxLeads, creditsRef.current)
+    }
+
+    let cancelled = false
+    const syncFromDb = async () => {
+      try {
+        const { data } = await supabase.from('searches').select('status, results').eq('id', jobId).single()
+        if (cancelled || !data) return
+        const parsed = Array.isArray((data as any)?.results)
+          ? (data as any).results
+          : (() => {
+              try { return JSON.parse(((data as any)?.results as any) || '[]') } catch { return [] }
+            })()
+        if (!Array.isArray(parsed) || parsed.length === 0) return
+
+        setContactStats(computeContactVisibilityStats(parsed.map(normalizeLeadFields)))
+        const normalized = (deduplicateResults(parsed.map(normalizeLeadFields)) as any[]).filter(_hasContact)
+        const capped = capLeadsForDisplay(normalized)
+        if (capped.length > resultsCountRef.current) {
+          applySearchResults(capped)
+        }
+        const status = String((data as any)?.status ?? '').toLowerCase()
+        if (status === 'completed' || status === 'error') {
+          setIsScraping(false)
+          setSearchState('done')
+          setSearchExhausted(capped.length < maxLeads)
+        } else if (capped.length < maxLeads) {
+          setScrapeJobId(jobId)
+          setIsScraping(true)
+          setSearchState('searching')
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    void syncFromDb()
+    return () => { cancelled = true }
+  }, [isRestored, scrapeJobId, currentSearchId, currentJobId, credits, maxLeads, supabase, searchState, searchExhausted])
 
   const deriveSearchIdFromResults = (items: unknown[]): string | null => {
 
@@ -889,6 +1030,12 @@ export default function DashboardShell() {
     pendingJobId ??
 
     currentJobId
+
+  const displayResults = useMemo(() => {
+    const base = Array.isArray(results) ? results : []
+    const byIntent = filterLeadsBySignalIntent(base, signalIntent)
+    return filterLeadsByBusinessSignals(byIntent, businessSignalFilters)
+  }, [results, businessSignalFilters, signalIntent])
 
   const resolveCompletedSearchId = async (filters: any) => {
 
@@ -1054,6 +1201,9 @@ export default function DashboardShell() {
     const expectedQuery = activeSearchQueryRef.current
     const _pollStart2 = Date.now()
     const POLL_TIMEOUT_MS2 = 10 * 60 * 1000 // 10 minutes max
+    let stalePolls = 0
+    let lastRawCount = 0
+    const plateauThreshold = stalePollsThreshold(SCRAPE_POLL_INTERVAL_MS)
 
     const interval = window.setInterval(async () => {
 
@@ -1066,6 +1216,7 @@ export default function DashboardShell() {
       if (Date.now() - _pollStart2 > POLL_TIMEOUT_MS2) {
         window.clearInterval(interval)
         setIsScraping(false)
+        setSearchExhausted(true)
         setSearchState('done')
         console.log('[poll] timeout reached for scrapeJobId, stopping')
         const currentResults = resultsArrRef.current || []
@@ -1090,6 +1241,24 @@ export default function DashboardShell() {
           .single()
 
         const parsed = Array.isArray((data as any)?.results) ? (data as any).results : (() => { try { return JSON.parse(((data as any)?.results as any) || '[]') } catch { return [] } })()
+
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setContactStats(computeContactVisibilityStats(parsed.map(normalizeLeadFields)))
+          if (parsed.length === lastRawCount) stalePolls += 1
+          else {
+            stalePolls = 0
+            lastRawCount = parsed.length
+          }
+        }
+
+        const exhausted = shouldTreatScrapeAsExhausted({
+          status: data?.status,
+          rawResultCount: Array.isArray(parsed) ? parsed.length : 0,
+          displayedCount: resultsCountRef.current,
+          maxLeads,
+          stalePolls,
+          maxStalePolls: plateauThreshold,
+        })
 
         // Helper: apply has_website filter + tech filters from query
         const _tf2 = buildTechFilter(expectedQuery || query)
@@ -1118,11 +1287,10 @@ export default function DashboardShell() {
 
           const normalized = deduplicateResults(applyAllFilters((parsed || []).map(normalizeLeadFields))) as any[]
           const jobResults = (normalized as any[]).filter(_hasContact)
-          const mergedResults = (deduplicateResults([...jobResults, ...(resultsArrRef.current || [])]) as any[]).filter(_hasContact)
-          const refinedResults = await refineLeadsBySubtype(mergedResults)
-          const cappedByMax = refinedResults.slice(0, maxLeads)
-          const cappedByCredits = cappedByMax.slice(0, creditsRef.current)
-          setResults(cappedByCredits)
+          const refinedResults = await refineLeadsBySubtype(jobResults)
+          const cappedByCredits = capLeadsForDisplay(refinedResults)
+          applySearchResults(cappedByCredits)
+          setContactStats(computeContactVisibilityStats((parsed || []).map(normalizeLeadFields)))
           const previousCount = resultsCountRef.current
           const newCount = Math.max(0, cappedByCredits.length - previousCount)
           if (newCount > 0) {
@@ -1134,9 +1302,26 @@ export default function DashboardShell() {
             setSearchState('done')
           } else {
             setAutoScrapeTriggered(false)
-            setSearchExhausted(false)
-            setSearchState('searching')
+            setSearchExhausted(true)
+            setSearchState('done')
           }
+
+        } else if (exhausted && Array.isArray(parsed) && parsed.length > 0) {
+
+          window.clearInterval(interval)
+          setIsScraping(false)
+          setSearchExhausted(true)
+          setSearchState('done')
+          const normalized = deduplicateResults(applyAllFilters(parsed.map(normalizeLeadFields))) as any[]
+          const jobResults = normalized.filter(_hasContact)
+          const refinedResults = await refineLeadsBySubtype(jobResults)
+          const capped = capLeadsForDisplay(refinedResults)
+          applySearchResults(capped)
+          setContactStats(computeContactVisibilityStats(parsed.map(normalizeLeadFields)))
+          toastSuccess(
+            `Mercato esaurito per questa categoria — ${capped.length} lead disponibili.`,
+            'Ricerca completata',
+          )
 
         } else if (data?.status === 'error') {
 
@@ -1147,11 +1332,8 @@ export default function DashboardShell() {
           if (Array.isArray(parsed) && parsed.length > 0) {
             const normalized = deduplicateResults(applyAllFilters(parsed.map(normalizeLeadFields))) as any[]
             const jobResults = (normalized as any[]).filter(_hasContact)
-            const mergedResults = (deduplicateResults([...jobResults, ...(resultsArrRef.current || [])]) as any[]).filter(_hasContact)
-            const refinedResults = await refineLeadsBySubtype(mergedResults)
-            const cappedByMax = refinedResults.slice(0, maxLeads)
-            const cappedByCredits = cappedByMax.slice(0, creditsRef.current)
-            setResults(cappedByCredits)
+            const refinedResults = await refineLeadsBySubtype(jobResults)
+            applySearchResults(capLeadsForDisplay(refinedResults), true)
           }
           toastError('La ricerca ha riscontrato un errore. Riprova con una query diversa.', 'Errore ricerca')
 
@@ -1159,10 +1341,8 @@ export default function DashboardShell() {
 
           const normalized = deduplicateResults(applyAllFilters(parsed.map(normalizeLeadFields))) as any[]
           const jobResults = (normalized as any[]).filter(_hasContact)
-          const mergedResults = (deduplicateResults([...jobResults, ...(resultsArrRef.current || [])]) as any[]).filter(_hasContact)
-          const cappedByMax = mergedResults.slice(0, maxLeads)
-          const cappedByCredits = cappedByMax.slice(0, creditsRef.current)
-          setResults(cappedByCredits)
+          const cappedByCredits = capLeadsForDisplay(jobResults)
+          applySearchResults(cappedByCredits)
           const previousCount = resultsCountRef.current
           const newCount = Math.max(0, cappedByCredits.length - previousCount)
           if (newCount > 0) {
@@ -1229,16 +1409,16 @@ export default function DashboardShell() {
 
         const normalized = deduplicateResults(applyAllFilters(parsed.map(normalizeLeadFields))) as any[]
         const jobResults = normalized.filter(_hasContact)
-        const merged = (deduplicateResults([...jobResults, ...(resultsArrRef.current || [])]) as any[]).filter(_hasContact)
-        const capped = merged.slice(0, maxLeads).slice(0, creditsRef.current)
+        const capped = capLeadsForDisplay(jobResults)
+        setContactStats(computeContactVisibilityStats(parsed.map(normalizeLeadFields)))
         const pendingBefore = countPendingAudits(resultsArrRef.current || [])
         const pendingAfter = countPendingAudits(capped)
         if (pendingAfter < pendingBefore) {
           auditProgressAtRef.current = Date.now()
-          setResults(capped)
+          applySearchResults(capped)
         } else if (pendingAfter === 0 && pendingBefore > 0) {
           auditProgressAtRef.current = Date.now()
-          setResults(capped)
+          applySearchResults(capped)
         }
         return pendingAfter === 0
       } catch {
@@ -1364,10 +1544,12 @@ export default function DashboardShell() {
 
 
     resetSearchRuntime(q)
+    beginSearchCreditBudget()
 
     setIsLoading(true)
 
     setAiDebug(null)
+    setSignalIntent(null)
 
     setSearchState('searching')
 
@@ -1377,7 +1559,7 @@ export default function DashboardShell() {
 
     try {
 
-      const response = await textToFilterSearchAction(q)
+      const response = await textToFilterSearchAction(q, { maxLeads })
 
 
 
@@ -1431,7 +1613,7 @@ export default function DashboardShell() {
 
         setActiveFilters(filters && typeof filters === 'object' ? (filters as Record<string, unknown>) : null)
 
-        setAiDebug(ai_debug ?? null)
+        applySearchAiDebug(ai_debug ?? null)
 
         toastInfo('Sto analizzando in tempo reale... attendere 2-3 minuti', 'Ricerca')
 
@@ -1453,7 +1635,7 @@ export default function DashboardShell() {
 
       setActiveFilters(filters && typeof filters === 'object' ? (filters as Record<string, unknown>) : null)
 
-      setAiDebug(ai_debug ?? null)
+      applySearchAiDebug(ai_debug ?? null)
 
       if (typeof jobId === 'string' && jobId) {
         lastSearchJobIdRef.current = jobId
@@ -1475,13 +1657,28 @@ export default function DashboardShell() {
 
       }
 
+      const cacheMeta = (response as { cache_meta?: SearchCacheMeta })?.cache_meta ?? null
+      if (cacheMeta) setSearchCacheMeta(cacheMeta)
+
       if (displayResults.length >= maxLeads) {
         setSearchExhausted(false)
         setSearchState('done')
         toastSuccess(`Trovati ${displayResults.length} risultati.`, 'Ricerca completata')
       } else {
+        if (typeof jobId === 'string' && jobId && cacheMeta?.needs_more_scrape) {
+          setScrapeJobId(jobId)
+          setIsScraping(true)
+          searchIdRef.current = sid ?? jobId
+          setCurrentSearchId(sid ?? jobId)
+        }
         setSearchState('searching')
-        toastInfo(`Trovati ${displayResults.length} risultati. Continuo la ricerca verso ${maxLeads}...`, 'Ricerca in corso')
+        const fromDb = cacheMeta?.db_with_contact ?? 0
+        toastInfo(
+          fromDb > 0
+            ? `${fromDb} lead dal database — continuo verso ${maxLeads}…`
+            : `Trovati ${displayResults.length} risultati. Continuo la ricerca verso ${maxLeads}…`,
+          'Ricerca in corso',
+        )
       }
 
     } catch (err) {
@@ -1570,18 +1767,20 @@ export default function DashboardShell() {
     const effectiveMax = Math.min(maxLeads, credits)
 
     resetSearchRuntime(q)
+    searchCreditBudgetRef.current = effectiveMax
 
     setIsLoading(true)
 
     setAiAnalyzing(true)
 
     setAiDebug(null)
+    setSignalIntent(null)
 
 
 
     try {
 
-      const response = await processSemanticSearchAction(q)
+      const response = await processSemanticSearchAction(q, { maxLeads })
 
 
 
@@ -1610,6 +1809,8 @@ export default function DashboardShell() {
 
 
       const { results: rawFiltered, filters, ai_debug } = response as any
+      const cacheMeta = (response as { cache_meta?: SearchCacheMeta })?.cache_meta ?? null
+      if (cacheMeta) setSearchCacheMeta(cacheMeta)
 
       // If semantic search returned 0 results and no pending job, fall back to runSearch
       // which will find any pending/processing job in Supabase and start polling
@@ -1657,7 +1858,7 @@ export default function DashboardShell() {
 
       setActiveFilters(filters && typeof filters === 'object' ? (filters as Record<string, unknown>) : null)
 
-      setAiDebug(ai_debug ?? null)
+      applySearchAiDebug(ai_debug ?? null)
 
       const semanticJobId = typeof (response as any)?.jobId === 'string' ? (response as any).jobId : null
       if (semanticJobId) {
@@ -1685,8 +1886,18 @@ export default function DashboardShell() {
         setSearchState('done')
         toastSuccess(`Trovati ${capped.length} lead (${capped.length} crediti usati).`, 'Ricerca completata')
       } else {
+        if (semanticJobId && cacheMeta?.needs_more_scrape) {
+          setScrapeJobId(semanticJobId)
+          setIsScraping(true)
+        }
         setSearchState('searching')
-        toastInfo(`Trovati ${capped.length} lead. Continuo la ricerca verso ${effectiveMax}...`, 'Ricerca in corso')
+        const fromDb = cacheMeta?.db_with_contact ?? 0
+        toastInfo(
+          fromDb > 0
+            ? `${fromDb} lead dal database — continuo verso ${effectiveMax}…`
+            : `Trovati ${capped.length} lead. Continuo la ricerca verso ${effectiveMax}…`,
+          'Ricerca in corso',
+        )
       }
 
     } catch {
@@ -1758,9 +1969,17 @@ export default function DashboardShell() {
   return (
     <>
       {/* ── Section title ── */}
-      <div className="flex items-center gap-2 mb-5">
-        <MapPin className="w-5 h-5 text-violet-600" />
-        <h2 className="text-lg sm:text-xl font-bold text-slate-800">Ricerca Categoria e Città</h2>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+        <div className="flex items-center gap-2">
+          <MapPin className="w-5 h-5 text-violet-600" />
+          <h2 className="text-lg sm:text-xl font-bold text-slate-800">
+            {uiMode === 'discovery' ? t(locale, 'discovery_title') : t(locale, 'search_title')}
+          </h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <LocaleToggle locale={locale} onChange={setLocale} compact className="sm:hidden" />
+          <UiModeToggle mode={uiMode} onChange={setUiMode} className="sm:hidden" />
+        </div>
       </div>
 
       {/* ── Database Search Mode ── */}
@@ -1770,7 +1989,7 @@ export default function DashboardShell() {
       {searchMode !== 'database' && (
       <>
 
-      {(searchMode === 'maps' || searchMode === 'ambiente') && (
+      {(searchMode === 'maps' || searchMode === 'ambiente') && uiMode === 'expert' && (
       <div className="mb-3 px-1">
         <div className="flex items-center gap-1.5 flex-wrap">
           {[
@@ -1815,7 +2034,7 @@ export default function DashboardShell() {
       </div>
       )}
 
-      {(searchMode === 'maps' || searchMode === 'ambiente') && (
+      {(searchMode === 'maps' || searchMode === 'ambiente') && uiMode === 'expert' && (
       <SniperArea
         query={query}
         onQueryChange={setQuery}
@@ -1823,13 +2042,41 @@ export default function DashboardShell() {
         isLoading={isLoading}
         error={error}
         aiDebug={aiDebug}
-        maxLeads={maxLeads}
-        onMaxLeadsChange={setMaxLeads}
+        maxLeads={clampSearchMaxLeads(maxLeads, credits)}
+        onMaxLeadsChange={(v) => setMaxLeads(clampSearchMaxLeads(v, credits))}
         credits={credits}
+        businessSignalFilters={businessSignalFilters}
+        onBusinessSignalFiltersChange={setBusinessSignalFilters}
       />
       )}
 
-      {(searchMode === 'maps' || searchMode === 'ambiente') && (
+      {(searchMode === 'maps' || searchMode === 'ambiente') && uiMode === 'discovery' && (
+      <DiscoverySearchWizard
+        onSearch={async (builtQuery) => {
+          setQuery(builtQuery)
+          await processSemanticSearch(builtQuery)
+        }}
+        isLoading={isLoading}
+        error={error}
+        credits={credits}
+        maxLeads={clampSearchMaxLeads(maxLeads, credits)}
+        onMaxLeadsChange={(v) => setMaxLeads(clampSearchMaxLeads(v, credits))}
+      />
+      )}
+
+      {signalIntent?.required_signals?.length ? (
+        <div className="mb-3 mx-1 rounded-xl border border-violet-200 bg-violet-50/80 px-4 py-2.5 text-sm text-violet-900">
+          <span className="font-semibold">Intent segnali: </span>
+          {describeSignalIntent(signalIntent)}
+          {displayResults.length !== (Array.isArray(results) ? results.length : 0) ? (
+            <span className="text-violet-700">
+              {' '}· {displayResults.length} lead su {Array.isArray(results) ? results.length : 0} matchano i segnali richiesti
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {(searchMode === 'maps' || searchMode === 'ambiente') && uiMode === 'expert' && (
       <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center px-1 mb-2">
         <input
           type="text"
@@ -1989,14 +2236,36 @@ export default function DashboardShell() {
         <>
           {Array.isArray(results) && results.length > 0 ? (
             <>
-              {(isScraping || autoScrapeLoading || (searchState === 'searching' && results.length < maxLeads)) && (
+              {searchCacheMeta ? (
+                <SearchIntelBanner meta={searchCacheMeta} displayed={results.length} maxLeads={maxLeads} />
+              ) : null}
+
+              {contactStats && formatContactVisibilityMessage(contactStats) && !isScraping && !autoScrapeLoading ? (
+                <div className="mx-4 mb-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-700">
+                  {formatContactVisibilityMessage(contactStats)}
+                </div>
+              ) : null}
+
+              {contactStats && contactStats.withContact > results.length ? (
+                <div className="mx-4 mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
+                  <strong>{contactStats.withContact - results.length}</strong> lead con contatto sono pronti ma non visibili
+                  — hai <strong>{credits}</strong> credit{credits === 1 ? 'o' : 'i'} rimanenti
+                  (1 credito = 1 lead). Ricarica o fai upgrade per vederli tutti.
+                </div>
+              ) : null}
+
+              {(isScraping || autoScrapeLoading || (searchState === 'searching' && results.length < Math.min(maxLeads, searchCreditBudgetRef.current || maxLeads) && !searchExhausted)) && (
                 <div className="flex items-center gap-3 bg-violet-50 border border-violet-200 rounded-xl px-4 py-3 mb-3 mx-4">
                   <div className="relative h-10 w-10 flex-shrink-0">
                     <Loader2 className="h-10 w-10 text-violet-600 animate-spin" />
                   </div>
                   <div className="flex-1">
                     <p className="text-[15px] font-semibold text-violet-700">
-                      {results.length} / {maxLeads} lead trovati — ricerca in corso
+                      {formatSearchProgressMessage(
+                        contactStats,
+                        results.length,
+                        clampSearchMaxLeads(maxLeads, credits),
+                      )}
                     </p>
                     <p className="text-[13px] text-violet-500 mt-0.5">
                       Nuovi risultati appariranno automaticamente. Puoi già consultare i lead trovati.
@@ -2004,7 +2273,7 @@ export default function DashboardShell() {
                     <div className="mt-2 bg-violet-200 rounded-full h-1.5 overflow-hidden">
                       <div
                         className="h-1.5 rounded-full bg-violet-500 transition-all duration-500"
-                        style={{ width: `${Math.min(100, Math.round((results.length / Math.max(maxLeads, 1)) * 100))}%` }}
+                        style={{ width: `${Math.min(100, Math.round((results.length / Math.max(clampSearchMaxLeads(maxLeads, credits), 1)) * 100))}%` }}
                       />
                     </div>
                   </div>
@@ -2082,15 +2351,27 @@ export default function DashboardShell() {
             </>
           ) : null}
 
+          {uiMode === 'discovery' ? (
+          <DiscoveryResultsGrid
+            query={query}
+            results={displayResults}
+            isLoading={isLoading}
+            isScraping={isScraping || autoScrapeLoading}
+            searchId={effectiveSearchId}
+            totalUnfilteredCount={Array.isArray(results) ? results.length : 0}
+          />
+          ) : (
           <ResultsTable
             query={query}
-            results={results}
+            results={displayResults}
             isLoading={isLoading}
             isScraping={isScraping || autoScrapeLoading}
             searchId={effectiveSearchId}
             filters={activeFilters}
             aiDebug={aiDebug}
+            totalUnfilteredCount={Array.isArray(results) ? results.length : 0}
           />
+          )}
 
           {/* BIG primary CTA — repeated BELOW the results for easy access after scrolling */}
           {searchState === 'done' && Array.isArray(results) && results.length > 0 ? (

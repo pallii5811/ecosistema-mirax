@@ -1,3 +1,7 @@
+/**
+ * Digital maturity & opportunity tags — rule-based only (no ML).
+ * @see docs/SCORE_AI_RULES.md
+ */
 export type OpportunityTag = {
   label: string
   emoji: string

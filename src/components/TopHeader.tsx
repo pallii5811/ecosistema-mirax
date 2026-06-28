@@ -8,6 +8,9 @@ import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/utils/supabase/client'
+import { UiModeToggle } from '@/components/UiModeToggle'
+import { LocaleToggle } from '@/components/LocaleToggle'
+import { useDashboard } from '@/components/DashboardContext'
 
 type TopHeaderProps = {
   email: string
@@ -27,6 +30,7 @@ type LeadAlert = {
 
 const TopHeader = ({ email, onMenuClick }: TopHeaderProps) => {
   const router = useRouter()
+  const { uiMode, setUiMode, locale, setLocale } = useDashboard()
   const [showWelcome, setShowWelcome] = useState(true)
   const [fadeWelcome, setFadeWelcome] = useState(false)
   const [alertsOpen, setAlertsOpen] = useState(false)
@@ -138,6 +142,9 @@ const TopHeader = ({ email, onMenuClick }: TopHeaderProps) => {
 
       {/* Right Side */}
       <div className="flex items-center space-x-2 md:space-x-4">
+        <LocaleToggle locale={locale} onChange={setLocale} compact className="hidden md:inline-flex" />
+        <UiModeToggle mode={uiMode} onChange={setUiMode} compact className="hidden sm:inline-flex" />
+
         {/* Notifications */}
         <Button
           variant="ghost"

@@ -626,3 +626,6 @@ export function buildPitchMessage(
 
   return lines.join('\n')
 }
+
+// Tipi unificati MIRAX (Fase 1-A) — implementazione in src/lib/mirax-signals.ts
+export type { MiraxSignal, MiraxSignalKind, MiraxSignalSummary } from '@/lib/mirax-signals'

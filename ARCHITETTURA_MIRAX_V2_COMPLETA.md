@@ -1126,3 +1126,53 @@ Mai importare moduli con secret o `server-only` in componenti client.
 Mirax funziona come una piattaforma a coda: il frontend crea richieste, Supabase le conserva, i worker Python le processano, i risultati tornano nel database, il frontend li mostra e li trasforma in pipeline CRM. Gli arricchimenti e le analisi AI aggiungono valore commerciale al dato grezzo di Google Maps. Billing, crediti, webhook e insights completano il prodotto SaaS.
 
 Questo documento descrive ogni blocco principale, a cosa serve, chi lo usa e come si collega agli altri elementi.
+
+---
+
+## 21. Confini API e ambienti (Ecosistema Dev — Blocco 9)
+
+### 21.1 Ambienti MIRAX
+
+| Ambiente | Repo | Supabase | Backend | Deploy |
+|----------|------|----------|---------|--------|
+| **Produzione** | `WEB APP CKB - Copia` / miraxgroupckb | `rtjmnjromqpsfqsgyfvp` | Hetzner 178 `:8001` | Vercel prod, worker manuale |
+| **Ecosistema / Dev** | `WEB APP CKB - Dev` / ecosistema-mirax | `ktspchugdwpqvxhmysap` | Hetzner 116 `:8002` | Vercel preview, `deploy-staging.sh` |
+
+**Regola:** il codice ecosistema non deve mai puntare a Supabase o worker di produzione (`npm run check:staging-env`).
+
+### 21.2 Superfici API (confini di responsabilità)
+
+| Superficie | Auth | Responsabilità | Non fa |
+|------------|------|----------------|--------|
+| `src/app/api/*` (sessione) | Cookie Supabase | UI, CRM, pipeline, compliance utente | Scraping Maps diretto |
+| `src/app/api/v1/*` | API key `mx_…` | Export lead/pipeline/outreach enterprise | Modifica worker |
+| `src/app/api/cron/*` | `CRON_SECRET` | EDAT, knowledge-feed, eventi | UI |
+| `src/app/api/ops/*` | `CRON_SECRET` | Health worker, monitoring | Dati utente |
+| `backend_mirror` (VPS) | Service role env | Scraping, audit URL, job `searches` | Auth utenti, billing |
+| NOUS (`src/lib/nous`) | Via route CRM | Export HubSpot/webhook/Salesforce | Scraping |
+
+### 21.3 API ecosistema aggiunte (Blocchi 3–9)
+
+| Endpoint | Scopo |
+|----------|--------|
+| `GET /api/insights/pki` | Performance index composito |
+| `GET /api/agents` | Registry multi-agent |
+| `POST /api/agents/run` | Esecuzione agente/pipeline |
+| `GET /api/compliance/audit-trail` | Export AI Act (outreach + trail) |
+| `POST /api/compliance/explain-lead` | Score motivation + technical_report |
+| `GET /api/ops/worker-health` | Ping `/health` backend (cron) |
+
+### 21.4 AI Act — tracciabilità decisioni
+
+| Fonte | Campo explainability |
+|-------|---------------------|
+| `outreach_log` | `rationale` (perché il messaggio/angolo) |
+| `technical_report` | Segnali tecnici audit (pixel, SEO, velocità) |
+| Score lead | Rule-based via `buildScoreMotivation()` — vedi `docs/SCORE_AI_RULES.md` |
+| `ai_audit_trail` | Log unificato decisioni (migration `2026_06_28`) |
+
+Nessuna decisione con effetto legale automatizzata: outreach e pipeline richiedono azione umana.
+
+### 21.5 Deploy worker
+
+Vedi `backend_mirror/DEPLOY_CHECKLIST.md`. Staging prima, produzione solo in Blocco 10 con `CONFIRM_PROD=1`.

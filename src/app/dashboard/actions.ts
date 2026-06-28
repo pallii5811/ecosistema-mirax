@@ -6,6 +6,19 @@ import { createClient } from '@/utils/supabase/server'
 
 import type { RicercaRow } from '@/types/ricerche'
 import { countPendingAudits } from '@/lib/lead-audit-status'
+import { buildPendingSearchInsert, clampSearchMaxLeads } from '@/lib/search-job-payload'
+import { hasLeadContact } from '@/lib/search-contact-quality'
+import {
+  loadMergedSearchCache,
+  requestIncrementalScrape,
+  formatCanonicalLabel,
+} from '@/lib/search-cache'
+import {
+  coerceSignalIntent,
+  mergeSignalIntent,
+  parseSignalIntentHeuristic,
+  type SignalIntentSpec,
+} from '@/lib/signal-intent'
 
 
 
@@ -167,6 +180,19 @@ type TextToFilterSearchResponse = {
 
   ai_debug?: unknown
 
+  cache_meta?: {
+    source: 'db_merged' | 'cached_completed' | 'fresh_scrape'
+    db_raw: number
+    db_with_contact: number
+    jobs_merged: number
+    needs_more_scrape?: boolean
+    canonical_job_id?: string | null
+  }
+
+}
+
+export type SearchActionOptions = {
+  maxLeads?: number
 }
 
 
@@ -443,6 +469,14 @@ export async function textToFilterSearchActionExpanded(userQuery: string): Promi
         slow_speed: nlp.technical_filters.slow_speed === true || heur.technical_filters.slow_speed === true,
 
       },
+
+      signal_intent: mergeSignalIntent(
+        parseSignalIntentHeuristic(query),
+        mergeSignalIntent(
+          coerceSignalIntent(heur.signal_intent),
+          coerceSignalIntent((nlp as SearchNlpParams).signal_intent),
+        ),
+      ),
 
     }
 
@@ -793,21 +827,13 @@ export async function textToFilterSearchActionExpanded(userQuery: string): Promi
 
           .from('searches')
 
-          .insert({
-
-            user_id: user?.id,
-
-            category: categoryBase,
-
-            location: cityBase,
-
-            status: 'pending',
-
-            results: [],
-
-            created_at: new Date().toISOString(),
-
-          })
+          .insert(
+            buildPendingSearchInsert({
+              userId: user?.id,
+              category: categoryBase,
+              location: cityBase,
+            }),
+          )
 
           .select()
 
@@ -1388,21 +1414,13 @@ Zero testo aggiuntivo. Solo l'array.`
 
           .from('searches')
 
-          .insert({
-
-            category: categoryBase,
-
-            location: cityBase,
-
-            status: 'pending',
-
-            results: [],
-
-            user_id: user?.id,
-
-            created_at: new Date().toISOString(),
-
-          })
+          .insert(
+            buildPendingSearchInsert({
+              category: categoryBase,
+              location: cityBase,
+              userId: user?.id,
+            }),
+          )
 
           .select()
 
@@ -1802,7 +1820,10 @@ const classicTextSearchAction = async (userQuery: string): Promise<SearchResult>
 
 
 
-export async function processSemanticSearchAction(userQuery: string): Promise<TextToFilterSearchResponse> {
+export async function processSemanticSearchAction(
+  userQuery: string,
+  options?: SearchActionOptions,
+): Promise<TextToFilterSearchResponse> {
 
   const apiKey = process.env.OPENAI_API_KEY
 
@@ -1830,7 +1851,7 @@ export async function processSemanticSearchAction(userQuery: string): Promise<Te
 
   try {
 
-    const result = await withTimeout(textToFilterSearchAction(userQuery), 60000)
+    const result = await withTimeout(textToFilterSearchAction(userQuery, options), 60000)
 
     return { ...result, ai_debug: { ...(result.ai_debug as any), semantic_mode: 'ai' } }
 
@@ -1963,6 +1984,8 @@ type SearchNlpParams = {
     tech_terms: string[]
 
   }
+
+  signal_intent?: SignalIntentSpec
 
 }
 
@@ -2104,6 +2127,8 @@ const coerceSearchNlpParams = (value: unknown): SearchNlpParams => {
       tech_terms: asStringArray(tfObj.tech_terms ?? tfObj.tech_stack ?? tfObj.tech_stack_terms),
 
     },
+
+    signal_intent: coerceSignalIntent(obj.signal_intent),
 
   }
 
@@ -2320,7 +2345,7 @@ const heuristicSearchNlpParams = (userQuery: string): SearchNlpParams => {
 
 
 
-  return { city, category, technical_filters: { ...technical_filters, tech_terms } }
+  return { city, category, keywords: [], excluded_keywords: [], technical_filters: { ...technical_filters, tech_terms }, signal_intent: parseSignalIntentHeuristic(userQuery) }
 
 }
 
@@ -2343,6 +2368,8 @@ const buildSearchNlpSystemPromptWithContext = (ctx: { available_categories: stri
     "Sei un assistente per un software B2B di Lead Generation. " +
 
     "Il tuo compito è tradurre QUALSIASI richiesta dell'utente in parametri di ricerca JSON.\n\n" +
+
+    "MIRAX è ONNIVORO: non solo marketing. Interpreta assunzioni, gare d'appalto, investimenti settoriali (fotovoltaico, edilizia…), cambi CRM, crescita registro.\n\n" +
 
     
 
@@ -2472,9 +2499,22 @@ const buildSearchNlpSystemPromptWithContext = (ctx: { available_categories: stri
 
     "\n\nOltre a city e category, estrai anche:\n" +
     '- "keywords": array di 5-10 parole chiave sinonimi/correlate alla categoria cercata\n' +
-    '- "excluded_keywords": array di categorie/parole da ESCLUDERE\n\n' +
+    '- "excluded_keywords": array di categorie/parole da ESCLUDERE\n' +
+    '- "signal_intent": oggetto con:\n' +
+    '  - "required_signals": array tra [hiring, registry_change, sector_investment, tender_won, crm_detected, crm_change, site_stale, meta_ads_started, google_ads_started, investing_marketing]\n' +
+    '  - "hiring_roles": array ruoli (es. programmatore, commerciale)\n' +
+    '  - "sector_keywords": array temi (es. fotovoltaico, edilizia)\n' +
+    '  - "crm_keywords": array (hubspot, salesforce…)\n' +
+    '  - "require_crm_change": boolean\n' +
+    '  - "time_window_days": number|null (30, 90, 365)\n' +
+    '  - "intent_summary": string breve in italiano\n\n' +
+    "Esempi signal_intent:\n" +
+    'Utente: "aziende che assumono commerciali a Bologna" → required_signals:["hiring"], hiring_roles:["commerciale"]\n' +
+    'Utente: "imprese edili che hanno vinto una gara nell ultimo anno" → required_signals:["tender_won"], time_window_days:365, category:"Imprese edili"\n' +
+    'Utente: "PMI che investono nel fotovoltaico in Veneto" → required_signals:["sector_investment"], sector_keywords:["fotovoltaico"]\n' +
+    'Utente: "aziende che hanno cambiato CRM negli ultimi 30 giorni" → required_signals:["crm_change"], require_crm_change:true, time_window_days:30\n\n' +
     "Rispondi SEMPRE e SOLO con JSON valido nel formato:\n" +
-    '{ "city": "...", "category": "...", "keywords": ["..."], "excluded_keywords": ["..."], "technical_filters": { ... } }'
+    '{ "city": "...", "category": "...", "keywords": ["..."], "excluded_keywords": ["..."], "technical_filters": { ... }, "signal_intent": { ... } }'
 
   )
 
@@ -2654,7 +2694,7 @@ const buildDeterministicSearchSystemPrompt = () => {
 
 
 
-type PitchInput = {
+export type PitchInput = {
 
   nome: string
 
@@ -3903,9 +3943,13 @@ const postFilter = (rows: RicercaRow[], filters: TextToFilterSpec): RicercaRow[]
 
 
 
-export async function textToFilterSearchAction(userQuery: string): Promise<TextToFilterSearchResponse> {
+export async function textToFilterSearchAction(
+  userQuery: string,
+  options?: SearchActionOptions,
+): Promise<TextToFilterSearchResponse> {
 
   const supabase = await createClient()
+  const requestedMaxLeads = clampSearchMaxLeads(options?.maxLeads ?? 10)
 
 
 
@@ -4070,6 +4114,14 @@ export async function textToFilterSearchAction(userQuery: string): Promise<TextT
         slow_speed: nlp.technical_filters.slow_speed === true || heur.technical_filters.slow_speed === true,
 
       },
+
+      signal_intent: mergeSignalIntent(
+        parseSignalIntentHeuristic(query),
+        mergeSignalIntent(
+          coerceSignalIntent(heur.signal_intent),
+          coerceSignalIntent((nlp as SearchNlpParams).signal_intent),
+        ),
+      ),
 
     }
 
@@ -4420,62 +4472,33 @@ export async function textToFilterSearchAction(userQuery: string): Promise<TextT
 
     let usedFallbackCityOnly = false
 
-    let queryDb = supabase.from('searches').select('*').eq('status', 'completed').limit(500)
-
-    if (cityBase) queryDb = queryDb.ilike('location', `%${cityBase}%`)
-
-    if (categoryVariants.length > 0) queryDb = queryDb.or(buildCategoryOr(categoryVariants))
-    else if (categoryBase) queryDb = queryDb.ilike('category', `%${normalizeForTokens(categoryBase)}%`)
-
-
-
-    console.log('SUPABASE QUERY (INTENT):', {
-
-      strict_category: true,
-
-      city: cityBase || null,
-
-      category: categoryBase || null,
-
-      category_variants: categoryVariants,
-
-      negative_filters: {
-
-        no_instagram: nlp.technical_filters.no_instagram === true,
-
-        no_pixel: nlp.technical_filters.no_pixel === true,
-
-      },
-
-      limit: 500,
-
+    const mergedCache = await loadMergedSearchCache(supabase, {
+      category: categoryBase,
+      location: cityBase,
+      categoryVariants,
+      includeInFlight: true,
     })
 
+    let rows: any[] | null = mergedCache.rows.length > 0 ? (mergedCache.rows as any[]) : null
 
+    console.log('SEARCH CACHE (merged):', {
+      city: cityBase,
+      category: categoryBase,
+      jobs: mergedCache.rows.length,
+      raw: mergedCache.rawTotal,
+      with_contact: mergedCache.withContact,
+      canonical: mergedCache.canonicalJobId,
+    })
 
-    let { data: rows, error } = await queryDb
-
-
-
-    if (!error && (!rows || rows.length === 0) && cityBase && !categoryBase) {
-
+    if (!rows?.length && cityBase && !categoryBase) {
       usedFallbackCityOnly = true
-
-      let fallbackQuery = supabase.from('searches').select('*').eq('status', 'completed').limit(500)
-
-      fallbackQuery = fallbackQuery.ilike('location', `%${cityBase}%`)
-
-      const fallbackRes = await fallbackQuery
-
-      rows = fallbackRes.data as any
-
-      error = fallbackRes.error as any
-
+      const fallbackCache = await loadMergedSearchCache(supabase, {
+        category: '',
+        location: cityBase,
+        includeInFlight: false,
+      })
+      rows = fallbackCache.rows.length > 0 ? (fallbackCache.rows as any[]) : null
     }
-
-
-
-    if (error) throw error
 
 
 
@@ -4489,191 +4512,53 @@ export async function textToFilterSearchAction(userQuery: string): Promise<TextT
 
         } = await supabase.auth.getUser()
 
-
-
-        console.log('[hybrid] user id:', user?.id)
-
-        // Check for recently completed job first — reuse results instead of re-scraping
-        const completedMaxAgeMs = 60 * 60 * 1000 // 1 hour
-        const { data: completedJob } = await supabase
-          .from('searches')
-          .select('id, status, results, created_at')
-          .ilike('location', cityBase)
-          .ilike('category', categoryBase)
-          .eq('status', 'completed')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        if (completedJob?.id && completedJob.results) {
-          const cAt = typeof completedJob.created_at === 'string' ? completedJob.created_at : null
-          const cMs = cAt ? Date.parse(cAt) : NaN
-          if (Number.isFinite(cMs) && Date.now() - cMs <= completedMaxAgeMs) {
-            let cached = Array.isArray(completedJob.results) ? completedJob.results : (() => { try { return JSON.parse(completedJob.results as any) } catch { return [] } })()
-            // Apply has_website filter to cached results (e.g. "senza sito")
-            if (filtri.has_website === false) {
-              cached = cached.filter((lead: any) => {
-                const s = (typeof lead?.sito === 'string' ? lead.sito : typeof lead?.website === 'string' ? lead.website : '').trim()
-                return !s || s === 'N/D' || s === 'N/A' || s === 'N.D.'
-              })
-            } else if (filtri.has_website === true) {
-              cached = cached.filter((lead: any) => {
-                const s = (typeof lead?.sito === 'string' ? lead.sito : typeof lead?.website === 'string' ? lead.website : '').trim()
-                return s && s !== 'N/D' && s !== 'N/A' && s !== 'N.D.'
-              })
-            }
-            if (cached.length > 0) {
-              const pendingAudits = countPendingAudits(cached)
-              const jobId = completedJob.id as string
-              console.log('[hybrid] reusing completed job:', jobId, cached.length, 'results', 'pending_audits:', pendingAudits)
-              return {
-                results: cached,
-                filters: filtri,
-                jobId,
-                searchId: jobId,
-                status: 'completed',
-                ai_debug: { ...aiDebug, source: 'cached_completed', pending_audits: pendingAudits },
-              }
-            }
-          }
-        }
-
-        const { data: existingJob } = await supabase
-          .from('searches')
-          .select('id, status, created_at')
-          .ilike('location', cityBase)
-          .ilike('category', categoryBase)
-          .in('status', ['pending', 'pending_user', 'processing'])
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-
-
-        if (existingJob?.id) {
-
-          const createdAt = typeof (existingJob as any)?.created_at === 'string' ? (existingJob as any).created_at : null
-
-          const createdAtMs = createdAt ? Date.parse(createdAt) : NaN
-
-          const isRecent = Number.isFinite(createdAtMs) && Date.now() - createdAtMs <= existingJobMaxAgeMs
-
-          if (isRecent) {
-
-            console.log('[hybrid] found existing job:', existingJob.id, (existingJob as any).status)
-
-            return { results: [], status: 'pending', jobId: existingJob.id }
-
-          }
-
-        }
-
-
-
-        const { data: insertData, error: insertError } = await supabase
-
-          .from('searches')
-
-          .insert({
-
-            user_id: user?.id,
-
-            category: categoryBase,
-
-            location: cityBase,
-
-            status: 'pending',
-
+        if (!cityBase || !categoryBase) {
+          return {
             results: [],
-
-            created_at: new Date().toISOString(),
-
-          })
-
-          .select()
-
-
-
-        if (insertError) {
-
-          console.error('[hybrid] INSERT FAILED:', insertError.message, insertError.code)
-
-          if (String((insertError as any).code) === '23505') {
-
-            const { data: dupRow } = await supabase
-
-              .from('searches')
-
-              .select('id, status, created_at')
-
-              .ilike('location', cityBase)
-
-              .ilike('category', categoryBase)
-
-              .order('created_at', { ascending: false })
-
-              .limit(1)
-
-              .maybeSingle()
-
-            if (dupRow?.id) {
-
-              try {
-
-                await supabase
-
-                  .from('searches')
-
-                  .update({ status: 'pending', created_at: new Date().toISOString() })
-
-                  .eq('id', dupRow.id)
-
-              } catch {
-
-                // ignore
-
-              }
-
-              console.log('[hybrid] requeued existing job (unique):', dupRow.id, (dupRow as any).status)
-
-              return { results: [], status: 'pending', jobId: dupRow.id, searchId: dupRow.id }
-
-            }
-
+            filters: filtri,
+            ai_debug: { ...aiDebug, category_variants: categoryVariants, fallback_city_only: usedFallbackCityOnly },
           }
-
-        } else {
-
-          console.log('[hybrid] INSERT OK, jobId:', insertData?.[0]?.id)
-
-          return { results: [], status: 'pending', jobId: insertData?.[0]?.id, searchId: insertData?.[0]?.id }
-
         }
 
+        const scrape = await requestIncrementalScrape(supabase, {
+          category: formatCanonicalLabel(categoryBase),
+          location: formatCanonicalLabel(cityBase),
+          maxLeads: requestedMaxLeads,
+          userId: user?.id,
+          categoryVariants,
+        })
 
+        console.log('[hybrid] incremental scrape (empty cache):', scrape)
 
         return {
-
           results: [],
-
+          status: 'pending',
+          jobId: scrape.jobId,
+          searchId: scrape.jobId,
           filters: filtri,
-
-          ai_debug: { ...aiDebug, category_variants: categoryVariants, fallback_city_only: usedFallbackCityOnly },
-
+          cache_meta: {
+            source: scrape.reused ? 'db_merged' : 'fresh_scrape',
+            db_raw: scrape.existingRaw,
+            db_with_contact: scrape.existingWithContact,
+            jobs_merged: scrape.reused ? 1 : 0,
+            needs_more_scrape: true,
+            canonical_job_id: scrape.jobId,
+          },
+          ai_debug: {
+            ...aiDebug,
+            source: scrape.reused ? 'requeued_canonical' : 'new_scrape',
+            category_variants: categoryVariants,
+          },
         }
 
-      } catch (e) {
+      } catch (insertErr) {
 
-        console.log('[hybrid] INSERT pending exception:', e)
+        console.error('[hybrid] scrape request failed:', insertErr)
 
         return {
-
           results: [],
-
           filters: filtri,
-
           ai_debug: { ...aiDebug, category_variants: categoryVariants, fallback_city_only: usedFallbackCityOnly },
-
         }
 
       }
@@ -5279,21 +5164,13 @@ export async function textToFilterSearchAction(userQuery: string): Promise<TextT
 
           .from('searches')
 
-          .insert({
-
-            category: categoryBase,
-
-            location: cityBase,
-
-            status: 'pending',
-
-            results: [],
-
-            user_id: user?.id,
-
-            created_at: new Date().toISOString(),
-
-          })
+          .insert(
+            buildPendingSearchInsert({
+              category: categoryBase,
+              location: cityBase,
+              userId: user?.id,
+            }),
+          )
 
           .select()
 
@@ -5423,17 +5300,55 @@ export async function textToFilterSearchAction(userQuery: string): Promise<TextT
 
       })()
 
+    const withContactCount = (finalResults as any[]).filter(hasLeadContact).length
+    let derivedSearchIdFinal = derivedSearchId
+    let cacheMeta: TextToFilterSearchResponse['cache_meta'] = {
+      source: 'db_merged',
+      db_raw: mergedCache.rawTotal,
+      db_with_contact: mergedCache.withContact,
+      jobs_merged: mergedCache.rows.length,
+      canonical_job_id: mergedCache.canonicalJobId,
+      needs_more_scrape: withContactCount < requestedMaxLeads,
+    }
+
+    if (cityBase && categoryBase && withContactCount < requestedMaxLeads) {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
+        const scrape = await requestIncrementalScrape(supabase, {
+          category: formatCanonicalLabel(categoryBase),
+          location: formatCanonicalLabel(cityBase),
+          maxLeads: requestedMaxLeads,
+          userId: user?.id,
+          categoryVariants,
+        })
+        derivedSearchIdFinal = scrape.jobId
+        cacheMeta = {
+          ...cacheMeta,
+          needs_more_scrape: true,
+          canonical_job_id: scrape.jobId,
+          db_raw: Math.max(cacheMeta?.db_raw ?? 0, scrape.existingRaw),
+          db_with_contact: Math.max(cacheMeta?.db_with_contact ?? 0, scrape.existingWithContact),
+        }
+      } catch (e) {
+        console.log('[hybrid] incremental scrape (partial cache):', e)
+      }
+    }
+
     return {
 
       status: 'completed',
 
-      jobId: derivedSearchId,
+      jobId: derivedSearchIdFinal,
 
-      searchId: derivedSearchId,
+      searchId: derivedSearchIdFinal,
 
       results: finalResults,
 
       filters: filtri,
+
+      cache_meta: cacheMeta,
 
       ai_debug: { ...aiDebug, category_variants: categoryVariants, fallback_city_only: usedFallbackCityOnly },
 

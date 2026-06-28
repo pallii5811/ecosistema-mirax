@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { ReplyClassificationPanel } from '@/components/outreach/ReplyClassificationPanel'
+import { GmailInboxPanel } from '@/components/inbox/GmailInboxPanel'
 import {
   Activity,
   AlertTriangle,
@@ -474,6 +476,12 @@ export default function OutreachConsolePage() {
           </Card>
         </div>
       )}
+
+      {/* Gmail Inbox + AI SDR — classificazione risposte (Fase 4-D / F3, HITL) */}
+      <div className="mb-6 grid gap-4 lg:grid-cols-2">
+        <GmailInboxPanel onOutcomeLogged={loadStatus} />
+        <ReplyClassificationPanel onOutcomeLogged={loadStatus} />
+      </div>
 
       <div className="grid gap-6 md:grid-cols-[280px_1fr]">
         {/* List selector */}

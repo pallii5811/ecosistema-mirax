@@ -1,6 +1,6 @@
 'use client'
 
-import { Search, List, Plug, CreditCard, LogOut, Folder, User, Kanban, Brain, Send, Flame, Target } from 'lucide-react'
+import { Search, List, Plug, CreditCard, LogOut, Folder, User, Kanban, Brain, Send, Flame, Target, Layers, ShieldCheck, MailCheck } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/utils/supabase/client'
 import MiraxLogo from '@/components/MiraxLogo'
 import { useDashboard, PLAN_CREDITS, PLAN_LABELS } from '@/components/DashboardContext'
+import { SHOW_CENTRO_COMANDO } from '@/lib/feature-flags'
 
 type SidebarProps = {
   credits: number
@@ -38,9 +39,14 @@ const Sidebar = ({ credits, variant = 'desktop', open = false, onClose, onNaviga
     { icon: Target, label: 'Centro Outreach', href: '/dashboard/outreach', tooltip: 'Contatta i tuoi lead in serie sul canale giusto, con messaggi AI e tracciamento' },
     { icon: Kanban, label: 'Pipeline', href: '/dashboard/pipeline', tooltip: 'Gestisci il funnel commerciale: da lead freddo a cliente acquisito' },
     { icon: Brain, label: 'Smart Insights', href: '/dashboard/insights', tooltip: 'Analisi AI del tuo processo di vendita: forecast, azioni urgenti e coach personale' },
+    ...(SHOW_CENTRO_COMANDO
+      ? [{ icon: Layers, label: 'Centro Comando', href: '/dashboard/ecosistema', tooltip: 'Multi-Agent, NOUS/CRM, EDAT, intelligence e API enterprise' }]
+      : []),
     { icon: Send, label: 'Sequenze Email', href: '/dashboard/sequences', tooltip: 'Crea e gestisci sequenze email automatiche per i tuoi lead' },
+    { icon: MailCheck, label: 'Deliverability', href: '/dashboard/deliverability', tooltip: 'Verifica SPF/DKIM/DMARC e guida configurazione email' },
     { icon: Flame, label: 'Lead Hotlist', href: '/dashboard/stats', tooltip: 'I tuoi lead più caldi ordinati per punteggio AI: chi contattare per primo' },
     { icon: Plug, label: 'Integrazioni', href: '/dashboard/integrations', tooltip: 'Collega CRM, email e altri strumenti esterni' },
+    { icon: ShieldCheck, label: 'Compliance GDPR', href: '/dashboard/compliance', tooltip: 'Verifica Registro Opposizioni, log GDPR e sicurezza outreach B2B' },
     { icon: CreditCard, label: 'Billing', href: '/dashboard/billing', tooltip: 'Gestisci abbonamento, crediti e fatturazione' },
     { icon: User, label: 'Profilo', href: '/dashboard/profile', tooltip: 'Impostazioni del tuo account e dati personali' },
   ]

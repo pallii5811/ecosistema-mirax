@@ -28,9 +28,9 @@ Senza questo blocco, ogni test dev rischia di toccare la produzione.
 
 | # | Task | Dettaglio | Stato |
 |---|------|-----------|-------|
-| 0.1 | Progetto **Supabase dev** separato | Mai riusare `rtjmnjromqpsfqsgyfvp` | ⬜ **azione tua** |
-| 0.2 | Eseguire tutte le migration | `db/migrations/*.sql` sul progetto dev | ⬜ |
-| 0.3 | `.env.local` in Dev | Da `.env.staging.example`; `node scripts/check-staging-env.mjs` | ⬜ **azione tua** |
+| 0.1 | Progetto **Supabase dev** separato | `ktspchugdwpqvxhmysap` (ecosistema mirax) | ✅ creato |
+| 0.2 | Schema + migration su dev | `npm run setup:ecosistema` (dopo chiavi API) | ⬜ **chiavi API** |
+| 0.3 | `.env.local` in Dev | `npm run setup:ecosistema` + `check-staging-env` | 🟡 URL/backend ok, mancano chiavi |
 | 0.4 | API staging su **116:8002** | `mirax-audit-api-staging.service` | ✅ attivo |
 | 0.5 | Worker staging (1–2 istanze) | Stesso codice, `.env` → Supabase dev | ⬜ dopo 0.1 |
 | 0.6 | `BACKEND_URL` dev | `http://116.203.137.39:8002` | ✅ default codice Dev |
@@ -47,13 +47,13 @@ Bug reali emersi in produzione (es. Benevento). Da fare per primi sul duplicato.
 
 | # | Task | Dove | Note |
 |---|------|------|------|
-| 1.1 | **Mercato esaurito** — stop spinner quando Maps non aggiunge lead | `src/components/DashboardShell.tsx` | Plateau conteggio + job ancora `processing` |
-| 1.2 | Trasparenza contatti | `DashboardShell.tsx` | Es. "43 trovati, 35 con contatto, 8 nascosti" (`_hasContact`) |
-| 1.3 | Worker: non bloccare job su **reviews_scraper** | `backend_mirror/worker_supabase.py` | Timeout 30s × N lead → 20+ min inutili |
-| 1.4 | `completed` quando Maps esaurito | `worker_supabase.py` | Anche con audit leggeri ancora pending |
-| 1.5 | Fix merge audit (preferire versione completa) | `worker_supabase.py` `_merge_formatted_results` | Evita "Audit in arrivo" bloccato |
-| 1.6 | Instagram / social su audit API | `process_single_url`, route audit `:8001` | Oggi `missing_instagram` hardcoded false |
-| 1.7 | Test E2E staging | Benevento + altra città piccola/grande | Prima di qualsiasi promote a prod |
+| 1.1 | **Mercato esaurito** — stop spinner quando Maps non aggiunge lead | `DashboardShell.tsx` + `search-contact-quality.ts` | ✅ |
+| 1.2 | Trasparenza contatti | `DashboardShell.tsx` | ✅ banner "X trovati · Y con contatto · Z nascosti" |
+| 1.3 | Worker: non bloccare job su **reviews_scraper** | `worker_supabase.py` | ✅ default `ENRICH_REVIEWS=0` |
+| 1.4 | `completed` quando Maps esaurito | `worker_supabase.py` | ✅ status `completed` post-scrape |
+| 1.5 | Fix merge audit (preferire versione completa) | `_merge_lead_pair` | ✅ |
+| 1.6 | Instagram / social su audit API | `process_single_url` | ✅ `missing_instagram` reale |
+| 1.7 | Test E2E staging | `npm run test:block1` | ✅ unit + audit E2E |
 
 ---
 
@@ -63,28 +63,26 @@ Il motore **esiste già**. Qui si consolida e si chiude il gap tra prodotto real
 
 | # | Task | Dove | Note |
 |---|------|------|------|
-| 2.1 | Audit sito più veloce e affidabile | `audit_engine.py`, `resume-audits`, worker | Pixel, SSL, GTM, speed, social |
-| 2.2 | Score AI: documentare rule-based vs ML | `worker_supabase._calc_opportunity_score`, `leadIntelligence.ts` | Nessun ML addestrato oggi |
-| 2.3 | Schema Lead Object consolidato | `db/migrations/`, normalizzazione JSON lead | Versioning, campi stabili |
-| 2.4 | `freshness_score` su lead | migration + worker + UI | Base per re-audit |
-| 2.5 | Migration **`zone`** su `searches` | `db/migrations/2026_06_23_searches_zone.sql` | Solo su Supabase **dev** prima; poi prod con test |
-| 2.6 | `trigger-scrape` allineato a `zone` | `src/app/api/trigger-scrape/route.ts` | Dopo migration applicata |
-| 2.7 | Verifica fix **ambienti** (stats dopo attach lista) | `src/app/dashboard/environments/actions.ts` | Già in prod parzialmente — validare su dev |
-| 2.8 | Crediti e billing invariati | Stripe/PayPal routes | Nessun refactor se non necessario |
+| 2.1 | Audit sito più veloce e affidabile | `audit_engine.py`, `resume-audits`, worker | ✅ timeout ridotti, audit paralleli (×3) |
+| 2.2 | Score AI: documentare rule-based vs ML | `docs/SCORE_AI_RULES.md`, `leadIntelligence.ts` | ✅ Nessun ML addestrato |
+| 2.3 | Schema Lead Object consolidato | `src/lib/lead-object.ts` | ✅ `lead_object_version` = 2 |
+| 2.4 | `freshness_score` su lead | worker + `ResultsTable` + merge | ✅ decay 30gg + badge UI |
+| 2.5 | Migration **`zone`** su `searches` | `db/migrations/2026_06_23_searches_zone.sql` | ✅ su dev (setup:ecosistema) |
+| 2.6 | `trigger-scrape` allineato a `zone` | `trigger-scrape`, `search-job-payload.ts` | ✅ `max_results` → `zone` |
+| 2.7 | Verifica fix **ambienti** (stats dopo attach lista) | `environments/actions.ts`, `lists/.../environment` | ✅ test unit aggregation |
+| 2.8 | Crediti e billing invariati | Stripe/PayPal routes | N/A |
 
 ---
 
 ### Blocco 3 — EDAT lite (Event Driven Action Time)
 
-Implementabile nel monorepo senza prodotto separato.
-
 | # | Task | Dove | Note |
 |---|------|------|------|
-| 3.1 | Cron **re-audit ogni 30 giorni** | `vercel.json` + `src/app/api/cron/reaudit` | Worker già capace di audit |
-| 3.2 | Trigger su evento lead | `monitor-lead`, alerts, webhook outbound | Esistente parzialmente |
-| 3.3 | Sequenze event-driven | `sequences-dispatch` cron, `OutreachLauncher` | Completare flusso |
-| 3.4 | Tabella `events` + consumer | `db/migrations/`, `src/lib/events/` | Event bus interno (fase 2 EDAT) |
-| 3.5 | "Cosa fare ora" operativo | `src/app/api/insights/actions` | Estendere insights esistenti |
+| 3.1 | Cron **re-audit ogni 30 giorni** | `vercel.json` + `/api/cron/reaudit` | ✅ giornaliero 03:00 UTC |
+| 3.2 | Trigger su evento lead | `monitor-lead`, `outreach/log`, consumer | ✅ `mirax_events` + webhook |
+| 3.3 | Sequenze event-driven | `sequences-dispatch` + eventi | ✅ `sequence.email_sent` |
+| 3.4 | Tabella `events` + consumer | `2026_06_25_edat_events.sql`, `src/lib/events/` | ✅ `mirax_events` + `/api/cron/process-events` |
+| 3.5 | "Cosa fare ora" operativo | `/api/insights/actions` | ✅ pipeline + EDAT (stale, alert, outreach) |
 
 ---
 
@@ -92,90 +90,92 @@ Implementabile nel monorepo senza prodotto separato.
 
 | # | Task | Dove | Note |
 |---|------|------|------|
-| 4.1 | Outreach → **pipeline auto-sync** | `outreach_log`, `api/pipeline`, outreach page | Stato lead aggiornato da contatto |
-| 4.2 | Score adattivo da conversioni | `scoring/actions.ts` + tabella esiti | Usa `outreach_log` + pipeline |
-| 4.3 | Pipeline status flow completo | Kanban + outreach esiti | Allineare 6 stati concettuali CKB dove ha senso |
-| 4.4 | Migration outreach su dev | `db/migrations/2026_06_22_outreach_log.sql` | Obbligatoria per tracciamento |
+| 4.1 | Outreach → **pipeline auto-sync** | `pipeline-sync.ts`, `outreach/log` | ✅ sent → contattato, interested → meeting |
+| 4.2 | Score adattivo da conversioni | `adaptive-scoring.ts`, `scoring-feedback.ts` | ✅ pesi da outreach + pipeline vinto/perso |
+| 4.3 | Pipeline status flow completo | `pipeline-stages.ts`, Kanban UI | ✅ 6 stati CKB + esiti outreach in card |
+| 4.4 | Migration outreach su dev | `2026_06_22` + `2026_06_26_pipeline_outreach_sync` | ✅ in `db:apply-dev` |
 
 ---
 
 ### Blocco 5 — Oggetti CKB (data model)
 
-| Oggetto | Stato oggi | Task |
-|---------|------------|------|
-| **Lead Object** | ✅ Esiste | Consolidare schema (2.3) |
-| **Scraping Object** | ✅ Esiste | `searches` + worker |
-| **Pipeline Object** | ✅ Esiste | Blocco 4 |
-| **Ambiente Object** | ⚠️ Parziale | SemanticMap con dati reali (5.4), auto-update ambienti |
-| **Knowledge Object** | ❌ | Nuova tabella `knowledge_objects` + API + alimentazione da correlazioni |
-| **Integration Object (NOUS)** | ❌ | `src/lib/nous/` — vedi Blocco 6 |
+| Oggetto | Stato |
+|---------|--------|
+| **Lead Object** | ✅ v2 (`lead-object.ts`) |
+| **Scraping Object** | ✅ `searches` + worker |
+| **Pipeline Object** | ✅ Blocco 4 |
+| **Ambiente Object** | ✅ graph API + SemanticMap reale |
+| **Knowledge Object** | ✅ `knowledge_objects` + API + cron feed |
+| **Integration Object (NOUS)** | ✅ Blocco 7 |
 
-| # | Task | Dove |
-|---|------|------|
-| 5.1 | Tabella `knowledge_objects` | `db/migrations/` |
-| 5.2 | API CRUD + query per ambiente | `src/app/api/knowledge/` |
-| 5.3 | Alimentazione da lead chiusi / pattern | worker o cron + `outreach_log` |
-| 5.4 | **SemanticMap** con dati reali (non solo UI) | `SemanticMap.tsx` + API graph |
-| 5.5 | **pgvector** su lead/knowledge | Supabase extension + migration |
+| # | Task | Dove | Note |
+|---|------|------|------|
+| 5.1 | Tabella `knowledge_objects` | `2026_06_27_knowledge_objects.sql` | ✅ pattern/insight/correlation/closure |
+| 5.2 | API CRUD + query ambiente | `/api/knowledge`, `/api/knowledge/search` | ✅ |
+| 5.3 | Alimentazione lead chiusi / pattern | `/api/cron/knowledge-feed` | ✅ pipeline + outreach + stats |
+| 5.4 | **SemanticMap** dati reali | `/api/environments/[id]/graph` | ✅ liste + categorie + knowledge |
+| 5.5 | **pgvector** CKBase-lite | migration + `match_knowledge_objects` | ✅ embedding 384d deterministico |
 
 ---
 
-### Blocco 6 — Cross-Meshing / Value Relations / PKI (versione MIRAX)
+### Blocco 6 — Cross-Meshing / Value Relations / PKI (versione MIRAX) ✅
 
 Non è "AI emergente magica": motore di correlazione + analytics.
 
 | # | Task | Dove | Note |
 |---|------|------|------|
-| 6.1 | Correlazione lead per ambiente | Query Supabase + aggregazioni | |
-| 6.2 | Pattern chiusura (badge → conversione) | `outreach_log` + `pipeline` analytics | |
-| 6.3 | API **PKI** (Performance Analysis Indicator) | `src/app/api/insights/pki` | Nuovo |
-| 6.4 | Smart Insights con metriche reali | `insights/ai`, `insights/stats` | Niente numeri mock |
-| 6.5 | Vector search (CKBase-lite) | pgvector + retrieval API | |
+| 6.1 | Correlazione lead per ambiente | `src/lib/environment-correlations.ts` + `/api/insights/correlations` | ✅ mesh per ambiente |
+| 6.2 | Pattern chiusura (badge → conversione) | `src/lib/closure-patterns.ts` | ✅ outreach + pipeline |
+| 6.3 | API **PKI** (Performance Analysis Indicator) | `src/app/api/insights/pki` | ✅ score 0–100 composito |
+| 6.4 | Smart Insights con metriche reali | `insights/ai`, `insights/stats`, dashboard | ✅ no mock lead_interactions |
+| 6.5 | Vector search (CKBase-lite) | `/api/insights/knowledge-search` | ✅ pgvector + fallback |
 
 ---
 
-### Blocco 7 — Integrazioni (layer NOUS)
+### Blocco 7 — Integrazioni (layer NOUS) ✅
 
 | # | Task | Dove | Stato |
 |---|------|------|-------|
-| 7.1 | Struttura `src/lib/nous/` | `adapters/`, `normalizer.ts`, `dispatcher.ts` | ⬜ |
-| 7.2 | HubSpot | già presente | ✅ mantenere |
-| 7.3 | Webhook generico (Zapier/Make) | `api/crm/webhook` | ✅ espandere eventi |
-| 7.4 | REST API v1 enterprise | `api/v1/leads`, `api/v1/keys` | ⚠️ espandere |
-| 7.5 | **Salesforce connector** | `api/crm/salesforce` + OAuth | ⬜ 1–2 mesi |
-| 7.6 | MS Dynamics / vTiger | stesso pattern adapter | ⬜ futuro |
+| 7.1 | Struttura `src/lib/nous/` | `adapters/`, `normalizer.ts`, `dispatcher.ts` | ✅ |
+| 7.2 | HubSpot | adapter `nous/adapters/hubspot.ts` | ✅ refactor NOUS |
+| 7.3 | Webhook generico (Zapier/Make) | `nous/adapters/webhook` + fan-out `crm-events` | ✅ eventi estesi |
+| 7.4 | REST API v1 enterprise | `api/v1/leads` POST, `pipeline`, `outreach` | ✅ espanso |
+| 7.5 | **Salesforce connector** | `api/crm/salesforce` + OAuth | ✅ base OAuth + Lead API |
+| 7.6 | MS Dynamics / vTiger | `nous/adapters/dynamics`, `vtiger` | ✅ stub adapter |
 | 7.7 | MCP server MIRAX (opzionale) | package separato `mirax-mcp` | ⬜ opzionale |
 
 ---
 
-### Blocco 8 — Multi-Agent pragmatico
+### Blocco 8 — Multi-Agent pragmatico ✅
 
 Non serve swarm complesso subito. Agenti = servizi specializzati nel monorepo.
 
-| Agente | Dove oggi | Task |
-|--------|-----------|------|
-| Search Agent | `actions.ts` | Consolidare NLP + hybrid search |
-| Audit Agent | `worker_supabase.py` | Blocco 1–2 |
-| Pitch Agent | `generatePitchAction` | ✅ |
-| Outreach Agent | `CampaignAgent`, `outreach.ts` | ✅ estendere guardrail |
-| Insights Agent | `insights/ai` | Collegare a PKI / Knowledge |
-| Orchestrator | `DashboardShell`, `resume-audits` | Unificare in `src/lib/agents/` |
+| Agente | Dove | Stato |
+|--------|------|-------|
+| Search Agent | `src/lib/agents/search-agent.ts` | ✅ NLP / semantic / expand |
+| Audit Agent | `src/lib/agents/audit-agent.ts` | ✅ resume-audits unificato |
+| Pitch Agent | `src/lib/agents/pitch-agent.ts` | ✅ wrapper generatePitchAction |
+| Outreach Agent | `src/lib/agents/outreach-agent.ts` | ✅ guardrail in outreach/log |
+| Insights Agent | `src/lib/agents/insights-agent.ts` | ✅ PKI + knowledge → insights/ai |
+| Orchestrator | `src/lib/agents/orchestrator.ts` | ✅ registry + pipeline |
 
-| # | Task | Dove |
-|---|------|------|
-| 8.1 | Modulo `src/lib/agents/` | orchestrator + registry agenti |
-| 8.2 | (Opzionale) LangGraph / CrewAI | solo se serve orchestrazione complessa |
+| # | Task | Dove | Stato |
+|---|------|------|-------|
+| 8.1 | Modulo `src/lib/agents/` | orchestrator + registry | ✅ |
+| 8.2 | LangGraph / CrewAI | — | ⬜ opzionale (non necessario) |
+
+API: `GET /api/agents`, `POST /api/agents/run`
 
 ---
 
-### Blocco 9 — Infrastruttura operativa
+### Blocco 9 — Infrastruttura operativa ✅
 
-| # | Task | Dove |
-|---|------|------|
-| 9.1 | Deploy script worker staging → prod | `backend_mirror/` + checklist backup |
-| 9.2 | Monitoring / log worker | journalctl + alert base |
-| 9.3 | AI Act audit trail | `outreach_log`, `technical_report`, score motivation |
-| 9.4 | Documentare confini API | aggiornare `ARCHITETTURA_MIRAX_V2_COMPLETA.md` |
+| # | Task | Dove | Stato |
+|---|------|------|-------|
+| 9.1 | Deploy script worker staging → prod | `backend_mirror/scripts/deploy-*.sh` + `DEPLOY_CHECKLIST.md` | ✅ |
+| 9.2 | Monitoring / log worker | `monitor-worker.sh`, `/api/ops/worker-health`, `check:worker-health` | ✅ |
+| 9.3 | AI Act audit trail | `ai_audit_trail`, `ai-act-audit.ts`, compliance API | ✅ |
+| 9.4 | Documentare confini API | `ARCHITETTURA_MIRAX_V2_COMPLETA.md` §21 | ✅ |
 
 ---
 
