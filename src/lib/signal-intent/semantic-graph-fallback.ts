@@ -63,6 +63,10 @@ export function inferFromSemanticGraph(query: string): SignalIntentSpec {
     required_signals.push('sector_investment')
   }
 
+  if (/\b(fondi|funding|finanziamento)\b/i.test(q) && /\bstartup\b/i.test(q)) {
+    if (!required_signals.includes('sector_investment')) required_signals.push('sector_investment')
+  }
+
   if (/\b(espansion|nuova\s+sede|filiale|apertura\s+sede)\b/i.test(q)) {
     required_signals.push('registry_change')
   }
@@ -137,6 +141,8 @@ export function inferFromSemanticGraph(query: string): SignalIntentSpec {
   if (locMatch) location = locMatch[1]
 
   const catPatterns: Array<[RegExp, string]> = [
+    [/\b(software\s+house|web\s+agency)\b/i, 'Software house'],
+    [/\bstartup\b/i, 'Startup'],
     [/\bconcessionari\w*\s+auto\b/i, 'concessionarie auto'],
     [/\bimprese?\s+edil\w*\b/i, 'imprese edili'],
     [/\bagenzie?\s+(di\s+)?marketing\b/i, 'agenzie marketing'],

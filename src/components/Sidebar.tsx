@@ -1,6 +1,6 @@
 'use client'
 
-import { Search, List, Plug, CreditCard, LogOut, Folder, User, Kanban, Brain, Send, Flame, Target, Layers, ShieldCheck, MailCheck, Map } from 'lucide-react'
+import { Search, List, Plug, CreditCard, LogOut, Folder, User, Kanban, Brain, Send, Flame, Target, Layers, ShieldCheck, MailCheck, Map, Network } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/utils/supabase/client'
 import MiraxLogo from '@/components/MiraxLogo'
 import { useDashboard, PLAN_CREDITS, PLAN_LABELS } from '@/components/DashboardContext'
-import { SHOW_CENTRO_COMANDO } from '@/lib/feature-flags'
+import { SHOW_CENTRO_COMANDO, SHOW_UNIVERSE_UI } from '@/lib/feature-flags'
 
 type SidebarProps = {
   credits: number
@@ -40,6 +40,9 @@ const Sidebar = ({ credits, variant = 'desktop', open = false, onClose, onNaviga
     { icon: Kanban, label: 'Pipeline', href: '/dashboard/pipeline', tooltip: 'Gestisci il funnel commerciale: da lead freddo a cliente acquisito' },
     { icon: Brain, label: 'Smart Insights', href: '/dashboard/insights', tooltip: 'Analisi AI del tuo processo di vendita: forecast, azioni urgenti e coach personale' },
     { icon: Map, label: 'Market Map', href: '/dashboard/market-map', tooltip: 'Mappa competitiva: maturità digitale, crescita e intent score su lead e competitor' },
+    ...(SHOW_UNIVERSE_UI
+      ? [{ icon: Network, label: 'Knowledge Graph', href: '/dashboard/universe', tooltip: 'Grafo commerciale MIRAX: ricerca AI in linguaggio naturale, entità, relazioni ed eventi' }]
+      : []),
     ...(SHOW_CENTRO_COMANDO
       ? [{ icon: Layers, label: 'Centro Comando', href: '/dashboard/ecosistema', tooltip: 'Multi-Agent, NOUS/CRM, EDAT, intelligence e API enterprise' }]
       : []),

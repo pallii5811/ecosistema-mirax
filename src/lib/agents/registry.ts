@@ -32,6 +32,12 @@ export const AGENT_REGISTRY: AgentDescriptor[] = [
     capabilities: ['pki', 'knowledge_search', 'coach_summary'],
   },
   {
+    id: 'universe',
+    label: 'Universe Agent',
+    description: 'Digital Twin, agentic search sul Knowledge Graph, resolve dominio',
+    capabilities: ['twin', 'agentic_search', 'resolve_domain', 'graph_query'],
+  },
+  {
     id: 'orchestrator',
     label: 'Orchestrator',
     description: 'Coordina pipeline multi-agente',
@@ -53,4 +59,6 @@ export const PRESET_PIPELINES: Record<string, AgentId[]> = {
   search_nlp: ['search'],
   outreach_safe: ['outreach'],
   audit_batch: ['audit'],
+  graph_intel: ['universe'],
+  graph_pitch: ['universe', 'pitch'],
 }

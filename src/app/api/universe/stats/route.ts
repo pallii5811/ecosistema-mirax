@@ -1,0 +1,43 @@
+/**
+ * GET /api/universe/stats — metriche grafo per UI Agentic Search.
+ */
+import { NextResponse } from 'next/server'
+import { createServiceRoleClient } from '@/utils/supabase/server'
+import { requireUniverseAuth } from '@/lib/universe/require-auth'
+import { isUniverseEnabled } from '@/lib/universe/sidecar'
+import { isUniverseReadEnabled } from '@/lib/universe/hydrate-leads'
+
+export async function GET() {
+  const auth = await requireUniverseAuth()
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status })
+  }
+
+  try {
+    const sb = createServiceRoleClient()
+    const { count: companies, error: e1 } = await sb
+      .from('universe_entities')
+      .select('*', { count: 'exact', head: true })
+      .eq('entity_type', 'company')
+      .is('merged_into_id', null)
+
+    const { count: observations, error: e2 } = await sb
+      .from('universe_observations')
+      .select('*', { count: 'exact', head: true })
+
+    if (e1 || e2) {
+      return NextResponse.json({ error: e1?.message || e2?.message }, { status: 500 })
+    }
+
+    return NextResponse.json({
+      ok: true,
+      companies: companies ?? 0,
+      observations: observations ?? 0,
+      universe_enabled: isUniverseEnabled(),
+      universe_read_enabled: isUniverseReadEnabled(),
+    })
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'Errore stats'
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}

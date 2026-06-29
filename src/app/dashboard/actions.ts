@@ -22,6 +22,7 @@ import {
   parseSignalIntentOffline,
   type SignalIntentSpec,
 } from '@/lib/signal-intent'
+import { inferMapsCategoryFromIntent, inferSearchKeywordsFromIntent, queryNamesExplicitCategory } from '@/lib/signal-intent/infer-maps-category'
 
 
 
@@ -439,14 +440,38 @@ export async function textToFilterSearchActionExpanded(userQuery: string): Promi
 
     const semanticIntent = await parseSignalIntent(query)
 
+    const inferredMapsCategory = inferMapsCategoryFromIntent(query, semanticIntent)
+    let resolvedCategory =
+      typeof nlp.category === 'string' && nlp.category.trim()
+        ? nlp.category.trim()
+        : semanticIntent.category ?? null
+    if (inferredMapsCategory && !queryNamesExplicitCategory(query)) {
+      const generic = !resolvedCategory || /^(agenzie|aziende)$/i.test(resolvedCategory)
+      const wrongVertical =
+        Boolean(resolvedCategory) &&
+        semanticIntent.required_signals.includes('hiring') &&
+        /viagg|ristorant|hotel|parrucchier|notai|fiorai/i.test(resolvedCategory || '')
+      if (generic || wrongVertical) resolvedCategory = inferredMapsCategory
+    }
+    if (!resolvedCategory && inferredMapsCategory) resolvedCategory = inferredMapsCategory
+
+    const intentKeywords = inferSearchKeywordsFromIntent(query, semanticIntent)
+    const mergedKeywords = [
+      ...new Set([
+        ...(Array.isArray((nlp as SearchNlpParams).keywords) ? (nlp as SearchNlpParams).keywords! : []),
+        ...intentKeywords,
+      ]),
+    ].filter((k) => typeof k === 'string' && k.trim())
+
     nlp = {
 
       ...nlp,
 
       city: typeof nlp.city === 'string' && nlp.city.trim() ? nlp.city : semanticIntent.location ?? nlp.city,
 
-      category:
-        typeof nlp.category === 'string' && nlp.category.trim() ? nlp.category : semanticIntent.category ?? nlp.category,
+      category: resolvedCategory ?? nlp.category,
+
+      keywords: mergedKeywords.length ? mergedKeywords : (nlp as SearchNlpParams).keywords,
 
       technical_filters: {
 
@@ -766,11 +791,12 @@ export async function textToFilterSearchActionExpanded(userQuery: string): Promi
 
         // Check for recently completed job first — reuse results instead of re-scraping
         const completedMaxAgeMs = 60 * 60 * 1000 // 1 hour
+        const canonicalCat = formatCanonicalLabel(categoryBase)
         const { data: completedJob } = await supabase
           .from('searches')
-          .select('id, status, results, created_at')
+          .select('id, status, results, created_at, category')
           .ilike('location', cityBase)
-          .ilike('category', categoryBase)
+          .eq('category', canonicalCat)
           .eq('status', 'completed')
           .order('created_at', { ascending: false })
           .limit(1)
@@ -809,11 +835,12 @@ export async function textToFilterSearchActionExpanded(userQuery: string): Promi
           }
         }
 
+        const canonicalCatPending = formatCanonicalLabel(categoryBase)
         const { data: existingJob } = await supabase
           .from('searches')
           .select('id, status, created_at')
           .ilike('location', cityBase)
-          .ilike('category', categoryBase)
+          .eq('category', canonicalCatPending)
           .in('status', ['pending', 'pending_user', 'processing'])
           .order('created_at', { ascending: false })
           .limit(1)
@@ -842,7 +869,7 @@ export async function textToFilterSearchActionExpanded(userQuery: string): Promi
           .insert(
             buildPendingSearchInsert({
               userId: user?.id,
-              category: categoryBase,
+              category: formatCanonicalLabel(categoryBase),
               location: cityBase,
             }),
           )
@@ -862,7 +889,7 @@ export async function textToFilterSearchActionExpanded(userQuery: string): Promi
               .from('searches')
               .select('id, status, created_at')
               .ilike('location', cityBase)
-              .ilike('category', categoryBase)
+              .eq('category', canonicalCatPending)
               .order('created_at', { ascending: false })
               .limit(1)
               .maybeSingle()
@@ -1428,7 +1455,7 @@ Zero testo aggiuntivo. Solo l'array.`
 
           .insert(
             buildPendingSearchInsert({
-              category: categoryBase,
+              category: formatCanonicalLabel(categoryBase),
               location: cityBase,
               userId: user?.id,
             }),
@@ -1446,7 +1473,7 @@ Zero testo aggiuntivo. Solo l'array.`
                 .from('searches')
                 .select('id, status, created_at')
                 .ilike('location', cityBase)
-                .ilike('category', categoryBase)
+                .eq('category', formatCanonicalLabel(categoryBase))
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .maybeSingle()
@@ -2355,6 +2382,12 @@ const heuristicSearchNlpParams = (userQuery: string): SearchNlpParams => {
 
   if (!category && /\b(ristorant|pizzer)\b/i.test(q)) category = 'Ristoranti'
 
+  if (!category && /\bstartup\b/i.test(q)) category = 'Startup'
+
+  if (!category && /\b(programmator\w*|developer\w*|sviluppat\w*|software|python)\b/i.test(q) && /\b(assum|hiring|offerte?\s+(di\s+)?lavoro)\b/i.test(q)) {
+    category = 'Servizi informatici'
+  }
+
 
 
   return { city, category, keywords: [], excluded_keywords: [], technical_filters: { ...technical_filters, tech_terms }, signal_intent: parseSignalIntentOffline(userQuery) }
@@ -2440,6 +2473,14 @@ const buildSearchNlpSystemPromptWithContext = (ctx: { available_categories: stri
     "Utente: 'ristoranti a milano che non fanno pubblicita su google'\n" +
 
     'Risposta: { "city": "Milano", "category": "Ristoranti", "technical_filters": { "no_google_ads": true } }\n\n' +
+
+    "Utente: 'aziende che assumono programmatori Python a Milano'\n" +
+
+    'Risposta: { "city": "Milano", "category": "Software house", "keywords": ["software","sviluppo","informatica"], "excluded_keywords": ["viaggi","ristorante"], "signal_intent": { "required_signals": ["hiring"], "hiring_roles": ["programmatore"] } }\n\n' +
+
+    "Utente: 'imprese edili che assumono muratori in Veneto'\n" +
+
+    'Risposta: { "city": "Veneto", "category": "Imprese edili", "signal_intent": { "required_signals": ["hiring"], "hiring_roles": ["tecnico"] } }\n\n' +
 
     
 
@@ -4093,14 +4134,38 @@ export async function textToFilterSearchAction(
 
     const semanticIntent = await parseSignalIntent(query)
 
+    const inferredMapsCategory = inferMapsCategoryFromIntent(query, semanticIntent)
+    let resolvedCategory =
+      typeof nlp.category === 'string' && nlp.category.trim()
+        ? nlp.category.trim()
+        : semanticIntent.category ?? null
+    if (inferredMapsCategory && !queryNamesExplicitCategory(query)) {
+      const generic = !resolvedCategory || /^(agenzie|aziende)$/i.test(resolvedCategory)
+      const wrongVertical =
+        Boolean(resolvedCategory) &&
+        semanticIntent.required_signals.includes('hiring') &&
+        /viagg|ristorant|hotel|parrucchier|notai|fiorai/i.test(resolvedCategory || '')
+      if (generic || wrongVertical) resolvedCategory = inferredMapsCategory
+    }
+    if (!resolvedCategory && inferredMapsCategory) resolvedCategory = inferredMapsCategory
+
+    const intentKeywords = inferSearchKeywordsFromIntent(query, semanticIntent)
+    const mergedKeywords = [
+      ...new Set([
+        ...(Array.isArray((nlp as SearchNlpParams).keywords) ? (nlp as SearchNlpParams).keywords! : []),
+        ...intentKeywords,
+      ]),
+    ].filter((k) => typeof k === 'string' && k.trim())
+
     nlp = {
 
       ...nlp,
 
       city: typeof nlp.city === 'string' && nlp.city.trim() ? nlp.city : semanticIntent.location ?? nlp.city,
 
-      category:
-        typeof nlp.category === 'string' && nlp.category.trim() ? nlp.category : semanticIntent.category ?? nlp.category,
+      category: resolvedCategory ?? nlp.category,
+
+      keywords: mergedKeywords.length ? mergedKeywords : (nlp as SearchNlpParams).keywords,
 
       technical_filters: {
 
@@ -5215,7 +5280,7 @@ export async function textToFilterSearchAction(
 
                 .ilike('location', cityBase)
 
-                .ilike('category', categoryBase)
+                .eq('category', formatCanonicalLabel(categoryBase))
 
                 .order('created_at', { ascending: false })
 

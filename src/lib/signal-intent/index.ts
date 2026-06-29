@@ -23,3 +23,6 @@ export {
   signalIntentToBusinessFilters,
   describeSignalIntent,
 } from '@/lib/signal-intent/match-lead'
+export { inferMapsCategoryFromIntent, inferSearchKeywordsFromIntent, queryNamesExplicitCategory, hiringStatusForLead } from '@/lib/signal-intent/infer-maps-category'
+export { hiringCellForLead, indeedSearchUrl, type HiringCellData } from '@/lib/signal-intent/hiring-cell'
+export { intentCellForLead, showIntentDataColumn, intentColumnTitle, type IntentCellData } from '@/lib/signal-intent/intent-cell'

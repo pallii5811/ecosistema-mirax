@@ -7,6 +7,7 @@ import {
   normalizeLeadName,
   normalizeLeadWebsite,
 } from '@/lib/business-events'
+import { ingestMiraxLeadSidecarAsync } from '@/lib/universe/sidecar'
 
 function asLead(body: unknown): Record<string, unknown> {
   if (body && typeof body === 'object' && !Array.isArray(body)) {
@@ -109,6 +110,13 @@ export async function POST(req: NextRequest) {
     if (upsertError && !isMissingTable(upsertError.message)) {
       return NextResponse.json({ error: upsertError.message, signals, persisted: false }, { status: 500 })
     }
+
+    const enrichedLead = {
+      ...lead,
+      business_signals: signals,
+      business_events_enriched_at: new Date().toISOString(),
+    }
+    ingestMiraxLeadSidecarAsync(svc, enrichedLead, 'business_events_api', user.id)
   }
 
   return NextResponse.json({

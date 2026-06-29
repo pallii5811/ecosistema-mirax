@@ -8,10 +8,13 @@ import { discoveryMotivo, discoveryPitch } from '@/lib/discovery-copy'
 import { OutreachLauncher } from '@/components/OutreachLauncher'
 import { LeadComplianceBadge } from '@/components/LeadComplianceBadge'
 import { MarketingInvestorBadge } from '@/components/MarketingInvestorBadge'
+import type { SignalIntentSpec } from '@/lib/signal-intent/types'
+import { hiringStatusForLead } from '@/lib/signal-intent/infer-maps-category'
 
 type Props = {
   lead: Record<string, unknown>
   searchId?: string | null
+  signalIntent?: SignalIntentSpec | null
 }
 
 function readString(obj: Record<string, unknown>, keys: string[]) {
@@ -22,9 +25,10 @@ function readString(obj: Record<string, unknown>, keys: string[]) {
   return ''
 }
 
-export function DiscoveryLeadCard({ lead, searchId }: Props) {
+export function DiscoveryLeadCard({ lead, searchId, signalIntent = null }: Props) {
   const summary = analyzeMiraxSignals(lead)
   const intentBreakdown = calculateIntentScoreFromLead(lead)
+  const hiringChip = hiringStatusForLead(lead, signalIntent)
   const name = readString(lead, ['azienda', 'nome', 'company', 'name']) || 'Azienda'
   const city = readString(lead, ['citta', 'city', 'localita'])
   const categoria = readString(lead, ['categoria', 'category'])
@@ -66,6 +70,11 @@ export function DiscoveryLeadCard({ lead, searchId }: Props) {
             {summary.label}
           </span>
           {(summary.intentSignals?.length ?? 0) > 0 ? <MarketingInvestorBadge compact /> : null}
+          {hiringChip ? (
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${hiringChip.className}`}>
+              {hiringChip.label}
+            </span>
+          ) : null}
           <LeadComplianceBadge status="unknown" compact />
         </div>
       </div>

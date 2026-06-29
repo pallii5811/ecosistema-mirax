@@ -41,6 +41,7 @@ import { useDashboard } from '@/components/DashboardContext'
 import { OutreachLauncher } from '@/components/OutreachLauncher'
 import { useOutreachStatus } from '@/hooks/useOutreachStatus'
 import FreeIntelPanel from './FreeIntelPanel'
+import { UniverseLeadPanel } from '@/components/universe/UniverseLeadPanel'
 
 type LeadDetailClientProps = {
   lead: any | null
@@ -1214,6 +1215,10 @@ export default function LeadDetailClient({ lead: leadProp, searchId, leadIndex, 
           lead={lead}
           activeMetaAds={ads?.facebookAds?.apiVerified && typeof ads?.facebookAds?.activeAdsFound === 'number' ? ads.facebookAds.activeAdsFound : null}
         />
+      </div>
+
+      <div className="mb-6">
+        <UniverseLeadPanel website={sitoRaw || null} leadName={nome || null} />
       </div>
 
       {/* Analisi AI */}

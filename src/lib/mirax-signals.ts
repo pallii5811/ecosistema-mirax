@@ -21,10 +21,13 @@ export type MiraxSignal = {
   kind: MiraxSignalKind
   signalType?: BusinessSignalType | string
   title: string
-  severity: 'critical' | 'high' | 'medium'
+  severity: 'critical' | 'high' | 'medium' | 'low'
   confidence: number
   reason: string
   evidence: MiraxSignalEvidence[]
+  /** confirmed = verified match; unknown = sources down / no match; inferred = weak */
+  status?: 'confirmed' | 'unknown' | 'inferred'
+  retryAfterMinutes?: number
   serviceToSell?: string
   openingLine?: string
   nextBestAction?: string
@@ -95,7 +98,7 @@ export function analyzeMiraxSignals(input: unknown): MiraxSignalSummary {
   const pureBusinessSignals = businessSignals.filter((s) => s.kind !== 'intent')
 
   const allSignals = [...businessSignals, ...technicalSignals].sort((a, b) => {
-    const rank = { critical: 0, high: 1, medium: 2 }
+    const rank: Record<MiraxSignal['severity'], number> = { critical: 0, high: 1, medium: 2, low: 3 }
     return rank[a.severity] - rank[b.severity] || b.confidence - a.confidence
   })
 

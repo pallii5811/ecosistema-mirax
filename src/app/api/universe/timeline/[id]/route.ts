@@ -1,0 +1,39 @@
+/**
+ * GET /api/universe/timeline/:id
+ * Timeline osservazioni per entità (opzionale filtro attributo).
+ */
+import { NextRequest, NextResponse } from 'next/server'
+import { createServiceRoleClient } from '@/utils/supabase/server'
+import { getTimeline, getEntityById } from '@/lib/universe'
+import { requireUniverseAuth } from '@/lib/universe/require-auth'
+
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireUniverseAuth()
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status })
+  }
+
+  try {
+    const { id } = await params
+    const attribute = req.nextUrl.searchParams.get('attribute') ?? undefined
+    const limit = Math.min(500, Math.max(1, Number(req.nextUrl.searchParams.get('limit')) || 100))
+
+    const sb = createServiceRoleClient()
+    const entity = await getEntityById(sb, id)
+    if (!entity) {
+      return NextResponse.json({ error: 'Entità non trovata' }, { status: 404 })
+    }
+
+    const timeline = await getTimeline(sb, id, attribute)
+    return NextResponse.json({
+      entity_id: id,
+      attribute: attribute ?? null,
+      points: timeline.slice(0, limit),
+      count: timeline.length,
+    })
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'Errore timeline'
+    console.error('[universe/timeline] error:', message)
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}

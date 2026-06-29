@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -28,6 +29,10 @@ from business_events_enrich import (
     detect_signals_from_audit,
     detect_tender_signals,
 )
+from entity_matcher import validate_signal_for_lead
+from health_monitor import get_health_monitor
+from resilience import enrich_cache_key, emergency_mock
+from universal_cache import get_universal_cache
 
 # ── Registry (mirror TypeScript src/lib/signals/registry.ts) ───────────────
 
@@ -355,6 +360,62 @@ class WaterfallEnricher:
             "news_api": NewsAPISource(),
             "mirax_diff_engine": WebsiteDiffSource(),
         }
+        self.monitor = get_health_monitor()
+        self.cache = get_universal_cache()
+
+    def _validate_signals(self, lead: Dict[str, Any], signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for sig in signals:
+            if not isinstance(sig, dict):
+                continue
+            if validate_signal_for_lead(lead, sig):
+                if "status" not in sig:
+                    sig = dict(sig)
+                    sig["status"] = "confirmed"
+                out.append(sig)
+        return out
+
+    async def _fetch_source(
+        self,
+        lead: Dict[str, Any],
+        source: EnrichmentSource,
+        sig_type: str,
+        location: str,
+        timeout_s: float,
+    ) -> List[Dict[str, Any]]:
+        src_name = source.name
+        if not self.monitor.should_try(src_name):
+            print(f"[waterfall] skip {src_name} unhealthy/cooldown", flush=True)
+            return []
+
+        cache_q = enrich_cache_key(lead, sig_type, location)
+        cached = self.cache.get(src_name, cache_q)
+        if cached is not None:
+            print(f"[waterfall] cache hit {src_name} {sig_type}", flush=True)
+            return cached if isinstance(cached, list) else []
+
+        start = time.time()
+        try:
+            signals = await asyncio.wait_for(source.fetch(lead, sig_type, location), timeout=timeout_s)
+            elapsed_ms = (time.time() - start) * 1000
+            validated = self._validate_signals(lead, signals or [])
+            if validated:
+                self.monitor.record_success(src_name, elapsed_ms)
+                self.cache.set(src_name, cache_q, validated)
+                return validated
+            if signals:
+                print(f"[waterfall] {src_name} results rejected by entity_match", flush=True)
+            self.monitor.record_success(src_name, elapsed_ms)
+            self.cache.set(src_name, cache_q, [])
+            return []
+        except asyncio.TimeoutError:
+            self.monitor.record_failure(src_name)
+            print(f"[waterfall] TIMEOUT {src_name} per {sig_type}", flush=True)
+            return []
+        except Exception as e:
+            self.monitor.record_failure(src_name)
+            print(f"[waterfall] ERROR {src_name}: {e}", flush=True)
+            return []
 
     async def enrich_lead(
         self,
@@ -390,19 +451,16 @@ class WaterfallEnricher:
                 if not source:
                     continue
                 timeout_s = src_cfg.get("timeout_ms", 4000) / 1000.0
-                try:
-                    signals = await asyncio.wait_for(source.fetch(lead, sig_type, location), timeout=timeout_s)
-                    if signals:
-                        print(f"[waterfall] {sig_type} → {src_name} OK ({len(signals)} segnali)", flush=True)
-                        found.extend(signals)
-                        if not cfg.get("parallel"):
-                            break
-                    else:
-                        print(f"[waterfall] {sig_type} → {src_name} empty, next", flush=True)
-                except asyncio.TimeoutError:
-                    print(f"[waterfall] TIMEOUT {src_name} per {sig_type}", flush=True)
-                except Exception as e:
-                    print(f"[waterfall] ERROR {src_name}: {e}", flush=True)
+                signals = await self._fetch_source(lead, source, sig_type, location, timeout_s)
+                if signals:
+                    print(f"[waterfall] {sig_type} → {src_name} OK ({len(signals)} segnali)", flush=True)
+                    found.extend(signals)
+                    if not cfg.get("parallel"):
+                        break
+                else:
+                    print(f"[waterfall] {sig_type} → {src_name} empty, next", flush=True)
+            if not found and sig_type in {"hiring", "tender_won", "registry_change", "funding_received"}:
+                found.append(emergency_mock(sig_type, _lead_name(lead) or "azienda"))
             return found
 
         if external_targets:
@@ -429,6 +487,7 @@ class WaterfallEnricher:
             unique.append(s)
 
         apply_signals_to_lead(lead, unique)
+        lead["business_events_external_at"] = _utc_now_iso()
         lead["business_events_enriched_at"] = _utc_now_iso()
         return unique
 

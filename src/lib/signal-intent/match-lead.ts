@@ -38,8 +38,17 @@ function requirementSatisfied(lead: Record<string, unknown>, req: MiraxSignalReq
   ]
 
   switch (req) {
-    case 'hiring':
+    case 'hiring': {
+      const claude = lead.claude_enrichment
+      if (claude && typeof claude === 'object') {
+        const c = claude as Record<string, unknown>
+        if (c.matches_request === true) {
+          return jobMatchesRoles(lead, intent.hiring_roles) || !intent.hiring_roles.length
+        }
+        if (c.checked_at || c.summary) return false
+      }
       return hasBusinessSignalType(summary, ['hiring']) && jobMatchesRoles(lead, intent.hiring_roles)
+    }
     case 'registry_change':
       return hasBusinessSignalType(summary, ['registry_change'])
     case 'site_stale':

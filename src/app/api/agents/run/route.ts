@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
 
   if (Array.isArray(body?.pipeline) && body.pipeline.length > 0) {
     const pipeline = body.pipeline.filter((id): id is AgentId =>
-      ['search', 'audit', 'pitch', 'outreach', 'insights'].includes(id),
+      ['search', 'audit', 'pitch', 'outreach', 'insights', 'universe'].includes(id),
     )
     const results = await runPipeline(pipeline, input, ctx)
     return NextResponse.json({ pipeline, results })

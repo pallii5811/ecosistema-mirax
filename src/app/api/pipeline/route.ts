@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { sanitizePipelineStage, PIPELINE_STAGES } from '@/lib/pipeline-stages'
 import { recordPipelineStageFeedback } from '@/lib/scoring-feedback'
+import { getEntityByAlias, getEntityByCanonicalId, upsertEntity, normalizeDomain, slugifyName } from '@/lib/universe'
 
 function sanitizeScore(s: unknown): number {
   const n = typeof s === 'number' ? s : Number(s)
@@ -67,6 +68,55 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Universe sidecar: ensure entity exists and link user context
+  if (process.env.UNIVERSE_ENABLED === '1') {
+    Promise.resolve().then(async () => {
+      try {
+        const admin = await import('@/utils/supabase/server').then((m) => m.createServiceRoleClient())
+        let entityId: string | null = null
+        const domain = normalizeDomain(lead_website)
+        if (domain) {
+          const byAlias = await getEntityByAlias(admin, 'domain', domain, 'company')
+          if (byAlias) entityId = byAlias.id
+        }
+        if (!entityId && domain) {
+          const byCanonical = await getEntityByCanonicalId(admin, domain, 'company')
+          if (byCanonical) entityId = byCanonical.id
+        }
+        if (!entityId && cleanName) {
+          const canonical = domain ?? slugifyName(cleanName)
+          if (canonical) {
+            const { entity } = await upsertEntity(admin, {
+              canonical_id: canonical,
+              entity_type: 'company',
+              name: cleanName,
+              slug: slugifyName(cleanName),
+              city: sanitizeText(lead_city, 100),
+              metadata: { category: sanitizeText(lead_category, 100) },
+              confidence: 0.8,
+              aliases: domain ? [{ alias_type: 'domain', alias_value: domain, confidence: 0.9 }] : undefined,
+            })
+            entityId = entity.id
+          }
+        }
+        if (entityId) {
+          await admin.from('universe_user_context').upsert(
+            {
+              user_id: user.id,
+              entity_id: entityId,
+              context_type: 'pipeline',
+              metadata: { pipeline_id: data.id, stage: sanitizePipelineStage(stage) },
+            },
+            { onConflict: 'user_id, entity_id, context_type' }
+          )
+        }
+      } catch (e) {
+        console.warn('[pipeline] Universe sidecar failed:', e)
+      }
+    }).catch(() => {})
+  }
+
   return NextResponse.json({ item: data })
 }
 

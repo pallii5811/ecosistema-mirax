@@ -21,11 +21,19 @@
     },
     {
       "path": "/api/cron/website-change-detect",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 5 * * *"
     },
     {
       "path": "/api/cron/competitor-signals",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/universe-reconcile",
+      "schedule": "30 4 * * 0"
+    },
+    {
+      "path": "/api/cron/universe-process-events",
+      "schedule": "0 7 * * *"
     },
     {
       "path": "/api/ops/worker-health",

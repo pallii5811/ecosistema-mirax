@@ -410,6 +410,16 @@ if app is not None:
     async def health() -> Dict[str, str]:
         return {"status": "ok", "service": "mirax-worker-api"}
 
+    @app.get("/api/v1/health")
+    async def health_v1() -> Dict[str, Any]:
+        """Stato fonti enrichment MIRAX v5 (health monitor + cache)."""
+        try:
+            from resilience import get_resilience_status
+
+            return {"status": "ok", "service": "mirax-worker-api", **get_resilience_status()}
+        except Exception as e:
+            return {"status": "degraded", "service": "mirax-worker-api", "error": str(e)}
+
     class _AuditUrlRequest(BaseModel):
         url: str
 
@@ -441,6 +451,35 @@ if app is not None:
 
         threading.Thread(target=_run, daemon=True).start()
         return {"ok": True, "started": True, "max": max_l}
+
+    class _EnrichHiringBatchRequest(BaseModel):
+        leads: List[Dict[str, Any]]
+        location: str = "Milano"
+        max_leads: int = 25
+
+    @app.post("/enrich-hiring-batch")
+    async def enrich_hiring_batch(payload: _EnrichHiringBatchRequest) -> Dict[str, Any]:
+        """Indeed / segnali esterni su batch lead (post-Maps)."""
+        leads_in = [dict(x) for x in (payload.leads or []) if isinstance(x, dict)]
+        cap = max(1, min(int(payload.max_leads or 25), 40, len(leads_in)))
+        batch = leads_in[:cap]
+        if not batch:
+            return {"ok": True, "enriched": 0, "leads": []}
+        try:
+            from business_events_enrich import enrich_results_business_events
+
+            loc = (payload.location or "Milano").strip() or "Milano"
+            await enrich_results_business_events(
+                batch,
+                loc,
+                max_leads=cap,
+                external_only=True,
+            )
+            n = sum(1 for l in batch if l.get("business_hiring_jobs"))
+            print(f"[enrich-hiring-batch] {n}/{cap} con hiring jobs", flush=True)
+            return {"ok": True, "enriched": n, "processed": cap, "leads": batch}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 async def _scrape_single_place_fallback(category: str, location: str, zone: Optional[str]) -> List[Dict[str, Any]]:
@@ -961,6 +1000,8 @@ def _format_results(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "business_sector_hits",
             "audit_changes",
             "business_events_enriched_at",
+            "business_events_audit_at",
+            "business_events_external_at",
             "business_signals",
         ):
             if _bk in r and r.get(_bk) is not None:
@@ -2198,14 +2239,14 @@ async def _run_business_events_enrichment(
     external_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """Business events enrichment post-audit."""
-    enrich_business = os.getenv("ENRICH_BUSINESS_EVENTS", "0").strip().lower() in {"1", "true", "yes"}
+    enrich_business = os.getenv("ENRICH_BUSINESS_EVENTS", "1").strip().lower() in {"1", "true", "yes"}
     if not enrich_business or not formatted:
         return formatted
     try:
         from business_events_enrich import enrich_results_business_events
 
-        max_be = int(os.getenv("ENRICH_BUSINESS_EVENTS_MAX", "12") or "12")
-        cap = max(1, min(max_be, 25))
+        max_be = int(os.getenv("ENRICH_BUSINESS_EVENTS_MAX", "40") or "40")
+        cap = max(1, min(max_be, 50))
         await enrich_results_business_events(
             formatted,
             location,
@@ -2780,7 +2821,26 @@ def main() -> None:
 
             formatted = _publish_job_results_safe(formatted, status=final_status)
 
-            enrich_business = os.getenv("ENRICH_BUSINESS_EVENTS", "0").strip().lower() in {"1", "true", "yes"}
+            # ---- Universe sidecar ingest (Phase 3) — dopo audit + business events sync ----
+            try:
+                from universe.sidecar import ingest_leads_batch
+
+                _u_stats = ingest_leads_batch(
+                    supabase,
+                    formatted if isinstance(formatted, list) else [],
+                    source="maps_scrape",
+                    user_id=job_user_id,
+                )
+                if _u_stats["ingested"] or _u_stats["errors"]:
+                    print(
+                        f"[worker_supabase] universe ingest maps_scrape: "
+                        f"{_u_stats['ingested']} ok, {_u_stats['errors']} err",
+                        flush=True,
+                    )
+            except Exception as _u_init_ex:
+                print(f"[worker_supabase] universe ingest skipped: {_u_init_ex}", flush=True)
+
+            enrich_business = os.getenv("ENRICH_BUSINESS_EVENTS", "1").strip().lower() in {"1", "true", "yes"}
             if enrich_business and formatted:
                 import threading
 
@@ -2800,6 +2860,23 @@ def main() -> None:
                             )
                         )
                         _publish_job_results_safe(_bg_formatted)
+                        try:
+                            from universe.sidecar import ingest_leads_batch
+
+                            _u_ext = ingest_leads_batch(
+                                supabase,
+                                _bg_formatted,
+                                source="business_events_external",
+                                user_id=_bg_user,
+                            )
+                            if _u_ext["ingested"] or _u_ext["errors"]:
+                                print(
+                                    f"[worker_supabase] universe re-ingest post-external: "
+                                    f"{_u_ext['ingested']} ok, {_u_ext['errors']} err",
+                                    flush=True,
+                                )
+                        except Exception as _u_ext_ex:
+                            print(f"[worker_supabase] universe post-external skipped: {_u_ext_ex}", flush=True)
                     except Exception as ex:
                         print(f"[worker_supabase] background enrich failed: {ex}", flush=True)
 

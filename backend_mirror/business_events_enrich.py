@@ -148,17 +148,23 @@ def _make_signal(
     severity: str = "medium",
     confidence: int = 80,
     evidence: Optional[List[Dict[str, Any]]] = None,
+    entity_verified: bool = False,
+    status: str = "confirmed",
 ) -> Dict[str, Any]:
     ev = evidence or []
     source = ev[0].get("source", "mirax_audit") if ev else "mirax_audit"
-    return {
+    out: Dict[str, Any] = {
         "type": signal_type,
         "title": title,
-        "severity": severity if severity in {"critical", "high", "medium"} else "medium",
+        "severity": severity if severity in {"critical", "high", "medium", "low"} else "medium",
         "confidence": max(0, min(100, int(confidence))),
         "evidence": ev,
         "source": source,
+        "status": status if status in {"confirmed", "unknown", "inferred"} else "confirmed",
     }
+    if entity_verified:
+        out["entity_verified"] = True
+    return out
 
 
 def detect_signals_from_audit(lead: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -487,7 +493,16 @@ async def detect_hiring_signal(company_name: str, city: str) -> List[Dict[str, A
                 f"Sta assumendo — {len(jobs)} offerta/e su Indeed",
                 severity="high",
                 confidence=75,
-                evidence=[{"label": "Fonte", "value": f"Indeed IT — {len(jobs)} annunci", "source": "indeed_it", "url": url}],
+                evidence=[
+                    {
+                        "label": "Fonte",
+                        "value": f"Indeed IT — {len(jobs)} annunci",
+                        "source": "indeed_it",
+                        "url": url,
+                        "company": name,
+                    },
+                    *[{"label": "Offerta", "value": j.get("title", ""), "source": "indeed_it", "company": name} for j in jobs[:2]],
+                ],
             )
         ]
     except Exception as e:
@@ -557,6 +572,13 @@ async def detect_tender_signals(company_name: str) -> List[Dict[str, Any]]:
         if not records:
             return []
 
+        from entity_matcher import filter_records_for_lead
+
+        lead_stub = {"azienda": name, "nome": name}
+        records = filter_records_for_lead(lead_stub, records, fallback_name=name)
+        if not records:
+            return []
+
         cutoff = datetime.now() - timedelta(days=365)
         name_lower = name.lower()[:15]
         recent: List[Dict[str, Any]] = []
@@ -587,11 +609,19 @@ async def detect_tender_signals(company_name: str) -> List[Dict[str, Any]]:
                 evidence=[
                     {
                         "label": "Fonte",
-                        "value": "ANAC — Autorità Nazionale Anticorruzione",
+                        "value": f"ANAC — {name}",
                         "source": "anac_opendata",
                         "url": "https://dati.anticorruzione.it/opendata",
-                    }
+                        "company": name,
+                    },
+                    {
+                        "label": "Oggetto",
+                        "value": obj,
+                        "source": "anac_opendata",
+                        "company": name,
+                    },
                 ],
+                entity_verified=True,
             )
         ]
     except Exception:
@@ -768,6 +798,8 @@ async def enrich_lead_business_events(
         unique.append(s)
 
     apply_signals_to_lead(lead, unique)
+    if not skip_external:
+        lead["business_events_external_at"] = _utc_now_iso()
     lead["business_events_enriched_at"] = _utc_now_iso()
     return lead
 
@@ -784,7 +816,7 @@ def enrich_lead_audit_only(lead: Dict[str, Any]) -> List[Dict[str, Any]]:
     if sector_hits:
         lead["business_sector_hits"] = sector_hits
     apply_signals_to_lead(lead, signals)
-    lead["business_events_enriched_at"] = _utc_now_iso()
+    lead["business_events_audit_at"] = _utc_now_iso()
     return signals
 
 
@@ -875,6 +907,7 @@ async def enrich_results_business_events(
                         seen.add(key)
                         unique.append(s)
                     apply_signals_to_lead(lead, unique)
+                    lead["business_events_external_at"] = _utc_now_iso()
                     lead["business_events_enriched_at"] = _utc_now_iso()
                 total_signals += count_lead_signals(lead)
             else:

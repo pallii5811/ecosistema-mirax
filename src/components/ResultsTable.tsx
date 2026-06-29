@@ -19,7 +19,10 @@ import { BusinessSignalBadge } from '@/components/BusinessSignalBadge'
 import { IntentScoreBadge } from '@/components/IntentScoreBadge'
 import { calculateIntentScoreFromLead } from '@/lib/scoring/intent-score'
 import { LeadComplianceBadge } from '@/components/LeadComplianceBadge'
+import { UniverseHydratedBadge } from '@/components/universe/UniverseHydratedBadge'
 import { MarketingInvestorBadge } from '@/components/MarketingInvestorBadge'
+import type { SignalIntentSpec } from '@/lib/signal-intent/types'
+import { intentCellForLead, showIntentDataColumn, intentColumnTitle } from '@/lib/signal-intent/intent-cell'
 import { isAuditPendingLead } from '@/lib/lead-audit-status'
 import { computeFreshnessScore, freshnessLabel } from '@/lib/lead-object'
 
@@ -130,6 +133,7 @@ type ResultsTableProps = {
   missingSignals?: boolean
   hasActiveBusinessFilter?: boolean
   onClearBusinessFilters?: () => void
+  signalIntent?: SignalIntentSpec | null
 }
 
 type UserList = {
@@ -149,7 +153,10 @@ const ResultsTable = ({
   missingSignals = false,
   hasActiveBusinessFilter = false,
   onClearBusinessFilters,
+  signalIntent = null,
 }: ResultsTableProps) => {
+  const showIntentColumn = showIntentDataColumn(signalIntent)
+  const intentColTitle = intentColumnTitle(signalIntent)
   const [activeCRM, setActiveCRM] = useState<{ id: string; type: string; name?: string } | null>(null)
   const [pitchOpen, setPitchOpen] = useState(false)
   const [pitchLoading, setPitchLoading] = useState(false)
@@ -163,6 +170,10 @@ const ResultsTable = ({
   const [sortBySignals, setSortBySignals] = useState(false)
   const [hotOnly, setHotOnly] = useState(false)
   const [previewSite, setPreviewSite] = useState<{ url: string; name: string } | null>(null)
+
+  useEffect(() => {
+    setHotOnly(false)
+  }, [searchId, query])
 
   const [saveOpen, setSaveOpen] = useState(false)
   const [saveLoading, setSaveLoading] = useState(false)
@@ -1008,17 +1019,23 @@ const ResultsTable = ({
     <Card className="bg-white border border-zinc-200 rounded-2xl overflow-hidden shadow-sm">
       {missingSignals && hasActiveBusinessFilter && totalUnfilteredCount ? (
         <div className="mx-6 mt-5 mb-0 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          <span className="font-semibold">Cercando segnali business...</span>
-          {' '}I badge appariranno entro 2-3 minuti. I lead sono visibili senza filtro.
+          <span className="font-semibold">Verifica hiring in corso…</span>
+          {' '}I lead sotto sono candidati da Maps. Il dato che hai chiesto (assunzioni Python) è nella colonna{' '}
+          <strong className="text-violet-800">ASSUNZIONI</strong> — separata da Pixel/SEO (audit sito).
           {onClearBusinessFilters ? (
             <button
               type="button"
               onClick={onClearBusinessFilters}
               className="ml-2 underline font-medium text-amber-900"
             >
-              Mostra tutti i lead
+              Rimuovi filtro business
             </button>
           ) : null}
+        </div>
+      ) : showIntentColumn ? (
+        <div className="mx-6 mt-5 mb-0 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">
+          <span className="font-semibold">Arricchimento Claude attivo.</span>
+          {' '}Colonna <strong>{intentColTitle.toUpperCase()}</strong>: viola = corrisponde alla tua richiesta · giallo = analisi in corso · grigio = nessuna evidenza. Pixel/SEO restano in Opportunità.
         </div>
       ) : null}
       <div className="px-6 py-5 border-b border-zinc-100">
@@ -1029,7 +1046,7 @@ const ResultsTable = ({
               {isLoading
                 ? 'Ricerca in corso…'
                 : missingSignals && hasActiveBusinessFilter && totalUnfilteredCount
-                  ? `${totalUnfilteredCount} lead trovati — filtro business attivo ma nessun segnale ancora disponibile per "${query || '—'}"`
+                  ? `${results.length} candidati — verifica segnale per "${query || '—'}"`
                   : totalUnfilteredCount && totalUnfilteredCount !== results.length
                     ? `${results.length} di ${totalUnfilteredCount} risultati (filtro business attivo) per "${query || '—'}"`
                     : `${results.length} risultati per "${query || '—'}"`}
@@ -1159,6 +1176,7 @@ const ResultsTable = ({
                           <MarketingInvestorBadge compact />
                         ) : null}
                         <LeadComplianceBadge status="unknown" compact />
+                        <UniverseHydratedBadge lead={obj} compact />
                       </div>
                     </div>
 
@@ -1296,8 +1314,13 @@ const ResultsTable = ({
                 <th className="w-[7%] px-2 py-3 text-center text-[10px] font-semibold text-zinc-500 uppercase tracking-widest">Score</th>
                 <th className="w-[18%] px-3 py-3 text-left text-[10px] font-semibold text-zinc-500 uppercase tracking-widest">Contatti</th>
                 <th className="w-[10%] px-2 py-3 text-left text-[10px] font-semibold text-zinc-500 uppercase tracking-widest">Città</th>
-                <th className="w-[12%] px-2 py-3 text-left text-[10px] font-semibold text-zinc-500 uppercase tracking-widest">Categoria</th>
-                <th className="w-[24%] px-2 py-3 text-left text-[10px] font-semibold text-zinc-500 uppercase tracking-widest">Opportunità</th>
+                <th className={`${showIntentColumn ? 'w-[10%]' : 'w-[12%]'} px-2 py-3 text-left text-[10px] font-semibold text-zinc-500 uppercase tracking-widest`}>Categoria</th>
+                {showIntentColumn ? (
+                  <th className="w-[14%] px-2 py-3 text-left text-[10px] font-semibold text-violet-700 uppercase tracking-widest bg-violet-50/80">
+                    {intentColTitle}
+                  </th>
+                ) : null}
+                <th className={`${showIntentColumn ? 'w-[18%]' : 'w-[24%]'} px-2 py-3 text-left text-[10px] font-semibold text-zinc-500 uppercase tracking-widest`}>Opportunità</th>
                 <th className="w-[8%] px-2 py-3 text-center text-[10px] font-semibold text-zinc-500 uppercase tracking-widest">Rating</th>
                 <th className="w-[6%] px-2 py-3 text-center text-[10px] font-semibold text-zinc-500 uppercase tracking-widest">Speed</th>
                 <th className="min-w-[220px] w-[220px] px-2 py-3 text-left text-[10px] font-semibold text-zinc-500 uppercase tracking-widest">Azioni</th>
@@ -1376,6 +1399,7 @@ const ResultsTable = ({
                             <MarketingInvestorBadge compact />
                           ) : null}
                           <LeadComplianceBadge status="unknown" compact />
+                          <UniverseHydratedBadge lead={item as Record<string, unknown>} compact />
                         </div>
                       </td>
 
@@ -1444,6 +1468,29 @@ const ResultsTable = ({
                           return <span className="text-xs text-gray-700 truncate">{categoria ? categoria : '—'}</span>
                         })()}
                       </td>
+
+                      {showIntentColumn ? (
+                        <td className="px-2 py-3 overflow-hidden align-top bg-violet-50/30">
+                          {(() => {
+                            const obj = item && typeof item === 'object' ? (item as Record<string, unknown>) : {}
+                            const cell = intentCellForLead(obj, signalIntent)
+                            if (!cell) return <span className="text-[11px] text-gray-400">—</span>
+                            const chipBase = 'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold border max-w-full'
+                            return (
+                              <div className="flex flex-col gap-1 min-w-0">
+                                <span className={`${chipBase} ${cell.className} truncate`} title={cell.label}>
+                                  {cell.label}
+                                </span>
+                                {cell.detail ? (
+                                  <span className="text-[10px] text-violet-800 truncate" title={cell.detail}>
+                                    {cell.detail}
+                                  </span>
+                                ) : null}
+                              </div>
+                            )
+                          })()}
+                        </td>
+                      ) : null}
 
                       <td className="px-2 py-3 overflow-hidden align-top">
                         {(() => {

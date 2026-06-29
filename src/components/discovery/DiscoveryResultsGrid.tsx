@@ -2,6 +2,7 @@
 
 import { Loader2 } from 'lucide-react'
 import { DiscoveryLeadCard } from '@/components/discovery/DiscoveryLeadCard'
+import type { SignalIntentSpec } from '@/lib/signal-intent/types'
 
 type Props = {
   query: string
@@ -13,6 +14,7 @@ type Props = {
   missingSignals?: boolean
   hasActiveBusinessFilter?: boolean
   onClearBusinessFilters?: () => void
+  signalIntent?: SignalIntentSpec | null
 }
 
 export function DiscoveryResultsGrid({
@@ -25,6 +27,7 @@ export function DiscoveryResultsGrid({
   missingSignals = false,
   hasActiveBusinessFilter = false,
   onClearBusinessFilters,
+  signalIntent = null,
 }: Props) {
   if (isLoading && results.length === 0) {
     return (
@@ -49,8 +52,18 @@ export function DiscoveryResultsGrid({
     <div className="space-y-4">
       {missingSignals && hasActiveBusinessFilter && totalUnfilteredCount ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          <span className="font-semibold">Cercando segnali business...</span>
-          {' '}I badge appariranno entro 2-3 minuti. I lead sono visibili senza filtro.
+          {signalIntent?.required_signals?.includes('hiring') ? (
+            <>
+              <span className="font-semibold">Verifica hiring in corso…</span>
+              {' '}I {totalUnfilteredCount} lead sotto sono da Google Maps. Cerca il badge viola{' '}
+              <strong>Assumono (Indeed)</strong> — non confonderlo con audit sito (Pixel/SEO).
+            </>
+          ) : (
+            <>
+              <span className="font-semibold">Cercando segnali business...</span>
+              {' '}I badge appariranno entro 2-3 minuti. I lead sono visibili senza filtro.
+            </>
+          )}
           {onClearBusinessFilters ? (
             <button
               type="button"
@@ -86,6 +99,7 @@ export function DiscoveryResultsGrid({
             key={idx}
             lead={lead && typeof lead === 'object' ? (lead as Record<string, unknown>) : {}}
             searchId={searchId}
+            signalIntent={signalIntent}
           />
         ))}
       </div>

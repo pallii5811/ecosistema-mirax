@@ -2035,6 +2035,18 @@ async def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/v1/health")
+async def health_v1() -> Dict[str, Any]:
+    """Stato fonti enrichment + cache (MIRAX v5)."""
+    try:
+        from resilience import get_resilience_status
+
+        status = get_resilience_status()
+        return {"status": "ok", **status}
+    except Exception as e:
+        return {"status": "degraded", "error": str(e)}
+
+
 @app.post("/jobs", response_model=JobStatus)
 async def start_job(payload: StartJobRequest, background: BackgroundTasks, request: Request) -> JobStatus:
     if _demo_city:

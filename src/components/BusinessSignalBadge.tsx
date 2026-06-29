@@ -12,18 +12,25 @@ const TONE: Record<string, string> = {
   critical: 'bg-rose-100 text-rose-800 border-rose-200',
   high: 'bg-violet-100 text-violet-800 border-violet-200',
   medium: 'bg-sky-50 text-sky-700 border-sky-200',
+  low: 'bg-zinc-100 text-zinc-600 border-zinc-200',
+  unknown: 'bg-zinc-100 text-zinc-500 border-zinc-200',
 }
 
 function evidenceTooltip(signal: MiraxSignal): string {
   const lines = signal.evidence.map((e) => `${e.label}: ${e.value} (${e.source})`)
-  return [signal.reason, ...lines].join('\n')
+  const retry =
+    signal.status === 'unknown' && signal.retryAfterMinutes
+      ? `Riprova tra ~${signal.retryAfterMinutes} min`
+      : null
+  return [signal.reason, retry, ...lines].filter(Boolean).join('\n')
 }
 
 export function BusinessSignalBadge({ signals, compact = false }: Props) {
   const top = signals[0]
   if (!top) return null
 
-  const tone = TONE[top.severity] || TONE.medium
+  const tone =
+    top.status === 'unknown' ? TONE.unknown : TONE[top.severity] || TONE.medium
   const Icon = top.signalType === 'hiring' ? Briefcase : top.signalType === 'registry_change' ? TrendingUp : Gauge
 
   return (

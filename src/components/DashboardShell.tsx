@@ -4,6 +4,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import Link from 'next/link'
+
 import SniperArea from '@/components/SniperArea'
 
 import ResultsTable from '@/components/ResultsTable'
@@ -20,7 +22,7 @@ import MiraxLogo from '@/components/MiraxLogo'
 
 import { Button } from '@/components/ui/button'
 
-import { Folder, Sparkles, Search, Database, MapPin, Loader2, ListPlus } from 'lucide-react'
+import { Folder, Sparkles, Search, Database, MapPin, Loader2, ListPlus, Network } from 'lucide-react'
 
 import DatabaseSearchSection from '@/components/DatabaseSearchSection'
 
@@ -56,18 +58,16 @@ import {
 } from '@/lib/realtime/signal-stream'
 import type { BusinessSignalType } from '@/lib/business-events/types'
 import {
-  filterLeadsBySignalIntent,
   signalIntentToBusinessFilters,
   describeSignalIntent,
   coerceSignalIntent,
   type SignalIntentSpec,
-  filterLeadsByIntentSpec,
-  intentSpecHasMatches,
 } from '@/lib/signal-intent'
 import { DiscoverySearchWizard } from '@/components/discovery/DiscoverySearchWizard'
 import { DiscoveryResultsGrid } from '@/components/discovery/DiscoveryResultsGrid'
 import { UiModeToggle } from '@/components/UiModeToggle'
 import { LocaleToggle } from '@/components/LocaleToggle'
+import { SHOW_UNIVERSE_UI } from '@/lib/feature-flags'
 
 
 
@@ -478,15 +478,45 @@ export default function DashboardShell() {
       const intent = coerceSignalIntent((debug as Record<string, unknown>).signal_intent)
       if (intent.required_signals.length) {
         setSignalIntent(intent)
-        const autoFilters = signalIntentToBusinessFilters(intent)
-        if (autoFilters.length) {
-          setBusinessSignalFilters((prev) => [...new Set([...prev, ...autoFilters])])
-        }
+        setMinIntentScore(0)
+        // Non attivare filtro "Assunzioni" subito — Indeed va verificato prima; altrimenti banner fuorviante.
         return
       }
     }
     setSignalIntent(null)
   }
+
+  const mergeEnrichedHiringLeads = useCallback((patch: unknown[]) => {
+    if (!Array.isArray(patch) || patch.length === 0) return
+    const byKey = new Map<string, Record<string, unknown>>()
+    for (const item of patch) {
+      if (!item || typeof item !== 'object') continue
+      const row = item as Record<string, unknown>
+      const site = String(row.sito || row.website || row.url || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\/+$/, '')
+      const key = site || `name:${String(row.azienda || row.nome || row.name || '').trim().toLowerCase()}`
+      if (key && key !== 'name:') byKey.set(key, row)
+    }
+    if (byKey.size === 0) return
+    setResults((prev) => {
+      if (!Array.isArray(prev)) return prev
+      return prev.map((item) => {
+        if (!item || typeof item !== 'object') return item
+        const row = item as Record<string, unknown>
+        const site = String(row.sito || row.website || row.url || '')
+          .trim()
+          .toLowerCase()
+          .replace(/\/+$/, '')
+        const key = site || `name:${String(row.azienda || row.nome || row.name || '').trim().toLowerCase()}`
+        const enriched = byKey.get(key)
+        return enriched ? { ...row, ...enriched } : item
+      })
+    })
+  }, [])
+
+  const hiringEnrichBusyRef = useRef(false)
 
   // Helper: deduct N credits via API and update state/ref
   const deductCredits = async (amount: number): Promise<number> => {
@@ -718,6 +748,51 @@ export default function DashboardShell() {
     return unsubscribe
   }, [authUserId, isRestored, supabase, toastInfo, toastSuccess, maybeAutoSyncCrm])
 
+  // Claude — arricchisce ogni lead Maps con il dato richiesto dall'utente (Sonnet)
+  useEffect(() => {
+    if (!signalIntent?.required_signals?.length && !signalIntent?.reasoning) return
+    if (!query.trim() || !Array.isArray(results) || results.length === 0) return
+    if (hiringEnrichBusyRef.current) return
+
+    const pending = results
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => item as Record<string, unknown>)
+      .filter((row) => !row.claude_enrichment)
+      .slice(0, 15)
+
+    if (pending.length === 0) return
+
+    hiringEnrichBusyRef.current = true
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const res = await fetch('/api/claude-enrich-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_query: query.trim(),
+            signal_intent: signalIntent,
+            leads: pending,
+            max_leads: 15,
+          }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!cancelled && res.ok && Array.isArray(data?.leads)) {
+          mergeEnrichedHiringLeads(data.leads)
+        }
+      } catch {
+        /* retry on next results update */
+      } finally {
+        if (!cancelled) hiringEnrichBusyRef.current = false
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [signalIntent, results, query, mergeEnrichedHiringLeads])
+
   useEffect(() => {
     if (!isRestored) return
     try { sessionStorage.setItem('ckb_aiDebug', JSON.stringify(aiDebug)) } catch {}
@@ -779,10 +854,14 @@ export default function DashboardShell() {
       clearInterval(autoscrapePollRef.current)
       autoscrapePollRef.current = null
     }
+    setBusinessSignalFilters([])
+    setMinIntentScore(0)
     try {
       sessionStorage.removeItem('ckb_results')
       sessionStorage.removeItem('ckb_searchId')
       sessionStorage.removeItem('ckb_scrapeJobId')
+      sessionStorage.removeItem('ckb_business_signal_filters')
+      sessionStorage.removeItem('ckb_min_intent_score')
     } catch {}
   }
 
@@ -1147,17 +1226,6 @@ export default function DashboardShell() {
     let hasActiveFilter = false
     let missingSignals = false
 
-    if (signalIntent?.required_signals?.length) {
-      hasActiveFilter = true
-      const intentFiltered = filterLeadsBySignalIntent(base, signalIntent)
-      if (intentFiltered.length === 0) {
-        missingSignals = true
-        visible = base
-      } else {
-        visible = intentFiltered
-      }
-    }
-
     const biz = filterLeadsByBusinessSignals(visible, businessSignalFilters)
     if (biz.hasActiveFilter) hasActiveFilter = true
     if (biz.missingSignals) {
@@ -1172,25 +1240,14 @@ export default function DashboardShell() {
       const intentFiltered = filterLeadsByMinIntentScore(visible, minIntentScore)
       if (intentFiltered.length === 0) {
         missingSignals = true
-        visible = base
+        visible = []
       } else {
         visible = intentFiltered
       }
     }
 
-    if (signalIntent && intentSpecHasMatches(signalIntent)) {
-      hasActiveFilter = true
-      const specFiltered = filterLeadsByIntentSpec(visible, signalIntent)
-      if (specFiltered.length === 0 && visible.length > 0) {
-        missingSignals = true
-        visible = base
-      } else {
-        visible = specFiltered
-      }
-    }
-
     return { visible, hasActiveFilter, missingSignals }
-  }, [results, businessSignalFilters, signalIntent, minIntentScore])
+  }, [results, businessSignalFilters, minIntentScore])
 
   const displayResults = leadFilterMeta.visible
   const missingBusinessSignals = leadFilterMeta.missingSignals
@@ -1199,7 +1256,10 @@ export default function DashboardShell() {
   const clearBusinessFilters = useCallback(() => {
     setBusinessSignalFilters([])
     setMinIntentScore(0)
-    setSignalIntent(null)
+    try {
+      sessionStorage.removeItem('ckb_business_signal_filters')
+      sessionStorage.removeItem('ckb_min_intent_score')
+    } catch {}
   }, [])
 
   const resolveCompletedSearchId = async (filters: any) => {
@@ -2233,6 +2293,11 @@ export default function DashboardShell() {
         <div className="mb-3 mx-1 rounded-xl border border-violet-200 bg-violet-50/80 px-4 py-2.5 text-sm text-violet-900">
           <span className="font-semibold">Intent segnali: </span>
           {describeSignalIntent(signalIntent)}
+          {signalIntent.required_signals.includes('hiring') ? (
+            <span className="text-violet-700"> · Dato richiesto nella colonna <strong>ASSUNZIONI</strong> (Claude + web)</span>
+          ) : signalIntent.required_signals.length ? (
+            <span className="text-violet-700"> · Dato richiesto nella colonna <strong>DATO RICHIESTO</strong> (Claude)</span>
+          ) : null}
           {displayResults.length !== (Array.isArray(results) ? results.length : 0) ? (
             <span className="text-violet-700">
               {' '}· {displayResults.length} lead su {Array.isArray(results) ? results.length : 0} matchano i segnali richiesti
@@ -2294,6 +2359,18 @@ export default function DashboardShell() {
           <span>
             <span className="font-semibold">Interpretato:</span> {signalIntent.reasoning}
           </span>
+        </div>
+      ) : null}
+
+      {SHOW_UNIVERSE_UI && query.trim() && !aiAnalyzing && !isLoading ? (
+        <div className="mb-3 mx-4">
+          <Link
+            href={`/dashboard/universe?q=${encodeURIComponent(query.trim())}`}
+            className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-800 transition hover:border-violet-400 hover:bg-violet-100"
+          >
+            <Network className="h-3.5 w-3.5" />
+            Cerca lo stesso intent sul Knowledge Graph (zero crediti)
+          </Link>
         </div>
       ) : null}
 
@@ -2558,6 +2635,7 @@ export default function DashboardShell() {
             missingSignals={missingBusinessSignals}
             hasActiveBusinessFilter={hasActiveLeadFilter}
             onClearBusinessFilters={clearBusinessFilters}
+            signalIntent={signalIntent}
           />
           ) : (
           <ResultsTable
@@ -2572,6 +2650,7 @@ export default function DashboardShell() {
             missingSignals={missingBusinessSignals}
             hasActiveBusinessFilter={hasActiveLeadFilter}
             onClearBusinessFilters={clearBusinessFilters}
+            signalIntent={signalIntent}
           />
           )}
 

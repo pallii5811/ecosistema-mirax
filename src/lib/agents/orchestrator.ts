@@ -80,6 +80,22 @@ export async function runAgent(
         return { agent: 'insights', status: 'success', data }
       }
 
+      case 'universe': {
+        const { runUniverseAgent } = await import('./universe-agent.ts')
+        const data = await runUniverseAgent({
+          action: input.action as 'twin' | 'agentic_search' | 'resolve_domain' | undefined,
+          entity_id: typeof input.entity_id === 'string' ? input.entity_id : undefined,
+          domain: typeof input.domain === 'string' ? input.domain : undefined,
+          user_query: typeof input.user_query === 'string' ? input.user_query : undefined,
+          city: typeof input.city === 'string' ? input.city : undefined,
+          limit: Number(input.limit) || undefined,
+          signal_intent: input.signal_intent as import('@/lib/signal-intent/types').SignalIntentSpec | undefined,
+          userId: ctx.userId,
+        })
+        if (!data.ok) return { agent: 'universe', status: 'error', error: data.error }
+        return { agent: 'universe', status: 'success', data }
+      }
+
       case 'orchestrator': {
         const pipeline = Array.isArray(input.pipeline) ? (input.pipeline as AgentId[]) : []
         const nested = await runPipeline(pipeline, input.input as Record<string, unknown>, ctx)

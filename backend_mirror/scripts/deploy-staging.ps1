@@ -58,12 +58,21 @@ Get-ChildItem "$LocalDir\*.py" -File | ForEach-Object {
   & scp @SshArgs $_.FullName "${HostTarget}:/home/worker/app/backend-staging/"
   if ($LASTEXITCODE -ne 0) { throw "scp failed: $($_.Name)" }
 }
+if (Test-Path "$LocalDir\universe") {
+  Invoke-Ssh "mkdir -p /home/worker/app/backend-staging/universe"
+  Get-ChildItem "$LocalDir\universe\*.py" -File | ForEach-Object {
+    & scp @SshArgs $_.FullName "${HostTarget}:/home/worker/app/backend-staging/universe/"
+    if ($LASTEXITCODE -ne 0) { throw "scp failed universe: $($_.Name)" }
+  }
+  Write-Host "    universe/ package uploaded"
+}
 & scp @SshArgs "$LocalDir\main.py" "$LocalDir\audit_engine.py" "${HostTarget}:/home/worker/app/backend/"
 
 $EnvPatch = @'
 ENV=/home/worker/app/backend-staging/.env
 grep -q '^ENRICH_BUSINESS_EVENTS=' "$ENV" 2>/dev/null || echo 'ENRICH_BUSINESS_EVENTS=1' >> "$ENV"
 grep -q '^ENRICH_BUSINESS_EVENTS_MAX=' "$ENV" 2>/dev/null || echo 'ENRICH_BUSINESS_EVENTS_MAX=12' >> "$ENV"
+grep -q '^UNIVERSE_ENABLED=' "$ENV" 2>/dev/null || echo 'UNIVERSE_ENABLED=0' >> "$ENV"
 grep -q '^ORGANIC_DISCOVERY_ENABLED=' "$ENV" 2>/dev/null || echo 'ORGANIC_DISCOVERY_ENABLED=0' >> "$ENV"
 sed -i 's/^ORGANIC_DISCOVERY_ENABLED=.*/ORGANIC_DISCOVERY_ENABLED=0/' "$ENV" 2>/dev/null || true
 pip3 install httpx beautifulsoup4 -q 2>/dev/null || pip install httpx beautifulsoup4 -q 2>/dev/null || true

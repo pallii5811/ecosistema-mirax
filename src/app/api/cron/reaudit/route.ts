@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { verifyCronBearer } from '@/lib/cron-auth'
 import { emitMiraxEvent } from '@/lib/events/emit'
+import { ingestMiraxLead, appendEvent } from '@/lib/universe'
 import {
   DEFAULT_REAUDIT_BATCH,
   applyReauditToLead,
@@ -91,7 +92,35 @@ async function handler(req: NextRequest) {
     if (!did) continue
 
     reaudited++
-    if (changes.length > 0) changesDetected++
+    if (changes.length > 0) {
+      changesDetected++
+
+      // Universe sidecar: ingest updated lead + emit website_changed event
+      if (process.env.UNIVERSE_ENABLED === '1') {
+        Promise.resolve().then(async () => {
+          try {
+            const ingestResult = await ingestMiraxLead(supabase, updated, 'reaudit', item.userId)
+            await appendEvent(supabase, {
+              entity_id: ingestResult.entity_id,
+              event_type: 'website_changed',
+              payload: {
+                search_id: item.searchId,
+                lead_index: item.leadIndex,
+                website: site,
+                changes: changes.map((c: any) => ({
+                  field: c.field,
+                  old: c.old,
+                  new: c.new,
+                })),
+              },
+              source: 'reaudit',
+            })
+          } catch (e) {
+            console.warn('[reaudit] Universe sidecar failed:', e)
+          }
+        }).catch(() => {})
+      }
+    }
 
     const arr = touchedSearches.get(item.searchId) ?? parseSearchResults(
       (searches ?? []).find((s) => (s as any).id === item.searchId)?.results,

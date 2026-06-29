@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { clayEnrichLead } from '@/lib/clay-enrichment'
 import { createClient, createServiceRoleClient } from '@/utils/supabase/server'
+import { ingestClayEnrichedLead } from '@/lib/universe'
 
 function hasUsefulContactOrSocialData(data: any) {
   return Boolean(
@@ -86,6 +87,19 @@ export async function POST(req: NextRequest) {
             console.log('[enrich-lead] Saved to cache:', normalizedDomain);
           } catch (e) {
             console.warn('[enrich-lead] Could not save to cache:', e);
+          }
+        }).catch(() => {});
+      }
+
+      // Universe sidecar ingest (Phase 3)
+      if (process.env.UNIVERSE_ENABLED === '1' && enriched) {
+        Promise.resolve().then(async () => {
+          try {
+            const supabaseAdmin = createServiceRoleClient();
+            await ingestClayEnrichedLead(supabaseAdmin, enriched, 'clay_enrichment', user?.id);
+            console.log('[enrich-lead] Universe ingest ok:', normalizedDomain);
+          } catch (e) {
+            console.warn('[enrich-lead] Universe ingest failed:', e);
           }
         }).catch(() => {});
       }

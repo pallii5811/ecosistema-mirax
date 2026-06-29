@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { verifyCronBearer } from '@/lib/cron-auth'
 import { calculateIntentScoreFromLead } from '@/lib/scoring/intent-score'
+import { getEntityByAlias, appendEvent } from '@/lib/universe'
 import {
   detectWebsiteChange,
   htmlHash,
@@ -152,6 +153,30 @@ async function handler(req: NextRequest) {
     })
 
     const title = 'Sito web modificato significativamente'
+
+    // Universe sidecar: emit website_changed event
+    if (process.env.UNIVERSE_ENABLED === '1') {
+      Promise.resolve().then(async () => {
+        try {
+          const company = await getEntityByAlias(supabase, 'domain', normUrl, 'company')
+          if (company) {
+            await appendEvent(supabase, {
+              entity_id: company.id,
+              event_type: 'website_changed',
+              payload: {
+                website: normUrl,
+                similarity: diff.similarity,
+                summary: diff.summary.slice(0, 180),
+              },
+              source: 'mirax_diff_engine',
+            })
+          }
+        } catch (e) {
+          console.warn('[website-change-detect] Universe event failed:', e)
+        }
+      }).catch(() => {})
+    }
+
     await supabase.from('lead_business_signals').upsert(
       {
         user_id: c.userId,

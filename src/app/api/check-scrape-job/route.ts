@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { createClient, createServiceRoleClient } from '@/utils/supabase/server'
+import { hydrateLeadsFromUniverse, isUniverseReadEnabled } from '@/lib/universe/hydrate-leads'
 
 export async function GET(request: NextRequest) {
   try {
@@ -35,9 +36,22 @@ export async function GET(request: NextRequest) {
       results = [data.results]
     }
 
+    let universe_hydrated = 0
+    if (isUniverseReadEnabled() && results.length > 0) {
+      try {
+        const svc = createServiceRoleClient()
+        const hydrated = await hydrateLeadsFromUniverse(svc, results as Record<string, unknown>[], { max: 100 })
+        results = hydrated.leads
+        universe_hydrated = hydrated.hydrated_count
+      } catch (e) {
+        console.warn('[check-scrape-job] universe hydrate skipped:', e)
+      }
+    }
+
     return NextResponse.json({
       status: data.status,
       results,
+      universe_hydrated,
     })
 
   } catch (error) {

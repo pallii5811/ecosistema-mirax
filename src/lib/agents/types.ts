@@ -8,6 +8,7 @@ export type AgentId =
   | 'pitch'
   | 'outreach'
   | 'insights'
+  | 'universe'
   | 'orchestrator'
 
 export type AgentStatus = 'success' | 'error' | 'skipped'

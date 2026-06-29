@@ -150,6 +150,10 @@ export function parseSignalIntentHeuristic(userQuery) {
   if (required_signals.includes('tender_won') && !time_window_days) time_window_days = 365
   if (require_crm_change && !time_window_days) time_window_days = 30
 
+  if (/\b(funding|fondi|finanziamento|round|investimento)\b/i.test(q) && /\bstartup\b/i.test(q)) {
+    if (!required_signals.includes('sector_investment')) required_signals.push('sector_investment')
+  }
+
   return {
     required_signals: unique(required_signals),
     hiring_roles: unique(hiring_roles),
@@ -212,4 +216,41 @@ export function assertIntentCase(spec, c, fail, ok) {
     okCase = false
   }
   return okCase
+}
+
+/** Mirror infer-maps-category.ts for Node tests */
+export function inferMapsCategoryFromIntent(query, intent) {
+  const q = (query || '').trim().toLowerCase()
+  if (!q) return intent.category ?? null
+
+  const explicit = [
+    [/\bagenzie?\s+(di\s+)?viagg\w*\b/i, 'Agenzie di viaggio'],
+    [/\bristorant\w*\b/i, 'Ristoranti'],
+    [/\b(software\s+house|web\s+agency)\b/i, 'Software house'],
+    [/\bstartup\b/i, 'Startup'],
+    [/\bimprese?\s+edil\w*\b/i, 'Imprese edili'],
+  ]
+  for (const [re, label] of explicit) {
+    if (re.test(q)) return label
+  }
+
+  const roles = new Set((intent.hiring_roles || []).map((r) => r.toLowerCase()))
+
+  if (
+    roles.has('programmatore') ||
+    /\b(python|javascript|developer|sviluppat\w*|software|full[\s-]?stack|backend)\b/i.test(q)
+  ) {
+    return 'Servizi informatici'
+  }
+
+  if (intent.required_signals?.includes('hiring')) return null
+
+  if (
+    intent.required_signals?.includes('sector_investment') &&
+    /\b(startup|scaleup|fondi|funding|finanziamento|round)\b/i.test(q)
+  ) {
+    return 'Startup'
+  }
+
+  return intent.category ?? null
 }

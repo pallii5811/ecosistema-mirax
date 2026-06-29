@@ -20,20 +20,78 @@ function uniqueById(signals: MiraxSignal[]): MiraxSignal[] {
   })
 }
 
+function workerSignalsFromLead(lead: Record<string, unknown>): MiraxSignal[] {
+  const raw = lead.business_signals
+  if (!Array.isArray(raw)) return []
+  const out: MiraxSignal[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as Record<string, unknown>
+    const st = String(row.type || row.signalType || '')
+    if (!st) continue
+    const statusRaw = String(row.status || 'confirmed')
+    const status =
+      statusRaw === 'unknown' || statusRaw === 'inferred' || statusRaw === 'confirmed' ? statusRaw : 'confirmed'
+    const sevRaw = String(row.severity || 'medium')
+    const severity =
+      sevRaw === 'critical' || sevRaw === 'high' || sevRaw === 'medium' || sevRaw === 'low' ? sevRaw : 'medium'
+    const evidenceRaw = Array.isArray(row.evidence) ? row.evidence : []
+    const evidence = evidenceRaw
+      .filter((e) => e && typeof e === 'object')
+      .map((e) => {
+        const ev = e as Record<string, unknown>
+        return {
+          label: String(ev.label || 'Info'),
+          value: String(ev.value || ''),
+          source: String(ev.source || row.source || 'worker'),
+          url: ev.url ? String(ev.url) : undefined,
+        }
+      })
+    if (!evidence.length && status !== 'unknown') continue
+    const retry =
+      typeof row.retry_after_minutes === 'number'
+        ? row.retry_after_minutes
+        : undefined
+    out.push({
+      id: `worker_${st}_${out.length}`,
+      kind: 'business',
+      signalType: st,
+      title: String(row.title || st),
+      severity,
+      confidence: typeof row.confidence === 'number' ? row.confidence : 0,
+      reason:
+        status === 'unknown'
+          ? 'Dato temporaneamente non disponibile — riproveremo automaticamente.'
+          : String(row.title || 'Segnale business da enrichment worker'),
+      evidence: evidence.length
+        ? evidence
+        : [{ label: 'Stato', value: 'In aggiornamento', source: 'system' }],
+      status,
+      retryAfterMinutes: typeof retry === 'number' ? retry : undefined,
+      detectedAt: new Date().toISOString(),
+    })
+  }
+  return out
+}
+
 /** Raccolta sincrona da dati lead già presenti (zero fetch, safe in UI). */
 export function collectBusinessEventsFromLead(input: unknown): MiraxSignal[] {
   const lead = asRecord(input)
   if (Object.keys(lead).length === 0) return []
 
+  const workerDirect = workerSignalsFromLead(lead)
+  const workerTypes = new Set(workerDirect.map((s) => s.signalType))
+
   const merged = uniqueById([
+    ...workerDirect,
     ...detectSiteStaleSignals(lead),
     ...detectRegistrySignals(lead),
-    ...detectHiringSignals(lead),
+    ...detectHiringSignals(lead).filter((s) => !workerTypes.has('hiring')),
     ...detectMarketingIntentSignals(lead),
     ...detectCrmStackSignals(lead),
     ...detectCrmChangeSignals(lead),
     ...detectSectorInvestmentSignals(lead),
-    ...detectTenderWinSignals(lead),
+    ...detectTenderWinSignals(lead).filter((s) => !workerTypes.has('tender_won')),
     ...(() => {
       const intent = detectIntentMarketingSpend(lead)
       return intent ? [intent] : []
@@ -41,7 +99,7 @@ export function collectBusinessEventsFromLead(input: unknown): MiraxSignal[] {
   ])
 
   return merged.sort((a, b) => {
-    const rank = { critical: 0, high: 1, medium: 2 }
+    const rank = { critical: 0, high: 1, medium: 2, low: 3 }
     return rank[a.severity] - rank[b.severity] || b.confidence - a.confidence
   })
 }
