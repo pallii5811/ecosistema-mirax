@@ -156,7 +156,7 @@ def _make_signal(
     out: Dict[str, Any] = {
         "type": signal_type,
         "title": title,
-        "severity": severity if severity in {"critical", "high", "medium", "low"} else "medium",
+        "severity": severity if severity in {"critical", "high", "medium"} else "medium",
         "confidence": max(0, min(100, int(confidence))),
         "evidence": ev,
         "source": source,

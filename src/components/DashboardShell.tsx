@@ -68,6 +68,9 @@ import { DiscoveryResultsGrid } from '@/components/discovery/DiscoveryResultsGri
 import { UiModeToggle } from '@/components/UiModeToggle'
 import { LocaleToggle } from '@/components/LocaleToggle'
 import { SHOW_UNIVERSE_UI } from '@/lib/feature-flags'
+import { SearchSourceToggle } from '@/components/SearchSourceToggle'
+import { parseSearchSource, type SearchSource } from '@/lib/search-source'
+import { runAgenticUniverseSearch } from '@/lib/universe/client'
 
 
 
@@ -583,6 +586,8 @@ export default function DashboardShell() {
   const [authUserId, setAuthUserId] = useState<string | null>(null)
   const [hotLeadAlerts, setHotLeadAlerts] = useState<HotLeadAlert[]>([])
   const [signalIntent, setSignalIntent] = useState<SignalIntentSpec | null>(null)
+  const [searchSource, setSearchSource] = useState<SearchSource>('maps')
+  const hybridGraphPrefillRef = useRef<unknown[]>([])
 
   const [aiDebug, setAiDebug] = useState<unknown>(null)
 
@@ -625,6 +630,8 @@ export default function DashboardShell() {
       if (savedAiDebug) setAiDebug(JSON.parse(savedAiDebug))
       const savedSearchId = sessionStorage.getItem('ckb_searchId')
       if (savedSearchId) { setCurrentSearchId(savedSearchId); searchIdRef.current = savedSearchId }
+      const savedSearchSource = sessionStorage.getItem('ckb_search_source')
+      if (savedSearchSource) setSearchSource(parseSearchSource(savedSearchSource))
       const savedMaxLeads = sessionStorage.getItem('ckb_maxLeads')
       const restoredMax = clampSearchMaxLeads(savedMaxLeads ? Number(savedMaxLeads) || 10 : 10)
       if (savedMaxLeads) setMaxLeads(restoredMax)
@@ -797,6 +804,11 @@ export default function DashboardShell() {
     if (!isRestored) return
     try { sessionStorage.setItem('ckb_aiDebug', JSON.stringify(aiDebug)) } catch {}
   }, [aiDebug, isRestored])
+
+  useEffect(() => {
+    if (!isRestored) return
+    try { sessionStorage.setItem('ckb_search_source', searchSource) } catch {}
+  }, [searchSource, isRestored])
 
   useEffect(() => {
     if (!isRestored) return
@@ -1041,15 +1053,19 @@ export default function DashboardShell() {
         if (resultsCountRef.current < maxLeads && creditsRef.current > 0) {
           let offset = 0
           let attempts = 0
-          const MAX_ATTEMPTS = 50
+          const MAX_ATTEMPTS = 3
           while (
             resultsCountRef.current < maxLeads &&
             creditsRef.current > 0 &&
             attempts < MAX_ATTEMPTS
           ) {
+            const countBefore = resultsCountRef.current
             await runOneScrapeJob(offset)
             attempts += 1
             offset += Math.max(40, maxLeads)
+            if (resultsCountRef.current >= maxLeads) break
+            // Maps/SERP esauriti per questa categoria+zona — non ripetere 50 volte
+            if (resultsCountRef.current <= countBefore) break
           }
         }
 
@@ -1967,6 +1983,53 @@ export default function DashboardShell() {
 
 
 
+  const graphCityFromQuery = (q: string, intent?: SignalIntentSpec | null) => {
+    const fromIntent = intent?.location?.trim()
+    if (fromIntent) return fromIntent
+    const { city } = parseCategoryCityFromQuery(q)
+    return city?.trim() || ''
+  }
+
+  const runGraphSearch = async (
+    q: string,
+    opts?: { limit?: number; prefillOnly?: boolean },
+  ): Promise<unknown[]> => {
+    const limit = opts?.limit ?? clampSearchMaxLeads(maxLeads, maxLeads)
+    const result = await runAgenticUniverseSearch({ user_query: q, limit })
+    if (result.signal_intent) {
+      const intent = coerceSignalIntent(result.signal_intent)
+      setSignalIntent(intent)
+      setAiDebug({
+        signal_intent: result.signal_intent,
+        parse_source: result.parse_source,
+        universe_query: result.universe_query,
+        intent_summary: result.intent_summary,
+      })
+    }
+    const rows = (Array.isArray(result.results) ? result.results : [])
+      .map(normalizeLeadFields)
+      .map((row) => ({ ...row, search_source: 'graph' as const }))
+      .slice(0, limit)
+
+    if (!opts?.prefillOnly) {
+      setResults(rows)
+      setSearchState('done')
+      setSearchExhausted(false)
+      if (rows.length > 0) {
+        toastSuccess(
+          `Trovate ${rows.length} aziende nel grafo MIRAX (zero crediti Maps).`,
+          'Knowledge Graph',
+        )
+      } else {
+        toastInfo(
+          'Nessuna azienda nel grafo per questa query. Prova «Trova nuove» o arricchisci con una ricerca Maps.',
+          'Grafo vuoto',
+        )
+      }
+    }
+    return rows
+  }
+
   const processSemanticSearch = async (overrideQuery?: string) => {
 
     const q = (overrideQuery ?? query).trim()
@@ -1982,30 +2045,81 @@ export default function DashboardShell() {
 
 
     setError(null)
+    resetSearchRuntime(q)
+    hybridGraphPrefillRef.current = []
 
-    // Check credits before searching
+    if (searchSource === 'graph') {
+      setIsLoading(true)
+      setAiAnalyzing(true)
+      setAiDebug(null)
+      setSignalIntent(null)
+      try {
+        await runGraphSearch(q)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Errore ricerca grafo'
+        setError(msg)
+        toastError(msg, 'Knowledge Graph')
+      } finally {
+        setAiAnalyzing(false)
+        setIsLoading(false)
+      }
+      return
+    }
+
+    // Check credits before Maps / hybrid
     if (credits <= 0) {
       toastError('Hai esaurito i crediti. Effettua l\'upgrade per continuare.', 'Crediti esauriti')
       return
     }
 
     const effectiveMax = Math.min(maxLeads, credits)
-
-    resetSearchRuntime(q)
     searchCreditBudgetRef.current = effectiveMax
 
     setIsLoading(true)
-
     setAiAnalyzing(true)
-
     setAiDebug(null)
     setSignalIntent(null)
 
-
+    if (searchSource === 'hybrid') {
+      try {
+        const graphRows = await runGraphSearch(q, { limit: effectiveMax, prefillOnly: true })
+        hybridGraphPrefillRef.current = graphRows
+        if (graphRows.length >= effectiveMax) {
+          setResults(graphRows)
+          setSearchState('done')
+          toastSuccess(
+            `Trovate ${graphRows.length} aziende nel grafo — obiettivo raggiunto senza Maps.`,
+            'Grafo + Maps',
+          )
+          setAiAnalyzing(false)
+          setIsLoading(false)
+          return
+        }
+        const mapsBudget = Math.max(0, effectiveMax - graphRows.length)
+        searchCreditBudgetRef.current = mapsBudget
+        if (mapsBudget <= 0) {
+          setResults(graphRows)
+          setSearchState('done')
+          setAiAnalyzing(false)
+          setIsLoading(false)
+          return
+        }
+        if (graphRows.length > 0) {
+          setResults(graphRows)
+          toastInfo(
+            `${graphRows.length} dal grafo — cerco altre ${mapsBudget} su Maps…`,
+            'Grafo + Maps',
+          )
+        }
+      } catch {
+        hybridGraphPrefillRef.current = []
+      }
+    }
 
     try {
 
-      const response = await processSemanticSearchAction(q, { maxLeads })
+      const mapsMaxLeads = searchCreditBudgetRef.current
+      const response = await processSemanticSearchAction(q, { maxLeads: mapsMaxLeads })
 
 
 
@@ -2063,8 +2177,13 @@ export default function DashboardShell() {
         })
       }
       filtered = await refineLeadsBySubtype(filtered)
-      const capped = filtered.slice(0, effectiveMax)
-      const leadsToCharge = capped.length
+      let capped = filtered.slice(0, mapsMaxLeads)
+      const prefilled = hybridGraphPrefillRef.current
+      if (prefilled.length) {
+        capped = (deduplicateResults([...prefilled, ...capped]) as unknown[]).slice(0, effectiveMax)
+        hybridGraphPrefillRef.current = []
+      }
+      const leadsToCharge = Math.max(0, capped.length - prefilled.length)
 
       // Deduct credits based on actual displayed leads (after contact filter)
       if (leadsToCharge > 0) {
@@ -2109,7 +2228,13 @@ export default function DashboardShell() {
       if (capped.length >= effectiveMax) {
         setSearchExhausted(false)
         setSearchState('done')
-        toastSuccess(`Trovati ${capped.length} lead (${capped.length} crediti usati).`, 'Ricerca completata')
+        const chargeMsg =
+          leadsToCharge > 0
+            ? `${leadsToCharge} crediti Maps${prefilled.length ? ` + ${prefilled.length} dal grafo` : ''}`
+            : prefilled.length
+              ? `${prefilled.length} dal grafo, zero crediti Maps`
+              : `${capped.length} crediti usati`
+        toastSuccess(`Trovati ${capped.length} lead (${chargeMsg}).`, 'Ricerca completata')
       } else {
         if (semanticJobId && cacheMeta?.needs_more_scrape) {
           setScrapeJobId(semanticJobId)
@@ -2259,6 +2384,15 @@ export default function DashboardShell() {
       </div>
       )}
 
+      {SHOW_UNIVERSE_UI && (searchMode === 'maps' || searchMode === 'ambiente') ? (
+        <SearchSourceToggle
+          value={searchSource}
+          onChange={setSearchSource}
+          disabled={isLoading}
+          className="mb-3"
+        />
+      ) : null}
+
       {(searchMode === 'maps' || searchMode === 'ambiente') && uiMode === 'expert' && (
       <SniperArea
         query={query}
@@ -2267,11 +2401,12 @@ export default function DashboardShell() {
         isLoading={isLoading}
         error={error}
         aiDebug={aiDebug}
-        maxLeads={clampSearchMaxLeads(maxLeads, credits)}
-        onMaxLeadsChange={(v) => setMaxLeads(clampSearchMaxLeads(v, credits))}
+        maxLeads={clampSearchMaxLeads(maxLeads, searchSource === 'graph' ? maxLeads : credits)}
+        onMaxLeadsChange={(v) => setMaxLeads(clampSearchMaxLeads(v, searchSource === 'graph' ? maxLeads : credits))}
         credits={credits}
         businessSignalFilters={businessSignalFilters}
         onBusinessSignalFiltersChange={setBusinessSignalFilters}
+        searchSource={searchSource}
       />
       )}
 
@@ -2284,8 +2419,8 @@ export default function DashboardShell() {
         isLoading={isLoading}
         error={error}
         credits={credits}
-        maxLeads={clampSearchMaxLeads(maxLeads, credits)}
-        onMaxLeadsChange={(v) => setMaxLeads(clampSearchMaxLeads(v, credits))}
+        maxLeads={clampSearchMaxLeads(maxLeads, searchSource === 'graph' ? maxLeads : credits)}
+        onMaxLeadsChange={(v) => setMaxLeads(clampSearchMaxLeads(v, searchSource === 'graph' ? maxLeads : credits))}
       />
       )}
 
@@ -2365,11 +2500,25 @@ export default function DashboardShell() {
       {SHOW_UNIVERSE_UI && query.trim() && !aiAnalyzing && !isLoading ? (
         <div className="mb-3 mx-4">
           <Link
-            href={`/dashboard/universe?q=${encodeURIComponent(query.trim())}`}
+            href={(() => {
+              const city = graphCityFromQuery(query.trim(), signalIntent)
+              const { category } = parseCategoryCityFromQuery(query.trim())
+              const nameToken =
+                signalIntent?.category?.match(/\bedil\w*/i)?.[0]?.toLowerCase() ||
+                category.split(/\s+/).find((w) => w.length > 3)?.toLowerCase() ||
+                ''
+              const qs = new URLSearchParams()
+              if (city) qs.set('city', city)
+              if (nameToken) qs.set('name', nameToken)
+              return `/dashboard/universe${qs.toString() ? `?${qs}` : ''}`
+            })()}
             className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-800 transition hover:border-violet-400 hover:bg-violet-100"
           >
             <Network className="h-3.5 w-3.5" />
-            Cerca lo stesso intent sul Knowledge Graph (zero crediti)
+            Visualizza nel grafo
+            {graphCityFromQuery(query.trim(), signalIntent)
+              ? ` · ${graphCityFromQuery(query.trim(), signalIntent)}`
+              : ''}
           </Link>
         </div>
       ) : null}
@@ -2566,7 +2715,7 @@ export default function DashboardShell() {
                   </svg>
                   {results.length >= maxLeads
                     ? `Ricerca completata — ${results.length} lead pronti`
-                    : `Ricerca terminata — ${results.length} lead trovati (massimo disponibile per questa categoria)`}
+                    : `Ricerca terminata — ${results.length} lead trovati (Maps + siti Google per questa zona; prova provincia più ampia per altri risultati)`}
                 </div>
               )}
 

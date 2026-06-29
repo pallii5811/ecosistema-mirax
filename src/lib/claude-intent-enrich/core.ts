@@ -17,17 +17,18 @@ AZIENDA (da Google Maps + audit sito):
 {{LEAD_CONTEXT}}
 
 COMPITO:
-1. Verifica se questa azienda soddisfa ciò che l'utente ha chiesto (es. assume programmatori Python, ha vinto gare, investe in fotovoltaico, ecc.).
-2. Usa SOLO le evidenze nel contesto sopra (sito, snippet web, audit). NON inventare dati.
-3. Se non c'è evidenza sufficiente, matches_request=false e summary breve ("Nessuna evidenza di …").
-4. Se c'è evidenza, matches_request=true e summary in italiano (max 120 caratteri) con il dato concreto.
+1. Raccogli e sintetizza TUTTE le evidenze utili per la richiesta dell'utente (assunzioni, fondi, gare, CRM, investimenti, tech stack, crescita).
+2. Usa il contesto fornito: audit sito, worker (Indeed/ANAC/OpenAPI), ricerca web. Se manca un dato, cerca indizi nel testo disponibile — NON inventare numeri o fatti.
+3. Arricchisci il lead: estrai fatti concreti (ruoli aperti, round di funding, gare, stack, pain point) e mettili in summary + evidence.
+4. matches_request=true solo se c'è evidenza reale che l'azienda soddisfa la richiesta; altrimenti false con summary breve.
 
 Rispondi SOLO JSON valido:
 {
   "matches_request": true/false,
   "confidence": 0-100,
-  "summary": "frase italiana per la tabella lead",
-  "evidence": [{"label":"Fonte","value":"dettaglio","url":"opzionale"}]
+  "summary": "frase italiana con il dato trovato (max 140 caratteri)",
+  "evidence": [{"label":"Fonte","value":"dettaglio","url":"opzionale"}],
+  "enriched_fields": {"hiring_roles":[],"funding_hint":null,"crm_stack":[],"sector_signals":[],"notes":null}
 }`
 
 function enrichModel(): string {

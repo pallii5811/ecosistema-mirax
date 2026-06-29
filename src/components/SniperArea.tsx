@@ -5,6 +5,8 @@ import { MAX_LEADS_PER_SEARCH } from '@/lib/search-job-payload'
 import { BUSINESS_SIGNAL_FILTER_OPTIONS, type BusinessSignalType } from '@/lib/business-events/types'
 import { useDashboard } from '@/components/DashboardContext'
 import { searchLocaleHint, t } from '@/lib/i18n'
+import { SearchSourceToggle } from '@/components/SearchSourceToggle'
+import type { SearchSource } from '@/lib/search-source'
 
 const BASE_LEAD_OPTIONS = [10, 25, 50, 100, 200, 300, 400, 500]
 
@@ -25,6 +27,8 @@ type SniperAreaProps = {
   credits: number
   businessSignalFilters?: BusinessSignalType[]
   onBusinessSignalFiltersChange?: (value: BusinessSignalType[]) => void
+  searchSource?: SearchSource
+  onSearchSourceChange?: (value: SearchSource) => void
 }
 
 const SniperArea = ({
@@ -39,6 +43,8 @@ const SniperArea = ({
   credits,
   businessSignalFilters = [],
   onBusinessSignalFiltersChange,
+  searchSource = 'maps',
+  onSearchSourceChange,
 }: SniperAreaProps) => {
   const { locale } = useDashboard()
   const localeHint = searchLocaleHint(locale)
@@ -94,7 +100,7 @@ const SniperArea = ({
 
             <button
               type="submit"
-              disabled={isLoading || credits <= 0}
+              disabled={isLoading || (searchSource !== 'graph' && credits <= 0)}
               title="Avvia la ricerca nel database. Ogni lead trovato costa 1 credito."
               className="flex items-center gap-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 disabled:from-slate-300 disabled:to-slate-400 text-white font-bold px-8 py-3.5 rounded-full text-[15px] shadow-lg shadow-violet-500/25 hover:shadow-xl hover:shadow-violet-500/30 transition-all duration-200 hover:scale-[1.03] disabled:scale-100"
             >
@@ -115,7 +121,7 @@ const SniperArea = ({
           {/* Mobile: just the search button */}
           <button
             type="submit"
-            disabled={isLoading || credits <= 0}
+            disabled={isLoading || (searchSource !== 'graph' && credits <= 0)}
             className="sm:hidden flex items-center gap-1.5 bg-gradient-to-r from-violet-600 to-purple-600 disabled:from-slate-300 disabled:to-slate-400 text-white font-bold px-4 py-2.5 rounded-full text-sm shadow-lg shadow-violet-500/25 flex-shrink-0"
           >
             <Search className="h-4 w-4" />
@@ -142,6 +148,15 @@ const SniperArea = ({
           </span>
         </div>
       </form>
+
+      {onSearchSourceChange ? (
+        <SearchSourceToggle
+          value={searchSource}
+          onChange={onSearchSourceChange}
+          disabled={isLoading}
+          className="mt-3"
+        />
+      ) : null}
 
       {onBusinessSignalFiltersChange ? (
         <div className="mt-3 px-2">

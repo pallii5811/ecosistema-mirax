@@ -22,11 +22,10 @@ for (const f of files) {
 }
 
 const page = fs.readFileSync('src/app/dashboard/universe/page.tsx', 'utf8')
-assert.ok(page.includes('AgenticSearchPanel'), 'universe page senza AgenticSearchPanel')
+assert.ok(page.includes('UniverseGraphCanvas'), 'universe page senza grafo visuale')
 assert.ok(page.includes('UniverseExplorerPanel'), 'universe page senza tab Esplora')
-assert.ok(page.includes('Ricerca AI'), 'universe page senza tab Ricerca AI')
-assert.ok(page.includes('useSearchParams'), 'universe page deve leggere ?q= da URL')
-assert.ok(page.includes('autoRun'), 'universe page deve auto-run con ?q=')
+assert.ok(page.includes('Grafo visuale'), 'universe page senza tab grafo')
+assert.ok(page.includes('useSearchParams'), 'universe page deve leggere parametri da URL')
 assert.ok(page.includes('setTabWithUrl'), 'universe page deve sincronizzare ?tab= URL')
 assert.ok(page.includes('UniverseWebhookDeliveriesPanel'), 'universe page deve avere webhook panel')
 console.log('✓ universe page')
@@ -52,7 +51,9 @@ assert.ok(panel.includes('graph_score'), 'panel deve mostrare hint Graph Rank')
 console.log('✓ AgenticSearchPanel')
 
 const shell = fs.readFileSync('src/components/DashboardShell.tsx', 'utf8')
-assert.ok(shell.includes('/dashboard/universe?q='), 'DashboardShell senza CTA Knowledge Graph')
-console.log('✓ DashboardShell CTA')
+assert.ok(shell.includes('SearchSourceToggle'), 'DashboardShell senza toggle sorgente ricerca')
+assert.ok(shell.includes('runAgenticUniverseSearch'), 'DashboardShell senza ricerca grafo integrata')
+assert.ok(shell.includes('Visualizza nel grafo'), 'DashboardShell senza CTA grafo visuale')
+console.log('✓ DashboardShell ricerca unificata')
 
 console.log('\n[test-universe-agentic-ui] OK')

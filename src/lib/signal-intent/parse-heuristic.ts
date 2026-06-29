@@ -65,6 +65,24 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
   for (const entry of SECTOR_KEYWORD_EXTRACTORS) {
     if (entry.patterns.some((p) => p.test(q))) sector_keywords.push(entry.keyword)
   }
+
+  let category: string | null = null
+  let location: string | null = null
+  const locMatch = q.match(/\b(?:a|ad|in)\s+([A-ZÀ-ÿ][a-zà-ÿ]+(?:\s+[A-ZÀ-ÿ][a-zà-ÿ]+)?)\b/)
+  if (locMatch) location = locMatch[1]
+  const catPatterns: Array<[RegExp, string]> = [
+    [/\bimprese?\s+edil\w*\b/i, 'imprese edili'],
+    [/\bsoftware\s+house\b/i, 'software house'],
+    [/\bweb\s+agenc\w*\b/i, 'web agency'],
+    [/\bristorant\w*\b/i, 'ristoranti'],
+  ]
+  for (const [re, label] of catPatterns) {
+    if (re.test(q)) {
+      category = label
+      break
+    }
+  }
+
   if (sector_keywords.length && !required_signals.includes('sector_investment')) {
     const investIntent = /\b(invest|investono|investimento|puntano\s+su|fotovoltaic|rinnovabil|impianti\s+solari)\b/i.test(q)
     const highIntentKw = sector_keywords.some((k) =>
@@ -112,6 +130,8 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
     require_crm_change,
     time_window_days,
     intent_summary: null,
+    category,
+    location,
   }
   spec.intent_summary = buildSummary(spec)
   return spec

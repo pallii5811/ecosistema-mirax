@@ -25,7 +25,7 @@ def emergency_mock(signal_type: str, company_name: str) -> Dict[str, Any]:
     return {
         "type": signal_type,
         "title": f"{label}: dato non disponibile per {company_name[:60]}",
-        "severity": "low",
+        "severity": "medium",
         "confidence": 0,
         "status": "unknown",
         "retry_after_minutes": 30,

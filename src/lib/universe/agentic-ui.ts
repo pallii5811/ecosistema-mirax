@@ -116,7 +116,9 @@ export function buildUniverseQueryPlan(query: UniverseQuery): QueryPlanStep[] {
       detail: [
         query.filters?.city ? `Città: ${query.filters.city}` : null,
         query.filters?.country ? `Paese: ${query.filters.country}` : null,
-        query.filters?.name_contains ? `Nome contiene «${query.filters.name_contains}»` : null,
+        query.filters?.name_contains
+          ? `Parola chiave nel nome: «${query.filters.name_contains}»`
+          : null,
       ]
         .filter(Boolean)
         .join(' · ') || undefined,

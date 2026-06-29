@@ -17,14 +17,20 @@ for (const p of pages) {
 }
 
 const page = fs.readFileSync('src/app/dashboard/universe/page.tsx', 'utf8')
-assert.ok(page.includes('AgenticSearchPanel'), 'universe page senza AgenticSearchPanel')
-console.log('✓ universe page con Agentic Search')
+assert.ok(page.includes('UniverseGraphCanvas'), 'universe page senza grafo visuale')
+assert.ok(!page.includes('AgenticSearchPanel'), 'universe page non deve duplicare la ricerca agentic')
+console.log('✓ universe page con grafo visuale')
 
 const components = [
   'src/components/universe/UniverseEntityCard.tsx',
   'src/components/universe/UniverseLeadPanel.tsx',
   'src/components/universe/UniverseTimeline.tsx',
+  'src/components/universe/UniverseGraphCanvas.tsx',
   'src/components/universe/AgenticSearchPanel.tsx',
+  'src/components/SearchSourceToggle.tsx',
+  'src/lib/search-source.ts',
+  'src/lib/universe/build-graph-view.ts',
+  'src/app/api/universe/graph-view/route.ts',
   'src/lib/universe/client.ts',
   'src/lib/universe/labels.ts',
   'src/lib/universe/agentic-ui.ts',

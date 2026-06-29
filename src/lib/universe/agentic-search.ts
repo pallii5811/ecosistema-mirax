@@ -38,6 +38,12 @@ export function signalIntentToUniverseQuery(
   const city = opts?.city ?? intent.location ?? undefined
   const observations = technicalFiltersToObservations(intent.technical_filters)
 
+  const categoryLabel = (intent.category ?? '').trim()
+  const categoryToken =
+    categoryLabel.match(/\bedil\w*/i)?.[0]?.toLowerCase() ||
+    categoryLabel.split(/\s+/).find((w) => w.length > 4)?.toLowerCase() ||
+    categoryLabel.toLowerCase()
+
   if (intent.business_filters?.revenue_min != null) {
     observations.push({
       attribute: 'revenue',
@@ -69,7 +75,7 @@ export function signalIntentToUniverseQuery(
     entity_type: 'company',
     filters: {
       city,
-      name_contains: intent.category ?? undefined,
+      name_contains: categoryToken && categoryToken.length >= 4 ? categoryToken : intent.category ?? undefined,
       observations: observations.length ? observations : undefined,
     },
     relationships: relationships.length ? relationships : undefined,
