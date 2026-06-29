@@ -23,7 +23,7 @@ export function UniverseEmptyState({ variant = 'empty', onRetry }: Props) {
           }
         : {
             title: 'Grafo ancora vuoto',
-            body: 'Nessuna entità trovata. Avvia una ricerca Maps con Universe attivo: audit, segnali business e enrichment alimentano il grafo in background.',
+            body: 'Nessuna entità trovata. Avvia una discovery live con Universe attivo: audit, segnali business e enrichment alimentano il grafo in background.',
           }
 
   return (

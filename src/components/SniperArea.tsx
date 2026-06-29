@@ -5,7 +5,6 @@ import { MAX_LEADS_PER_SEARCH } from '@/lib/search-job-payload'
 import { BUSINESS_SIGNAL_FILTER_OPTIONS, type BusinessSignalType } from '@/lib/business-events/types'
 import { useDashboard } from '@/components/DashboardContext'
 import { searchLocaleHint, t } from '@/lib/i18n'
-import { SearchSourceToggle } from '@/components/SearchSourceToggle'
 import type { SearchSource } from '@/lib/search-source'
 
 const BASE_LEAD_OPTIONS = [10, 25, 50, 100, 200, 300, 400, 500]
@@ -28,7 +27,6 @@ type SniperAreaProps = {
   businessSignalFilters?: BusinessSignalType[]
   onBusinessSignalFiltersChange?: (value: BusinessSignalType[]) => void
   searchSource?: SearchSource
-  onSearchSourceChange?: (value: SearchSource) => void
 }
 
 const SniperArea = ({
@@ -44,7 +42,6 @@ const SniperArea = ({
   businessSignalFilters = [],
   onBusinessSignalFiltersChange,
   searchSource = 'maps',
-  onSearchSourceChange,
 }: SniperAreaProps) => {
   const { locale } = useDashboard()
   const localeHint = searchLocaleHint(locale)
@@ -148,15 +145,6 @@ const SniperArea = ({
           </span>
         </div>
       </form>
-
-      {onSearchSourceChange ? (
-        <SearchSourceToggle
-          value={searchSource}
-          onChange={onSearchSourceChange}
-          disabled={isLoading}
-          className="mt-3"
-        />
-      ) : null}
 
       {onBusinessSignalFiltersChange ? (
         <div className="mt-3 px-2">

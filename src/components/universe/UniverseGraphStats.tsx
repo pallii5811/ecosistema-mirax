@@ -51,7 +51,7 @@ export function UniverseGraphStats() {
       </span>
       {empty ? (
         <span className="text-xs text-amber-800">
-          Grafo vuoto — attiva <code className="rounded bg-white/80 px-1">UNIVERSE_ENABLED=1</code> e lancia una ricerca Maps
+          Grafo vuoto — attiva <code className="rounded bg-white/80 px-1">UNIVERSE_ENABLED=1</code> e lancia una discovery live
         </span>
       ) : null}
       {!stats.universe_enabled ? (

@@ -2017,12 +2017,12 @@ export default function DashboardShell() {
       setSearchExhausted(false)
       if (rows.length > 0) {
         toastSuccess(
-          `Trovate ${rows.length} aziende nel grafo MIRAX (zero crediti Maps).`,
+          `Trovate ${rows.length} aziende nel Knowledge Graph (zero crediti discovery).`,
           'Knowledge Graph',
         )
       } else {
         toastInfo(
-          'Nessuna azienda nel grafo per questa query. Prova «Trova nuove» o arricchisci con una ricerca Maps.',
+          'Nessuna azienda nel grafo per questa query. Prova «Discovery live» o arricchisci con una scansione territoriale.',
           'Grafo vuoto',
         )
       }
@@ -2088,8 +2088,8 @@ export default function DashboardShell() {
           setResults(graphRows)
           setSearchState('done')
           toastSuccess(
-            `Trovate ${graphRows.length} aziende nel grafo — obiettivo raggiunto senza Maps.`,
-            'Grafo + Maps',
+            `Trovate ${graphRows.length} aziende nel grafo — obiettivo raggiunto senza discovery live.`,
+            'Grafo + Discovery',
           )
           setAiAnalyzing(false)
           setIsLoading(false)
@@ -2107,8 +2107,8 @@ export default function DashboardShell() {
         if (graphRows.length > 0) {
           setResults(graphRows)
           toastInfo(
-            `${graphRows.length} dal grafo — cerco altre ${mapsBudget} su Maps…`,
-            'Grafo + Maps',
+            `${graphRows.length} dal grafo — cerco altre ${mapsBudget} in discovery live…`,
+            'Grafo + Discovery',
           )
         }
       } catch {
@@ -2230,9 +2230,9 @@ export default function DashboardShell() {
         setSearchState('done')
         const chargeMsg =
           leadsToCharge > 0
-            ? `${leadsToCharge} crediti Maps${prefilled.length ? ` + ${prefilled.length} dal grafo` : ''}`
+            ? `${leadsToCharge} crediti discovery${prefilled.length ? ` + ${prefilled.length} dal grafo` : ''}`
             : prefilled.length
-              ? `${prefilled.length} dal grafo, zero crediti Maps`
+              ? `${prefilled.length} dal grafo, zero crediti discovery`
               : `${capped.length} crediti usati`
         toastSuccess(`Trovati ${capped.length} lead (${chargeMsg}).`, 'Ricerca completata')
       } else {
@@ -2715,7 +2715,7 @@ export default function DashboardShell() {
                   </svg>
                   {results.length >= maxLeads
                     ? `Ricerca completata — ${results.length} lead pronti`
-                    : `Ricerca terminata — ${results.length} lead trovati (Maps + siti Google per questa zona; prova provincia più ampia per altri risultati)`}
+                    : `Ricerca terminata — ${results.length} lead trovati (discovery territoriale per questa zona; prova un’area più ampia per altri risultati)`}
                 </div>
               )}
 

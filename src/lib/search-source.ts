@@ -6,21 +6,21 @@ export const SEARCH_SOURCE_META: Record<
   { label: string; short: string; hint: string; costsCredits: boolean }
 > = {
   maps: {
-    label: 'Trova nuove aziende',
-    short: 'Maps + Google',
-    hint: 'Scopre lead nuovi su Google Maps e siti web. Usa crediti.',
+    label: 'Discovery live',
+    short: 'Territorio',
+    hint: 'Scansione intelligente su directory, registri pubblici e fonti web verificate. Usa crediti.',
     costsCredits: true,
   },
   graph: {
-    label: 'Nel grafo MIRAX',
+    label: 'Knowledge Graph',
     short: 'Grafo',
-    hint: 'Cerca tra le aziende già arricchite da MIRAX. Zero crediti Maps.',
+    hint: 'Interroga il grafo MIRAX già arricchito da audit e segnali. Zero crediti discovery.',
     costsCredits: false,
   },
   hybrid: {
-    label: 'Grafo poi Maps',
-    short: 'Entrambi',
-    hint: 'Prima il grafo (istantaneo), poi Maps se servono altre aziende.',
+    label: 'Grafo + Discovery',
+    short: 'Ibrido',
+    hint: 'Prima il grafo (istantaneo), poi discovery live se servono altre aziende.',
     costsCredits: true,
   },
 }

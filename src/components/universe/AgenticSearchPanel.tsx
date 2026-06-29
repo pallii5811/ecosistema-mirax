@@ -306,7 +306,7 @@ export function AgenticSearchPanel({ initialQuery = '', autoRun = false }: Props
                 </Button>
               ) : null}
               <Button asChild variant="outline" size="sm" className="text-xs">
-                <Link href="/dashboard">Nuova ricerca Maps →</Link>
+                <Link href="/dashboard">Nuova discovery live →</Link>
               </Button>
             </div>
           </div>
@@ -322,14 +322,14 @@ export function AgenticSearchPanel({ initialQuery = '', autoRun = false }: Props
               <p className="mt-2 text-sm text-slate-600 max-w-md mx-auto">
                 L&apos;interpretazione è corretta, ma il grafo non contiene ancora aziende che soddisfano tutti i criteri.
                 Prova a allargare la query, verifica che <code className="text-xs bg-slate-100 px-1 rounded">UNIVERSE_ENABLED=1</code>{' '}
-                sia attivo, oppure avvia una ricerca Maps per popolare il sidecar.
+                sia attivo, oppure avvia una discovery live per popolare il sidecar.
               </p>
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 <Button type="button" variant="outline" size="sm" onClick={() => void runSearch(query)}>
                   Riprova
                 </Button>
                 <Button asChild size="sm" className="bg-violet-600 hover:bg-violet-700">
-                  <Link href="/dashboard">Ricerca Maps classica</Link>
+                  <Link href="/dashboard">Discovery territoriale</Link>
                 </Button>
               </div>
             </Card>
@@ -342,7 +342,7 @@ export function AgenticSearchPanel({ initialQuery = '', autoRun = false }: Props
           {[
             { title: 'Linguaggio naturale', body: 'Scrivi come parli: settore, città, segnali, filtri tech.' },
             { title: 'Trasparenza totale', body: 'Vedi cosa ha capito MIRAX e il piano query sul grafo.' },
-            { title: 'Zero crediti', body: 'Legge solo entità già indicizzate — nessun scrape Maps.' },
+            { title: 'Zero crediti', body: 'Legge solo entità già indicizzate — nessuna scansione territoriale.' },
           ].map((item) => (
             <div key={item.title} className="rounded-xl border border-slate-200 bg-white p-4">
               <p className="text-sm font-semibold text-slate-900">{item.title}</p>

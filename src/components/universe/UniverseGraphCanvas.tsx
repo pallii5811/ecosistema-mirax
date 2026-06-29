@@ -199,7 +199,7 @@ export function UniverseGraphCanvas({ city, name, entityId, className, onSelectE
         ) : nodes.length === 0 ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6 text-center text-sm text-slate-400">
             <p>Nessun nodo nel grafo per questa zona.</p>
-            <p className="text-xs">Fai una ricerca Maps dalla dashboard — le aziende arricchite entrano qui automaticamente.</p>
+            <p className="text-xs">Avvia una discovery live dalla dashboard — le aziende arricchite entrano qui automaticamente.</p>
           </div>
         ) : (
           <svg width="100%" height={size.h} viewBox={`0 0 ${size.w} ${size.h}`} className="block">

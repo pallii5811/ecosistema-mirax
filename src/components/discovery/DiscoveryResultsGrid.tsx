@@ -55,7 +55,7 @@ export function DiscoveryResultsGrid({
           {signalIntent?.required_signals?.includes('hiring') ? (
             <>
               <span className="font-semibold">Verifica hiring in corso…</span>
-              {' '}I {totalUnfilteredCount} lead sotto sono da Google Maps. Cerca il badge viola{' '}
+              {' '}I {totalUnfilteredCount} lead sotto provengono dalla scansione territoriale. Cerca il badge viola{' '}
               <strong>Assumono (Indeed)</strong> — non confonderlo con audit sito (Pixel/SEO).
             </>
           ) : (

@@ -36,7 +36,7 @@ export function SearchIntelBanner({
           <p className="font-semibold text-violet-900">
             {fromDb > 0
               ? `${fromDb} lead già nel database (${jobs} ricerche unite)`
-              : 'Ricerca avviata su Maps'}
+              : 'Discovery territoriale avviata'}
           </p>
           <p className="text-slate-600 mt-0.5 text-[13px] leading-relaxed">
             {fromDb > 0 && displayed > 0

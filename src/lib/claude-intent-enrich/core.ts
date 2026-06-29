@@ -13,7 +13,7 @@ INTENTO STRUTTURATO:
 - Settore/keywords: {{SECTORS}}
 - Spiegazione: {{REASONING}}
 
-AZIENDA (da Google Maps + audit sito):
+AZIENDA (da discovery territoriale + audit sito):
 {{LEAD_CONTEXT}}
 
 COMPITO:

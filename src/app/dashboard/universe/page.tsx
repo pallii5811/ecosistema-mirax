@@ -59,7 +59,7 @@ function UniversePageInner() {
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-slate-600">
             Visualizzazione del grafo MIRAX — aziende, tecnologie, assunzioni e relazioni già arricchite.
-            Per trovare nuove aziende usa la ricerca principale con Maps + Google.
+            Per trovare nuove aziende usa la ricerca principale con Discovery live.
           </p>
         </div>
         <Link

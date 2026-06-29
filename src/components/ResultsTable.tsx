@@ -1020,7 +1020,7 @@ const ResultsTable = ({
       {missingSignals && hasActiveBusinessFilter && totalUnfilteredCount ? (
         <div className="mx-6 mt-5 mb-0 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           <span className="font-semibold">Verifica hiring in corso…</span>
-          {' '}I lead sotto sono candidati da Maps. Il dato che hai chiesto (assunzioni Python) è nella colonna{' '}
+          {' '}I lead sotto sono candidati dalla discovery territoriale. Il dato che hai chiesto (assunzioni Python) è nella colonna{' '}
           <strong className="text-violet-800">ASSUNZIONI</strong> — separata da Pixel/SEO (audit sito).
           {onClearBusinessFilters ? (
             <button

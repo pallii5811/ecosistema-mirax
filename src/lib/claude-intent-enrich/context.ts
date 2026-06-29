@@ -45,7 +45,7 @@ export async function gatherLeadContext(
   const blocks: string[] = [
     `Azienda: ${name || 'N/D'}`,
     city ? `Città: ${city}` : '',
-    category ? `Categoria Maps: ${category}` : '',
+    category ? `Categoria territorio: ${category}` : '',
     url ? `Sito: ${url}` : 'Sito: non disponibile',
     auditSnippet(lead) ? `Audit sito: ${auditSnippet(lead)}` : '',
   ].filter(Boolean)

@@ -17,13 +17,14 @@ const ICONS: Record<SearchSource, typeof Globe> = {
   hybrid: Layers,
 }
 
+/** Selettore compatto — 3 pillole inline, hint solo al hover. */
 export function SearchSourceToggle({ value, onChange, disabled, className }: Props) {
   return (
-    <div className={cn('px-2 sm:px-4', className)}>
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-        Dove cercare
-      </p>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+    <div className={cn('flex flex-wrap items-center gap-2 px-2 sm:px-4', className)}>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 shrink-0">
+        Motore
+      </span>
+      <div className="flex flex-wrap gap-1.5">
         {(Object.keys(SEARCH_SOURCE_META) as SearchSource[]).map((key) => {
           const meta = SEARCH_SOURCE_META[key]
           const Icon = ICONS[key]
@@ -36,20 +37,15 @@ export function SearchSourceToggle({ value, onChange, disabled, className }: Pro
               onClick={() => onChange(key)}
               title={meta.hint}
               className={cn(
-                'flex items-start gap-2 rounded-xl border px-3 py-2.5 text-left transition',
+                'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition',
                 active
-                  ? 'border-violet-400 bg-violet-50 shadow-sm'
-                  : 'border-slate-200 bg-white hover:border-violet-200',
+                  ? 'border-violet-400 bg-violet-600 text-white shadow-sm'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-violet-300 hover:text-violet-700',
                 disabled && 'opacity-50 cursor-not-allowed',
               )}
             >
-              <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', active ? 'text-violet-600' : 'text-slate-400')} />
-              <span>
-                <span className={cn('block text-sm font-semibold', active ? 'text-violet-900' : 'text-slate-800')}>
-                  {meta.label}
-                </span>
-                <span className="block text-[11px] text-slate-500 leading-snug">{meta.hint}</span>
-              </span>
+              <Icon className="h-3.5 w-3.5 shrink-0" />
+              {meta.label}
             </button>
           )
         })}

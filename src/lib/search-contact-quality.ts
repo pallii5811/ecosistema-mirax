@@ -63,8 +63,8 @@ export function formatSearchProgressMessage(
   }
   const mapsPart =
     stats.hiddenNoContact > 0
-      ? `${stats.rawTotal} su Maps (${stats.withContact} con contatto, ${stats.hiddenNoContact} senza contatto ancora)`
-      : `${stats.rawTotal} su Maps (${stats.withContact} con contatto)`
+      ? `${stats.rawTotal} in discovery (${stats.withContact} con contatto, ${stats.hiddenNoContact} senza contatto ancora)`
+      : `${stats.rawTotal} in discovery (${stats.withContact} con contatto)`
   return `${displayed} / ${target} in lista · ${mapsPart}`
 }
 
