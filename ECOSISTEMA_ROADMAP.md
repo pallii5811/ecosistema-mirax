@@ -2,6 +2,7 @@
 
 **Repo:** `pallii5811/ecosistema-mirax`  
 **Cartella locale:** `WEB APP CKB - Dev`  
+**Documentazione completa A→Z:** [`docs/MIRAX_ECOSISTEMA_COMPLETO_AZ.md`](docs/MIRAX_ECOSISTEMA_COMPLETO_AZ.md)  
 **Regola:** commit e sviluppo solo qui. `WEB APP CKB - Copia` = produzione (`miraxgroup.it`), intoccabile salvo hotfix urgenti.
 
 **Escluso da questo documento:** modifiche alla landing / sito corporate CKB (visione, copy, sezioni marketing). Quelle le fa Simone a mano in un secondo momento.

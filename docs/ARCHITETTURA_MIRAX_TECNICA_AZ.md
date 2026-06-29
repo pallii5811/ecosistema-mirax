@@ -1,16 +1,18 @@
 # MIRAX — Architettura Tecnica Completa (A → Z)
 
-**Versione documento:** 2026-06-24  
+**Versione documento:** 2026-06-29  
 **Repo:** `pallii5811/ecosistema-mirax`  
 **Cartella locale:** `WEB APP CKB - Dev`  
 **Deploy app:** Vercel → `ecosistema-mirax.vercel.app`  
 **Worker staging:** Hetzner `116.203.137.39:8002`  
 **Supabase dev:** `ktspchugdwpqvxhmysap` (EU West)
 
-> Documento di riferimento unico per sviluppatori, agenti AI e audit tecnico.  
-> Copre ogni layer: frontend, BFF Next.js, Supabase, worker Python, enrichment, billing, CRM, cron, MIRAX “omnivoro” (ricerca NL + segnali business + audit + Claude).
+> Documento di riferimento tecnico per sviluppatori, agenti AI e audit.  
+> **Documento canonico aggiornato (linguaggio chiaro + inventario completo):** `docs/MIRAX_ECOSISTEMA_COMPLETO_AZ.md`  
+> **Inventario 646 file:** `docs/MIRAX_FILE_INVENTORY.txt`
 
 **Documenti correlati:**
+- `docs/MIRAX_ECOSISTEMA_COMPLETO_AZ.md` — **A→Z completo 2026-06-29** (ricerca unificata, Universe, ogni componente)
 - `docs/CURSOR_IMPLEMENTATION_BRIEF_MIRAX_V1.md` — brief implementazione fasi
 - `ECOSISTEMA_ROADMAP.md` — roadmap blocchi 0–10
 - `docs/SCORE_AI_RULES.md` — regole scoring (no ML oggi)
@@ -64,6 +66,10 @@
 42. [Roadmap e stato implementazione](#42-roadmap-e-stato-implementazione)
 43. [Problematiche, criticità, debito tecnico](#43-problematiche-criticità-debito-tecnico)
 44. [Glossario](#44-glossario)
+45. [Ricerca unificata Discovery / Grafo / Ibrido](#45-ricerca-unificata-discovery--grafo--ibrido)
+46. [Knowledge Graph Universe — stato 2026-06](#46-knowledge-graph-universe--stato-2026-06)
+47. [Organic discovery](#47-organic-discovery)
+48. [Documentazione canonica A→Z](#48-documentazione-canonica-az)
 
 ---
 
@@ -1504,6 +1510,61 @@ Vedi `ECOSISTEMA_ROADMAP.md` — blocchi 0–10:
 | **Ambiente** | Raggruppamento semantico lead (expanded search) |
 | **Expert mode** | UI agenzie — tabella completa |
 | **Discovery mode** | UI imprenditori — wizard + card |
+
+---
+
+## 45. Ricerca unificata Discovery / Grafo / Ibrido
+
+**Aggiunto 2026-06-29.** Vedi `docs/MIRAX_ECOSISTEMA_COMPLETO_AZ.md` §8 per spiegazione completa.
+
+| File | Ruolo |
+|------|-------|
+| `src/lib/search-source.ts` | Meta 3 motori (`maps`→Discovery live, `graph`, `hybrid`) |
+| `src/components/SearchSourceToggle.tsx` | Pillole UI “Motore” |
+| `src/components/DashboardShell.tsx` | `runGraphSearch`, hybrid prefill, crediti solo discovery |
+| `src/lib/universe/client.ts` | `runAgenticUniverseSearch` |
+
+**Flusso grafo:** zero crediti, API `/api/universe/agentic-search`.  
+**Flusso ibrido:** `hybridGraphPrefillRef` merge + addebito `leadsToCharge = capped - prefilled.length`.
+
+---
+
+## 46. Knowledge Graph Universe — stato 2026-06
+
+Fasi 0–10 implementate. Tabelle `universe_*` in migration `2026_07_02` + scale/webhooks.
+
+| Componente | Path |
+|------------|------|
+| SDK TS | `src/lib/universe/*` (30+ moduli) |
+| Sidecar Python | `backend_mirror/universe/` |
+| Grafo visuale | `UniverseGraphCanvas.tsx`, `/api/universe/graph-view` |
+| UI pagina | `/dashboard/universe` — tab Grafo visuale default |
+| Test | `npm run test:universe` |
+
+Pattern **sidecar:** `searches.results` resta source of truth; ingest parallelo se `UNIVERSE_ENABLED=1`.
+
+---
+
+## 47. Organic discovery
+
+Worker: `_discover_organic_website_leads` in `worker_supabase.py`.
+
+Env staging (`backend_mirror/.env.staging.server.example`):
+- `ORGANIC_DISCOVERY_ENABLED=1`
+- `ORGANIC_DISCOVERY_MAX_SITES=20`
+- `ORGANIC_AUDIT_MAX_SITES=16`
+
+Integra risultati SERP/siti oltre alla discovery territoriale directory.
+
+---
+
+## 48. Documentazione canonica A→Z
+
+**Documento master aggiornato:** `docs/MIRAX_ECOSISTEMA_COMPLETO_AZ.md`
+
+Contiene: visione, architettura, ogni tabella DB, ogni pagina dashboard, catalogo API (~120), lib/, componenti, worker Python, cron, env, roadmap, glossario, appendice 26 migrazioni.
+
+**Inventario file:** `docs/MIRAX_FILE_INVENTORY.txt` (646 path).
 
 ---
 
