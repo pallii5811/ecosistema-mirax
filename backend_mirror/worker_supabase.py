@@ -8,8 +8,9 @@ import re
 import argparse
 import random
 import logging
+import concurrent.futures
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from urllib.parse import parse_qs, quote, unquote, urlparse, urljoin
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -31,11 +32,25 @@ for _p in (_REPO_ROOT, _BACKEND_DIR):
     if _p and _p not in sys.path:
         sys.path.insert(0, _p)
 
+try:
+    from business_events_enrich import detect_crm_from_html
+except Exception:
+    detect_crm_from_html = None  # type: ignore
 
 _CORE_NORMALIZE_PHONE = None
 
 
 app = FastAPI() if FastAPI is not None else None
+
+
+def _run_coro_blocking(coro):
+    """Run async coroutine from sync code; safe inside an active event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def normalize_phone_italy(value: Optional[str]) -> Optional[str]:
@@ -376,7 +391,7 @@ async def process_single_url(url: str) -> Dict[str, Any]:
     # Run technical audit for SEO and speed
     try:
         tech = await asyncio.to_thread(run_technical_audit, url)
-        result["seo_errors"] = tech.get("seo_issues", [])
+        result["seo_errors"] = tech.get("issues", [])
         result["load_speed_seconds"] = tech.get("load_speed_seconds")
         if not result.get("telefono") and tech.get("phone"):
             result["telefono"] = _normalize_phone_compound(tech.get("phone"))
@@ -455,13 +470,20 @@ if app is not None:
     class _EnrichHiringBatchRequest(BaseModel):
         leads: List[Dict[str, Any]]
         location: str = "Milano"
-        max_leads: int = 25
+        max_leads: int = 120
+        intent: Optional[Dict[str, Any]] = None
 
     @app.post("/enrich-hiring-batch")
     async def enrich_hiring_batch(payload: _EnrichHiringBatchRequest) -> Dict[str, Any]:
         """Indeed / segnali esterni su batch lead (post-Maps)."""
         leads_in = [dict(x) for x in (payload.leads or []) if isinstance(x, dict)]
-        cap = max(1, min(int(payload.max_leads or 25), 40, len(leads_in)))
+        try:
+            from business_events_enrich import enrich_results_business_events, resolve_enrichment_cap
+
+            cap = resolve_enrichment_cap(payload.intent, len(leads_in))
+            cap = max(1, min(int(payload.max_leads or cap), cap, len(leads_in)))
+        except Exception:
+            cap = max(1, min(int(payload.max_leads or 40), len(leads_in)))
         batch = leads_in[:cap]
         if not batch:
             return {"ok": True, "enriched": 0, "leads": []}
@@ -474,9 +496,12 @@ if app is not None:
                 loc,
                 max_leads=cap,
                 external_only=True,
+                intent=payload.intent,
             )
-            n = sum(1 for l in batch if l.get("business_hiring_jobs"))
-            print(f"[enrich-hiring-batch] {n}/{cap} con hiring jobs", flush=True)
+            n = sum(1 for l in batch if l.get("business_hiring_jobs") or any(
+                s.get("type") == "hiring" for s in (l.get("business_signals") or []) if isinstance(s, dict)
+            ))
+            print(f"[enrich-hiring-batch] {n}/{cap} con hiring", flush=True)
             return {"ok": True, "enriched": n, "processed": cap, "leads": batch}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -765,6 +790,74 @@ async def _scrape_reviews_and_competitors(
 
     return result
 
+
+_REVIEW_POSITIVE_WORDS = {
+    "buono", "buon", "ottimo", "eccellente", "fantastico", "bello", "magnifico",
+    "delizioso", "cordiale", "gentile", "professionale", "consigliato", "perfetto",
+    "impeccabile", "gradevole", "piacevole", "valido", "soddisfatto", "contento",
+    "felice", "bravo", "qualità", "pulito", "rapido", "veloce", "simpatico",
+    "accogliente", "cortese", "disponibile", "ottima", "bellissimo", "buonissimo",
+    "speciale", "unico", "adoro", "amore", "top", "super", "positive", "positive",
+}
+_REVIEW_NEGATIVE_WORDS = {
+    "brutto", "pessimo", "scarso", "orribile", "terribile", "maleducato", "scortese",
+    "lento", "sporco", "caro", "deludente", "insufficiente", "negativo", "problemi",
+    "errore", "difetto", "disastro", "orrore", "schifo", "pessima", "bruttissimo",
+    "orrendo", "cattivo", "cattiva", "difettoso", "lamentele", "lamentela", "triste",
+    "arrabbiato", "deluso", "delusa", "scadente", "inferiore", "disgustoso", "squallido",
+    "fuori", "peggio", "peggiore", "noioso", "rumoroso", "affollato", "scortesia",
+}
+_REVIEW_NEGATIONS = {"non", "mai", "nessuno", "nessuna", "nulla", "neanche", "nemmeno", "neppure"}
+_REVIEW_INTENSIFIERS = {"molto", "troppo", "davvero", "veramente", "estremamente", "assolutamente", "incredibilmente", "super", "super"}
+
+
+def _analyze_review_sentiment(reviews: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Simple lexicon-based sentiment for Italian/English Google review snippets."""
+    if not reviews:
+        return {"score": 0.0, "label": "neutral", "reviews": []}
+
+    analyzed = []
+    total = 0.0
+    for review in reviews:
+        text = str(review.get("text") or "").lower()
+        stars = review.get("stars")
+        words = re.findall(r"[a-zàèéìòù']+", text)
+        score = 0.0
+        i = 0
+        while i < len(words):
+            w = words[i]
+            modifier = 1.0
+            # Check for negation/intensifier on the previous token
+            if i > 0:
+                if words[i - 1] in _REVIEW_NEGATIONS:
+                    modifier *= -1.0
+                if words[i - 1] in _REVIEW_INTENSIFIERS:
+                    modifier *= 1.5
+            if w in _REVIEW_POSITIVE_WORDS:
+                score += 1.0 * modifier
+            elif w in _REVIEW_NEGATIVE_WORDS:
+                score -= 1.0 * modifier
+            i += 1
+
+        # Normalize rough text score to [-1, 1]
+        text_score = max(-1.0, min(1.0, score / max(3.0, abs(score))))
+
+        # Blend with star rating when available (1 star -> -1, 5 stars -> +1)
+        if isinstance(stars, (int, float)) and 1 <= stars <= 5:
+            star_score = (stars - 3) / 2.0
+            final_score = 0.6 * text_score + 0.4 * star_score
+        else:
+            final_score = text_score
+
+        final_score = round(max(-1.0, min(1.0, final_score)), 3)
+        analyzed.append({"text": review.get("text", "")[:200], "stars": stars, "score": final_score})
+        total += final_score
+
+    avg = round(total / len(analyzed), 3) if analyzed else 0.0
+    label = "positive" if avg > 0.25 else "negative" if avg < -0.25 else "neutral"
+    return {"score": avg, "label": label, "reviews": analyzed}
+
+
 try:
     from dotenv import load_dotenv  # type: ignore
 except Exception:  # pragma: no cover
@@ -776,8 +869,16 @@ except Exception:  # pragma: no cover
     create_client = None
 
 
-SUPABASE_URL = (os.getenv("SUPABASE_URL") or "https://rtjmnjromqpsfqsgyfvp.supabase.co").strip()
-_SUPABASE_PUBLISHABLE_FALLBACK = "sb_publishable_oqwwYsG10z7HvPrJOifF-w_J7ARllCp"
+def _require_env(name: str) -> str:
+    """Fail fast if a required environment variable is missing or empty."""
+    value = (os.getenv(name) or "").strip()
+    if not value:
+        print(f"[worker_supabase] FATAL: variabile d'ambiente {name} mancante.")
+        raise SystemExit(2)
+    return value
+
+
+SUPABASE_URL = _require_env("SUPABASE_URL")
 
 
 def _get_supabase_key() -> str:
@@ -792,12 +893,14 @@ def _get_supabase_key() -> str:
     except Exception:
         pass
 
-    # Prefer service role key (server-side only) to bypass RLS.
-    # Do NOT hardcode secrets in source code.
+    # Server-side code MUST use the service role key. Do NOT fall back to
+    # publishable/anon keys: RLS write policies require service_role, and using
+    # a weak credential silently breaks the worker.
     k = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY") or "").strip()
-    if k:
-        return k
-    return _SUPABASE_PUBLISHABLE_FALLBACK
+    if not k:
+        print("[worker_supabase] FATAL: SUPABASE_SERVICE_ROLE_KEY (o SUPABASE_KEY) mancante.")
+        raise SystemExit(2)
+    return k
 
 
 def _utc_now_iso() -> str:
@@ -948,9 +1051,20 @@ def _format_results(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             website = None
 
         citta_raw = r.get("city")
-        citta = (str(citta_raw).strip() if citta_raw is not None else "")
-        if not citta:
-            citta = "N/A"
+        indirizzo_raw = r.get("address")
+        try:
+            from entity_matcher import resolve_lead_city
+
+            citta = resolve_lead_city(
+                str(citta_raw).strip() if citta_raw is not None else None,
+                str(indirizzo_raw).strip() if indirizzo_raw is not None else None,
+            )
+        except ImportError:
+            citta = (str(citta_raw).strip() if citta_raw is not None else "")
+            if not citta:
+                citta = "N/A"
+
+        indirizzo = (str(indirizzo_raw).strip() if indirizzo_raw is not None else "")
 
         tech_stack_list_raw = r.get("tech_stack")
         tech_stack_list: List[str] = []
@@ -959,6 +1073,10 @@ def _format_results(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 sx = str(x).strip()
                 if sx:
                     tech_stack_list.append(sx)
+        elif isinstance(tech_stack_list_raw, str):
+            ts = tech_stack_list_raw.strip()
+            if ts:
+                tech_stack_list = [ts]
         if not tech_stack_list:
             tech_stack_list = ["Verifica in corso"]
 
@@ -969,6 +1087,7 @@ def _format_results(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "sito": website,
                 "website": website,
                 "citta": citta,
+                "indirizzo": indirizzo,
                 "categoria": r.get("category") or r.get("categoria") or "",
                 "category": r.get("category") or r.get("categoria") or "",
                 "tech_stack": tech_stack_list,
@@ -1014,6 +1133,433 @@ def _format_results(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
         out.append(result_dict)
     return out
+
+
+def _sync_search_leads_safe(
+    supabase: Any,
+    search_id: Optional[str],
+    user_id: Optional[str],
+    results: Any,
+) -> None:
+    """Dual-write search_leads — non blocca il flusso legacy se fallisce."""
+    if not supabase or not search_id:
+        return
+    try:
+        from search_leads_sync import normalize_and_upsert_search_leads
+
+        normalize_and_upsert_search_leads(
+            supabase,
+            str(search_id),
+            str(user_id).strip() if user_id else None,
+            results if isinstance(results, list) else [],
+        )
+    except Exception as exc:
+        print(f"[worker_supabase] search_leads sync skipped: {exc}", flush=True)
+
+
+def _sync_neo4j_leads_safe(results: Any) -> None:
+    """Sidecar Neo4j — dopo Postgres; non blocca il worker se fallisce."""
+    if not isinstance(results, list) or not results:
+        return
+    try:
+        from universe_neo4j_sync import is_neo4j_enabled, sync_leads_to_graph
+
+        if not is_neo4j_enabled():
+            return
+        stats = sync_leads_to_graph(results)
+        if stats["synced"] or stats["errors"]:
+            print(
+                f"[worker_supabase] neo4j sync: {stats['synced']} ok, "
+                f"{stats['skipped']} skip, {stats['errors']} err",
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"[worker_supabase] neo4j sync skipped: {exc}", flush=True)
+
+
+def _lead_has_agentic_value(lead: Dict[str, Any]) -> bool:
+    """Contatto valido o tech stack auditato — criterio ammissione lead agentic."""
+    phone = str(lead.get("telefono") or lead.get("phone") or "").strip()
+    email = str(lead.get("email") or "").strip()
+    bad = {"", "N/D", "N/A", "N.D.", "None", "none", "null"}
+    has_phone = phone not in bad and len(re.sub(r"\D+", "", phone)) >= 8
+    has_email = _is_real_business_email(email)
+    tech = lead.get("tech_stack") or []
+    has_real_tech = isinstance(tech, list) and any(
+        str(t).strip()
+        and "verifica in corso" not in str(t).lower()
+        and "audit in arrivo" not in str(t).lower()
+        for t in tech
+    )
+    site = str(lead.get("sito") or lead.get("website") or "").strip()
+    has_site = site and site.lower() not in bad
+    return has_phone or has_email or (has_site and has_real_tech)
+
+
+def _is_agentic_only_job(intent: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(intent, dict):
+        return False
+    if str(intent.get("search_mode") or "").strip().lower() == "agentic_only":
+        return True
+    if str(intent.get("search_strategy") or "").strip().lower() == "organic_web_search":
+        return True
+    return False
+
+
+def _upsert_single_search_lead_safe(
+    supabase: Any,
+    search_id: Optional[str],
+    user_id: Optional[str],
+    lead: Dict[str, Any],
+    position: int,
+) -> None:
+    if not supabase or not search_id:
+        return
+    try:
+        from search_leads_sync import upsert_single_search_lead
+
+        upsert_single_search_lead(supabase, str(search_id), user_id, lead, position)
+    except Exception as exc:
+        print(f"[worker_supabase] search_leads single upsert skipped: {exc}", flush=True)
+
+
+def _delete_search_lead_safe(supabase: Any, search_id: Optional[str], dedupe_key: str) -> None:
+    if not supabase or not search_id or not dedupe_key:
+        return
+    try:
+        from search_leads_sync import delete_search_lead_by_dedupe_key
+
+        delete_search_lead_by_dedupe_key(supabase, str(search_id), dedupe_key)
+    except Exception as exc:
+        print(f"[worker_supabase] search_leads delete skipped: {exc}", flush=True)
+
+
+def _agentic_audit_site_reachable(audit: Optional[Dict[str, Any]]) -> bool:
+    """True se l'audit ha aperto il sito (non timeout/connessione fallita)."""
+    if not isinstance(audit, dict):
+        return False
+    status = audit.get("website_http_status")
+    if isinstance(status, int):
+        if 200 <= status < 500:
+            return True
+        if status in (401, 403):
+            return True
+    if audit.get("website_has_html"):
+        return True
+    if audit.get("telefono") or audit.get("email"):
+        return True
+    if audit.get("tech_stack"):
+        return True
+    err = str(audit.get("website_error") or audit.get("website_error_hint") or "").lower()
+    if any(x in err for x in ("timeout", "connection", "refused", "unreachable", "nxdomain", "failed")):
+        return False
+    return False
+
+
+def _agentic_make_pending_stub(stub: Dict[str, Any]) -> Dict[str, Any]:
+    pending = dict(stub)
+    pending["tech_stack"] = ["Verifica in corso"]
+    pending.setdefault("telefono", "")
+    pending.setdefault("email", "")
+    tr = dict(pending.get("technical_report") or {})
+    tr["source"] = "agentic_web_search"
+    tr["audit_status"] = "pending"
+    pending["technical_report"] = tr
+    pending["source"] = "agentic_web_search"
+    return pending
+
+
+def _agentic_apply_contact_fallback(stub: Dict[str, Any]) -> Dict[str, Any]:
+    """Se audit OK ma nessun contatto: pubblica con nota N/D."""
+    out = dict(stub)
+    phone = str(out.get("telefono") or out.get("phone") or "").strip()
+    email = str(out.get("email") or "").strip()
+    bad = {"", "N/D", "N/A", "N.D.", "None", "none", "null"}
+    has_phone = phone not in bad and len(re.sub(r"\D+", "", phone)) >= 8
+    has_email = _is_real_business_email(email)
+    if not has_phone and not has_email:
+        tr = dict(out.get("technical_report") or {})
+        tr["contact_note"] = "N/D - Visita il sito"
+        out["technical_report"] = tr
+    return out
+
+
+def _agentic_stream_one_lead(
+    item: Dict[str, Any],
+    *,
+    accumulated: List[Dict[str, Any]],
+    seen: Set[str],
+    category: str,
+    location: str,
+    publish_cb: Optional[Any],
+    supabase: Any,
+    search_id: Optional[str],
+    user_id: Optional[str],
+) -> bool:
+    """
+    Streaming 1-a-1: publish pre-audit → audit → update riga.
+    Scarta solo se dominio assente o sito non apribile.
+    """
+    from agents.agentic_gap_fill import extracted_to_lead_stub, lead_dedupe_key, prepare_agentic_extracted_item
+    from search_leads_sync import build_dedupe_key
+
+    prepared = prepare_agentic_extracted_item(item, location=location)
+    if not prepared:
+        print(
+            f"[worker_supabase] agentic skip (no domain) name={str(item.get('name') or '')[:50]}",
+            flush=True,
+        )
+        return False
+
+    stub = extracted_to_lead_stub(prepared, category=category, location=location)
+    key = lead_dedupe_key(
+        str(stub.get("nome") or ""),
+        str(stub.get("sito") or stub.get("website") or ""),
+        str(stub.get("azienda") or ""),
+    )
+    if not key or key in seen:
+        return False
+
+    site = str(stub.get("sito") or stub.get("website") or "").strip()
+    if not site:
+        return False
+
+    url = site if site.startswith("http") else f"https://{site}"
+    try:
+        from agents.agentic_gap_fill import is_valid_b2b_lead
+
+        if not is_valid_b2b_lead(str(item.get("name") or stub.get("nome") or ""), url):
+            return False
+    except Exception as exc:
+        print(f"[worker_supabase] agentic iron dome skipped: {exc}", flush=True)
+        return False
+
+    pending = _agentic_make_pending_stub(stub)
+    seen.add(key)
+    position = len(accumulated)
+    accumulated.append(pending)
+
+    print(
+        f"[worker_supabase] agentic publish pending: {str(pending.get('azienda') or '')[:50]} "
+        f"pos={position} url={site[:60]}",
+        flush=True,
+    )
+
+    if publish_cb:
+        try:
+            publish_cb(list(accumulated), status="running")
+        except TypeError:
+            publish_cb(list(accumulated))
+
+    dedupe_key = build_dedupe_key(pending, position)
+    _upsert_single_search_lead_safe(supabase, search_id, user_id, pending, position)
+
+    audit: Optional[Dict[str, Any]] = None
+    try:
+        audit = _run_coro_blocking(asyncio.wait_for(process_single_url(url), timeout=55.0))
+    except Exception as exc:
+        print(f"[worker_supabase] agentic audit failed {url[:80]}: {exc}", flush=True)
+
+    if not _agentic_audit_site_reachable(audit if isinstance(audit, dict) else None):
+        accumulated.pop()
+        seen.discard(key)
+        _delete_search_lead_safe(supabase, search_id, dedupe_key)
+        if publish_cb:
+            try:
+                publish_cb(list(accumulated), status="running")
+            except TypeError:
+                publish_cb(list(accumulated))
+        print(
+            f"[worker_supabase] agentic removed (site unreachable): "
+            f"{str(stub.get('azienda') or '')[:50]}",
+            flush=True,
+        )
+        return False
+
+    enriched = _apply_audit_url_payload_to_lead(pending, audit if isinstance(audit, dict) else {})
+    if isinstance(audit, dict) and audit.get("nome") and str(enriched.get("azienda") or "").strip() in {"", "N/A"}:
+        enriched["azienda"] = audit.get("nome")
+        enriched["nome"] = audit.get("nome")
+    enriched = _agentic_apply_contact_fallback(enriched)
+    tr = dict(enriched.get("technical_report") or {})
+    tr["source"] = "agentic_web_search"
+    tr["audit_status"] = "complete"
+    enriched["technical_report"] = tr
+    enriched["source"] = "agentic_web_search"
+    try:
+        enriched["opportunity_score"] = _calc_opportunity_score(enriched)
+    except Exception:
+        enriched["opportunity_score"] = 0
+
+    accumulated[position] = enriched
+    if publish_cb:
+        try:
+            publish_cb(list(accumulated), status="running")
+        except TypeError:
+            publish_cb(list(accumulated))
+    _upsert_single_search_lead_safe(supabase, search_id, user_id, enriched, position)
+    return True
+
+
+def _agentic_raw_to_stubs(
+    extracted: List[Dict[str, Any]],
+    *,
+    formatted: List[Dict[str, Any]],
+    seen: Set[str],
+    category: str,
+    location: str,
+    remaining_target: int,
+    publish_cb: Optional[Any] = None,
+    supabase: Any = None,
+    search_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Legacy batch wrapper — delega a streaming 1-a-1 (muta formatted in-place)."""
+    accumulated = formatted
+    new_leads: List[Dict[str, Any]] = []
+    for item in extracted:
+        if len(new_leads) >= remaining_target:
+            break
+        if not isinstance(item, dict):
+            continue
+        if _agentic_stream_one_lead(
+            item,
+            accumulated=accumulated,
+            seen=seen,
+            category=category,
+            location=location,
+            publish_cb=publish_cb,
+            supabase=supabase,
+            search_id=search_id,
+            user_id=user_id,
+        ):
+            new_leads.append(accumulated[-1])
+    return new_leads
+
+
+def _agentic_gap_fill_safe(
+    formatted: List[Dict[str, Any]],
+    *,
+    job_max: int,
+    intent: Optional[Dict[str, Any]],
+    category: str,
+    location: str,
+    original_query: Optional[str] = None,
+    publish_cb: Optional[Any] = None,
+    supabase: Any = None,
+    search_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> tuple[List[Dict[str, Any]], Optional[str]]:
+    """
+    Gap-fill agentic se Maps/directory non raggiungono job_max.
+    Con publish_cb: streaming incrementale (status running) ogni batch.
+    Ritorna (lead, messaggio_esaurimento opzionale).
+    """
+    if not isinstance(formatted, list):
+        formatted = []
+    enabled = os.getenv("AGENTIC_GAP_FILL_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return formatted, None
+
+    remaining_target = max(0, int(job_max or 0) - len(formatted))
+    if remaining_target <= 0:
+        return formatted, None
+
+    print(
+        f"[worker_supabase] Agentic gap-fill: target={job_max} current={len(formatted)} "
+        f"remaining={remaining_target} streaming={bool(publish_cb)}",
+        flush=True,
+    )
+
+    accumulated = list(formatted)
+    try:
+        from agents.agentic_gap_fill import (
+            AGENTIC_TIMEOUT_SEC,
+            STREAM_BATCH_SIZE,
+            build_agentic_exhaustion_message,
+            build_mirax_query_plan_from_job,
+            existing_dedupe_keys,
+            run_agentic_discovery_streaming,
+        )
+
+        plan = build_mirax_query_plan_from_job(
+            intent,
+            category,
+            location,
+            original_query=original_query,
+        )
+        accumulated = list(formatted)
+        seen = existing_dedupe_keys(accumulated)
+        total_new = 0
+        discovery_stats: Dict[str, Any] = {}
+
+        def _on_batch(raw_batch: List[Dict[str, Any]]) -> None:
+            nonlocal accumulated, total_new
+            if not raw_batch:
+                return
+            still_need = max(0, remaining_target - total_new)
+            stubs = _agentic_raw_to_stubs(
+                raw_batch,
+                formatted=accumulated,
+                seen=seen,
+                category=category,
+                location=location,
+                remaining_target=still_need,
+                publish_cb=publish_cb,
+                supabase=supabase,
+                search_id=search_id,
+                user_id=user_id,
+            )
+            if not stubs:
+                return
+            total_new += len(stubs)
+            print(
+                f"[worker_supabase] Agentic stream batch: +{len(stubs)} (totale {len(accumulated)})",
+                flush=True,
+            )
+            if publish_cb:
+                try:
+                    publish_cb(accumulated, status="running")
+                except TypeError:
+                    publish_cb(accumulated)
+
+        timeout_sec = float(AGENTIC_TIMEOUT_SEC)
+        _coro = run_agentic_discovery_streaming(
+            plan,
+            remaining_target,
+            on_batch=_on_batch,
+            existing_keys=seen,
+            batch_size=STREAM_BATCH_SIZE,
+            stats_out=discovery_stats,
+        )
+        if timeout_sec > 0:
+            asyncio.run(asyncio.wait_for(_coro, timeout=timeout_sec))
+        else:
+            asyncio.run(_coro)
+
+        exhaustion_msg: Optional[str] = None
+        if discovery_stats.get("exhausted"):
+            found_total = len(accumulated)
+            exhaustion_msg = build_agentic_exhaustion_message(found_total, int(job_max or found_total))
+            print(f"[worker_supabase] Agentic exhaustion: {exhaustion_msg}", flush=True)
+
+        if total_new == 0:
+            print("[worker_supabase] Agentic gap-fill: nessun lead estratto", flush=True)
+            return formatted, exhaustion_msg
+
+        print(
+            f"[worker_supabase] Agentic gap-fill: +{total_new} lead (totale {len(accumulated)})",
+            flush=True,
+        )
+        return accumulated, exhaustion_msg
+    except asyncio.TimeoutError:
+        print("[worker_supabase] Agentic gap-fill timeout — salvo lead parziali", flush=True)
+        found_total = len(accumulated)
+        msg = build_agentic_exhaustion_message(found_total, int(job_max or found_total))
+        return accumulated, msg
+    except Exception as exc:
+        print(f"[worker_supabase] Agentic gap-fill skipped: {exc}", flush=True)
+        return accumulated, None
 
 
 def _lead_has_pending_audit(lead: Any) -> bool:
@@ -1072,6 +1618,16 @@ def _apply_audit_url_payload_to_lead(lead: Dict[str, Any], audit: Dict[str, Any]
         updated["email"] = audit.get("email")
     if audit.get("telefono") and not lead.get("telefono"):
         updated["telefono"] = audit.get("telefono")
+    if audit.get("citta") or audit.get("indirizzo"):
+        try:
+            from entity_matcher import resolve_lead_city
+            updated["citta"] = resolve_lead_city(
+                str(audit.get("citta") or lead.get("citta") or ""),
+                str(audit.get("indirizzo") or lead.get("indirizzo") or ""),
+                str(lead.get("citta") or ""),
+            )
+        except ImportError:
+            pass
     if audit.get("instagram") and not lead.get("instagram"):
         updated["instagram"] = audit.get("instagram")
     if audit.get("facebook") and not lead.get("facebook"):
@@ -1223,13 +1779,16 @@ def _organic_is_allowed_url(url: str) -> bool:
         return False
 
 
-def _organic_extract_search_links(html: str, max_results: int) -> List[Dict[str, str]]:
+def _organic_extract_search_links(html: str, max_results: int, base_url: str = '') -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
     seen = set()
+    base = base_url or ''
     for m in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html or '', re.I | re.S):
         href = _organic_decode_search_url(unquote(unescape(m.group(1) or '')).split('#', 1)[0])
         if href.startswith('/url?'):
             href = parse_qs(urlparse(href).query).get('q', [''])[0]
+        if not href.startswith('http') and base:
+            href = urljoin(base, href)
         if not _organic_is_allowed_url(href):
             continue
         host = urlparse(href).netloc.lower().replace('www.', '')
@@ -1257,7 +1816,7 @@ def _organic_google_urls(query: str, max_results: int) -> List[Dict[str, str]]:
     ]
     for search_url in urls:
         html = _organic_fetch(search_url, timeout=8.0)
-        found = _organic_extract_search_links(html, max_results)
+        found = _organic_extract_search_links(html, max_results, search_url)
         try:
             print(f'[worker_supabase] Organic search source {urlparse(search_url).netloc}: query="{query}" urls={len(found)}', flush=True)
         except Exception:
@@ -1323,6 +1882,45 @@ def _organic_business_name(title: str, origin: str) -> str:
     return host.split(".")[0].replace("-", " ").replace("_", " ").title()
 
 
+_REGION_CITIES: Dict[str, List[str]] = {
+    "lombardia": ["Milano", "Bergamo", "Brescia", "Monza", "Como", "Varese", "Pavia", "Cremona"],
+    "lazio": ["Roma", "Latina", "Frosinone", "Viterbo", "Rieti"],
+    "veneto": ["Venezia", "Verona", "Padova", "Vicenza", "Treviso", "Rovigo"],
+    "emilia-romagna": ["Bologna", "Modena", "Parma", "Reggio Emilia", "Rimini", "Ferrara"],
+    "piemonte": ["Torino", "Novara", "Alessandria", "Cuneo", "Asti"],
+    "toscana": ["Firenze", "Pisa", "Livorno", "Siena", "Prato", "Arezzo"],
+    "campania": ["Napoli", "Salerno", "Caserta", "Avellino", "Benevento"],
+    "sicilia": ["Palermo", "Catania", "Messina", "Siracusa"],
+    "puglia": ["Bari", "Lecce", "Taranto", "Foggia", "Brindisi"],
+}
+
+_DEV_HUB_CITIES = ["Milano", "Roma", "Torino", "Bologna", "Padova", "Firenze"]
+
+
+def _organic_search_locations(location: str, category: str = "") -> List[str]:
+    """Per ricerche regionali, espandi su città principali (più lead Maps/SERP)."""
+    loc = (location or "").strip()
+    cat = (category or "").lower()
+    is_dev = any(x in cat for x in ("informatic", "software", "sviluppo", "programm", "tech"))
+    if is_dev and (not loc or loc.lower() in ("italia", "italy", "milano")):
+        return _DEV_HUB_CITIES[:5]
+    if not loc:
+        return ["Italia"]
+    key = loc.lower().replace("emilia romagna", "emilia-romagna")
+    cities = _REGION_CITIES.get(key)
+    if cities:
+        return cities[:6]
+    return [loc]
+
+
+def _organic_lead_city(search_city: str, address: str = "") -> str:
+    try:
+        from entity_matcher import resolve_lead_city
+        return resolve_lead_city(None, address, search_city)
+    except ImportError:
+        return search_city or "N/A"
+
+
 def _discover_organic_website_leads(category: str, location: str) -> List[Dict[str, Any]]:
     if not _organic_enabled() or not category or not location:
         return []
@@ -1331,20 +1929,26 @@ def _discover_organic_website_leads(category: str, location: str) -> List[Dict[s
         return []
     c = str(category or '').lower()
     is_frigo = any(x in c for x in ['frigo', 'frigor', 'refriger', 'celle frigor'])
+    search_locs = _organic_search_locations(location, category)
+    queries: List[str] = []
     if is_frigo:
-        queries = [
-            f'{category} {location}',
-            f'celle frigorifere industriali {location}',
-            f'impianti frigoriferi industriali {location}',
-            f'refrigerazione industriale {location}',
-            f'frigoristi industriali {location}',
-            f'refrigerazione commerciale {location}',
-        ]
+        for loc in search_locs:
+            queries.extend([
+                f'{category} {loc}',
+                f'celle frigorifere industriali {loc}',
+                f'impianti frigoriferi industriali {loc}',
+            ])
     else:
-        queries = [f'{category} {location} azienda contatti', f'{category} {location} sito ufficiale', f'{category} {location}']
+        for loc in search_locs:
+            queries.extend([
+                f'{category} {loc} azienda contatti',
+                f'{category} {loc} sito ufficiale',
+                f'{category} {loc}',
+            ])
     candidates: List[Dict[str, str]] = []
     seen_hosts = set()
     for q in queries:
+        q_loc = next((loc for loc in search_locs if loc.lower() in q.lower()), location)
         for item in _organic_google_urls(q, max_sites):
             origin = _organic_origin(item.get('url') or '')
             if not origin:
@@ -1353,7 +1957,13 @@ def _discover_organic_website_leads(category: str, location: str) -> List[Dict[s
             if host in seen_hosts:
                 continue
             seen_hosts.add(host)
-            candidates.append({'origin': origin, 'url': item.get('url') or origin, 'title': item.get('title') or '', 'query': q})
+            candidates.append({
+                'origin': origin,
+                'url': item.get('url') or origin,
+                'title': item.get('title') or '',
+                'query': q,
+                'search_city': q_loc,
+            })
             if len(candidates) >= max_sites:
                 break
         if len(candidates) >= max_sites:
@@ -1363,6 +1973,13 @@ def _discover_organic_website_leads(category: str, location: str) -> List[Dict[s
     for item in candidates:
         origin = item['origin']
         title = item.get('title') or ''
+        host = urlparse(origin).netloc.lower().replace('www.', '')
+        search_city = str(item.get('search_city') or location)
+        if _organic_looks_like_directory(title, host):
+            continue
+        location_l = search_city.strip().lower()
+        if location_l and len(location_l) > 2 and location_l not in title.lower() and location_l not in host:
+            continue
         evidence_blob = f"{title} {origin} {item.get('query') or ''}"
         if not _organic_category_evidence(category, evidence_blob):
             rejected_no_evidence += 1
@@ -1372,7 +1989,7 @@ def _discover_organic_website_leads(category: str, location: str) -> List[Dict[s
             'phone': '',
             'email': '',
             'website': origin,
-            'city': location,
+            'city': _organic_lead_city(search_city),
             'category': category,
             'rating': None,
             'reviews_count': 0,
@@ -1705,7 +2322,19 @@ def _merge_formatted_results(primary: List[Dict[str, Any]], extra: List[Dict[str
         site = str(item.get("sito") or item.get("website") or "").lower().strip().replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/")
         phone = re.sub(r"\D+", "", str(item.get("telefono") or ""))
         name = re.sub(r"\W+", "", str(item.get("azienda") or item.get("nome") or "").lower())
-        return site or phone or name
+        address = re.sub(r"\s+", "", str(item.get("indirizzo") or item.get("address") or "").lower())
+        # Prefer name+address so distinct branches of the same chain are kept.
+        if name and address:
+            return f"nameaddr:{name}|{address}"
+        if site and name:
+            return f"site:{site}|name:{name}"
+        if phone:
+            return f"phone:{phone}"
+        if site:
+            return f"site:{site}"
+        if name:
+            return f"name:{name}"
+        return ""
 
     for item in list(primary or []) + list(extra or []):
         k = key_for(item)
@@ -1759,7 +2388,133 @@ def _build_meta_ads_library_url(facebook_url: Optional[str], website_url: Option
         return None
 
 
-async def _run_core_scraper(category: str, location: str, zone: Optional[str] = None, on_result=None, on_audit_done=None) -> List[Dict[str, Any]]:
+def _organic_looks_like_directory(title: str, host: str) -> bool:
+    t = (title or '').lower()
+    h = (host or '').lower()
+    directory_keywords = [
+        'migliori', 'top ', 'top 10', 'guida', 'elenco', 'lista', 'directory', 'portale',
+        'prenota', 'prenotazione', 'recensioni', 'opinioni', 'confronta', 'offerte',
+        'magazine', 'rivista', 'giornale', 'notizie', 'news', 'blog', 'articoli', 'digest',
+    ]
+    if any(kw in t for kw in directory_keywords):
+        return True
+    directory_hosts = [
+        'quandoo', 'thefork', 'michelin', 'tripadvisor', 'paginegialle', 'paginebianche',
+        'milanotoday', 'romatoday', 'napolitoday', 'torinotoday', 'veneziatoday', 'bolognatoday',
+        'firenzetoday', 'genovatoday', 'veronatoday', 'padovatoday', 'trentotoday',
+        'yelp', 'opentable', 'reservation', 'infobel', 'cylex', 'kompass', 'europages',
+        'trovit', 'infojobs', 'jooble', 'indeed', 'aziende.it', 'informazione-aziende.it',
+        'reteimprese.it', 'misterimprese.it', 'virgilio', 'tuttocitta', 'mapcarta',
+        'corriere.it', 'repubblica.it', 'lastampa.it', 'ilgiornale.it', 'ad-italia.it',
+        'gamberorosso.it', 'identitagolose.it', 'finestresullarte.it', 'vivimilano',
+    ]
+    if any(d in h for d in directory_hosts):
+        return True
+    return False
+
+
+async def _organic_backfill_leads(
+    category: str,
+    location: str,
+    needed: int,
+    existing_leads: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """When Maps results are exhausted, discover extra leads from organic search
+    results and their websites, avoiding duplicates against existing leads."""
+    if needed <= 0:
+        return []
+    # Scale discovery to the remaining gap, but keep it bounded and fast.
+    # Capping sites keeps the backfill from dominating total job runtime.
+    max_sites = min(max(needed, 12), 30)
+    queries = [
+        f'{category} {location}',
+        f'{category} {location} contatti',
+    ]
+    existing_hosts: set = set()
+    for lead in existing_leads:
+        site = str(lead.get('website') or lead.get('sito') or '').strip()
+        if site:
+            try:
+                host = urlparse(site).netloc.lower().replace('www.', '')
+                if host:
+                    existing_hosts.add(host)
+            except Exception:
+                pass
+
+    candidates: List[Dict[str, str]] = []
+    seen_hosts = set(existing_hosts)
+    for q in queries:
+        if len(candidates) >= max_sites:
+            break
+        for item in _organic_google_urls(q, max_sites):
+            origin = _organic_origin(item.get('url') or '')
+            if not origin:
+                continue
+            host = urlparse(origin).netloc.lower().replace('www.', '')
+            if not host or host in seen_hosts:
+                continue
+            seen_hosts.add(host)
+            candidates.append({'origin': origin, 'title': item.get('title') or '', 'query': q})
+            if len(candidates) >= max_sites:
+                break
+
+    leads: List[Dict[str, Any]] = []
+    lock = asyncio.Lock()
+    semaphore = asyncio.Semaphore(6)
+
+    async def _audit_one(item: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        # Stop early once the target is reached.
+        if len(leads) >= needed:
+            return None
+        origin = item['origin']
+        title = item.get('title') or ''
+        host = urlparse(origin).netloc.lower().replace('www.', '')
+        if _organic_looks_like_directory(title, host):
+            return None
+        evidence_blob = f"{title} {origin} {item.get('query') or ''}"
+        if not _organic_category_evidence(category, evidence_blob):
+            return None
+        # Require city signal in title/host for location-sensitive queries.
+        location_l = (location or '').strip().lower()
+        if location_l and len(location_l) > 2 and location_l not in title.lower() and location_l not in host:
+            return None
+        try:
+            html = await asyncio.to_thread(_organic_fetch, origin, 5.0)
+        except Exception:
+            return None
+        contacts = _organic_extract_contacts(html)
+        if not contacts.get('email') and not contacts.get('phone'):
+            return None
+        return {
+            'business_name': _organic_business_name(title, origin),
+            'phone': contacts.get('phone', ''),
+            'email': contacts.get('email', ''),
+            'website': origin,
+            'city': location,
+            'category': category,
+            'rating': None,
+            'reviews_count': 0,
+            'is_claimed': None,
+            'tech_stack': ['Lead da sito web'],
+            'technical_report': {'source': 'organic_backfill', 'contact_found': True},
+        }
+
+    async def _bounded(item: Dict[str, str]) -> None:
+        async with semaphore:
+            lead = await _audit_one(item)
+        if not lead:
+            return
+        async with lock:
+            if len(leads) < needed:
+                leads.append(lead)
+
+    await asyncio.gather(*[_bounded(item) for item in candidates])
+    if leads:
+        print(f'[worker_supabase] Organic backfill: +{len(leads)} leads for "{category} {location}"', flush=True)
+    return leads
+
+
+async def _run_core_scraper(category: str, location: str, zone: Optional[str] = None, on_result=None, on_audit_done=None, intent: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     # Import here to keep the module import light and avoid side effects at worker startup.
     # NOTE: This does NOT start the FastAPI server; main.py runs uvicorn only under __main__.
     # Also: the repo's `backend/` folder is not a Python package (no __init__.py), so we
@@ -1796,9 +2551,78 @@ async def _run_core_scraper(category: str, location: str, zone: Optional[str] = 
                 raw = one
         except Exception:
             pass
-    results: List[Dict[str, Any]] = []
 
-    for i, item in enumerate(raw or []):
+    # If Maps didn't reach the requested cap, backfill with leads discovered from
+    # organic search results and their websites.
+    # Keep a hard ceiling so auditing stays within memory/time budgets.
+    LEAD_HARD_CAP = 200
+    job_max = 0
+    z = (zone or "").strip()
+    if z.isdigit():
+        job_max = int(z)
+    cap_new = job_max if job_max > 0 else 500
+    cap_new = min(cap_new, LEAD_HARD_CAP)
+    if len(raw or []) < cap_new:
+        try:
+            needed = cap_new - len(raw or [])
+            backfill = await _organic_backfill_leads(category, location, needed, raw or [])
+            if backfill:
+                raw = (raw or []) + backfill[:needed]
+        except Exception as e:
+            print(f'[worker_supabase] Organic backfill error: {e}', flush=True)
+
+    async def _audit_single_lead(item: Dict[str, Any], i: int) -> Dict[str, Any]:
+        try:
+            return await _audit_single_lead_inner(item, i)
+        except Exception as e:
+            print(f"[worker_supabase] Audit lead {i} ({item.get('business_name') or '?'}): {e}", flush=True)
+            # Return a minimal lead so the caller still has the Maps data.
+            return {
+                "result_index": i,
+                "business_name": item.get("business_name") or "Unknown",
+                "address": item.get("address"),
+                "phone": normalize_phone_italy(item.get("phone")),
+                "email": None,
+                "website": normalize_website(item.get("website")),
+                "website_status": "MISSING_WEBSITE",
+                "tech_stack": ["Verifica in corso"],
+                "load_speed_s": None,
+                "domain_creation_date": None,
+                "domain_expiration_date": None,
+                "website_http_status": None,
+                "website_error": "Audit failed",
+                "website_has_html": False,
+                "website_error_line": None,
+                "website_error_hint": str(e)[:120],
+                "instagram_missing": False,
+                "tiktok_missing": True,
+                "pixel_missing": True,
+                "instagram": None,
+                "facebook": None,
+                "meta_ads_library": None,
+                "decision_maker": "N/D",
+                "meta_pixel": False,
+                "google_tag_manager": False,
+                "html_errors": 0,
+                "technical_report": {"error": str(e)[:120]},
+                "audit": {
+                    "has_ssl": False,
+                    "is_mobile_responsive": False,
+                    "has_facebook_pixel": False,
+                    "has_tiktok_pixel": False,
+                    "has_gtm": False,
+                    "missing_instagram": False,
+                },
+                "category": category,
+                "city": location,
+                "rating": item.get("rating"),
+                "reviews_count": item.get("reviews_count"),
+                "is_claimed": item.get("is_claimed"),
+                "google_reviews": [],
+                "local_competitors": [],
+            }
+
+    async def _audit_single_lead_inner(item: Dict[str, Any], i: int) -> Dict[str, Any]:
         name = item.get("business_name") or "Unknown"
         address = item.get("address")
         website = item.get("website")
@@ -1835,7 +2659,7 @@ async def _run_core_scraper(category: str, location: str, zone: Optional[str] = 
                     website_html,
                     website_error_line,
                     website_error_hint,
-                ) = await asyncio.wait_for(audit_website_with_status(website_norm), timeout=25.0)
+                ) = await asyncio.wait_for(audit_website_with_status(website_norm), timeout=15.0)
             except asyncio.TimeoutError:
                 audit, email = AuditSignals(), None
                 tech_stack = "Custom HTML"
@@ -2114,72 +2938,107 @@ async def _run_core_scraper(category: str, location: str, zone: Optional[str] = 
 
         meta_ads_library = _build_meta_ads_library_url(facebook, website_norm)
 
-        results.append(
-            {
-                "result_index": i,
-                "business_name": name,
-                "address": address,
-                "phone": phone_norm,
-                "email": email,
-                "website": website_norm,
-                "website_status": website_status,
-                "tech_stack": tech_stack_list,
-                "load_speed_s": load_speed_s,
-                "domain_creation_date": domain_creation_date,
-                "domain_expiration_date": domain_expiration_date,
-                "website_http_status": website_http_status,
-                "website_error": website_error,
-                "website_has_html": website_has_html,
-                "website_error_line": website_error_line,
-                "website_error_hint": website_error_hint,
-                "instagram_missing": bool(getattr(audit, "missing_instagram", False)),
-                "tiktok_missing": not bool(getattr(audit, "has_tiktok_pixel", False)),
-                "pixel_missing": not bool(getattr(audit, "has_facebook_pixel", False)),
-                "instagram": instagram,
-                "facebook": facebook,
-                "meta_ads_library": meta_ads_library,
-                "decision_maker": decision_maker,
-                "meta_pixel": meta_pixel,
-                "google_tag_manager": google_tag_manager,
-                "html_errors": html_errors,
-                "technical_report": {
-                    "html_errors": html_errors,
-                    "load_speed_s": load_speed_s,
-                    "load_speed_seconds": load_speed_seconds,
-                    "error_details": error_details,
-                    "has_google_ads": has_google_ads,
-                    "has_ga4": has_ga4,
-                    "has_chatbot": has_chatbot,
-                    "has_booking_system": has_booking_system,
-                    "has_ecommerce": has_ecommerce,
-                    "has_spf": has_spf,
-                    "has_dmarc": has_dmarc,
-                    "seo_disaster": seo_disaster,
-                },
-                "audit": {
-                    "has_ssl": bool(getattr(audit, "has_ssl", False)),
-                    "is_mobile_responsive": bool(getattr(audit, "is_mobile_responsive", False)),
-                    "has_facebook_pixel": bool(getattr(audit, "has_facebook_pixel", False)),
-                    "has_tiktok_pixel": bool(getattr(audit, "has_tiktok_pixel", False)),
-                    "has_gtm": bool(getattr(audit, "has_gtm", False)),
-                    "missing_instagram": bool(getattr(audit, "missing_instagram", False)),
-                },
-                "category": category,
-                "city": location,
-                "rating": rating,
-                "reviews_count": reviews_count,
-                "is_claimed": is_claimed,
-                "google_reviews": [],
-                "local_competitors": [],
-            }
-        )
+        detected_crms: List[str] = []
+        if website_html and detect_crm_from_html:
+            try:
+                detected_crms = detect_crm_from_html(website_html) or []
+            except Exception:
+                detected_crms = []
 
-        # Progressive update: notify caller with current results (includes email)
-        if on_audit_done:
+        return {
+            "result_index": i,
+            "business_name": name,
+            "address": address,
+            "phone": phone_norm,
+            "email": email,
+            "website": website_norm,
+            "website_status": website_status,
+            "tech_stack": tech_stack_list,
+            "load_speed_s": load_speed_s,
+            "domain_creation_date": domain_creation_date,
+            "domain_expiration_date": domain_expiration_date,
+            "website_http_status": website_http_status,
+            "website_error": website_error,
+            "website_has_html": website_has_html,
+            "website_error_line": website_error_line,
+            "website_error_hint": website_error_hint,
+            "instagram_missing": bool(getattr(audit, "missing_instagram", False)),
+            "tiktok_missing": not bool(getattr(audit, "has_tiktok_pixel", False)),
+            "pixel_missing": not bool(getattr(audit, "has_facebook_pixel", False)),
+            "instagram": instagram,
+            "facebook": facebook,
+            "meta_ads_library": meta_ads_library,
+            "detected_crm_stack": detected_crms,
+            "decision_maker": decision_maker,
+            "meta_pixel": meta_pixel,
+            "google_tag_manager": google_tag_manager,
+            "html_errors": html_errors,
+            "technical_report": {
+                "html_errors": html_errors,
+                "load_speed_s": load_speed_s,
+                "load_speed_seconds": load_speed_seconds,
+                "error_details": error_details,
+                "has_google_ads": has_google_ads,
+                "has_ga4": has_ga4,
+                "has_chatbot": has_chatbot,
+                "has_booking_system": has_booking_system,
+                "has_ecommerce": has_ecommerce,
+                "has_spf": has_spf,
+                "has_dmarc": has_dmarc,
+                "seo_disaster": seo_disaster,
+            },
+            "audit": {
+                "has_ssl": bool(getattr(audit, "has_ssl", False)),
+                "is_mobile_responsive": bool(getattr(audit, "is_mobile_responsive", False)),
+                "has_facebook_pixel": bool(getattr(audit, "has_facebook_pixel", False)),
+                "has_tiktok_pixel": bool(getattr(audit, "has_tiktok_pixel", False)),
+                "has_gtm": bool(getattr(audit, "has_gtm", False)),
+                "missing_instagram": bool(getattr(audit, "missing_instagram", False)),
+            },
+            "category": category,
+            "city": location,
+            "rating": rating,
+            "reviews_count": reviews_count,
+            "is_claimed": is_claimed,
+            "google_reviews": [],
+            "local_competitors": [],
+        }
+
+    results: List[Dict[str, Any]] = []
+    raw_items = raw or []
+    if raw_items:
+        sem = asyncio.Semaphore(12)
+
+        async def _bounded(i: int, item: Dict[str, Any]) -> Dict[str, Any]:
+            async with sem:
+                return await _audit_single_lead(item, i)
+
+        pending = {
+            asyncio.create_task(_bounded(i, item)): (i, item)
+            for i, item in enumerate(raw_items)
+        }
+        completed_since_notify = 0
+        for coro in asyncio.as_completed(pending):
+            try:
+                lead = await coro
+            except Exception as e:
+                print(f"[worker_supabase] Audit lead failed: {e}", flush=True)
+                continue
+            results.append(lead)
+            completed_since_notify += 1
+            if on_audit_done and completed_since_notify >= 5:
+                try:
+                    on_audit_done(list(results))
+                except Exception:
+                    pass
+                completed_since_notify = 0
+        if on_audit_done and completed_since_notify:
             try:
                 on_audit_done(list(results))
             except Exception:
                 pass
+        results.sort(key=lambda x: x.get("result_index", 0))
+    print(f"[worker_supabase] Core scraper: raw={len(raw or [])} audited={len(results)}", flush=True)
 
     # Reviews/competitors: optional enrichment — must NOT block job completion (Blocco 1.3).
     enrich_reviews = os.getenv("ENRICH_REVIEWS", "0").strip().lower() in {"1", "true", "yes"}
@@ -2196,10 +3055,12 @@ async def _run_core_scraper(category: str, location: str, zone: Optional[str] = 
                 )
                 lead["google_reviews"] = enrichment.get("google_reviews", [])
                 lead["local_competitors"] = enrichment.get("local_competitors", [])
+                lead["review_sentiment"] = _analyze_review_sentiment(lead["google_reviews"])
             except Exception as e:
                 print(f"[enrichment] Skipped for {lead.get('business_name','?')}: {e}")
                 lead["google_reviews"] = lead.get("google_reviews") or []
                 lead["local_competitors"] = lead.get("local_competitors") or []
+                lead["review_sentiment"] = lead.get("review_sentiment") or _analyze_review_sentiment([])
 
     return results
 
@@ -2237,16 +3098,16 @@ async def _run_business_events_enrichment(
     user_id: Optional[str] = None,
     publish_cb: Optional[Any] = None,
     external_only: bool = False,
+    intent: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Business events enrichment post-audit."""
     enrich_business = os.getenv("ENRICH_BUSINESS_EVENTS", "1").strip().lower() in {"1", "true", "yes"}
     if not enrich_business or not formatted:
         return formatted
     try:
-        from business_events_enrich import enrich_results_business_events
+        from business_events_enrich import enrich_results_business_events, resolve_enrichment_cap
 
-        max_be = int(os.getenv("ENRICH_BUSINESS_EVENTS_MAX", "40") or "40")
-        cap = max(1, min(max_be, 50))
+        cap = resolve_enrichment_cap(intent, len(formatted))
         await enrich_results_business_events(
             formatted,
             location,
@@ -2256,6 +3117,7 @@ async def _run_business_events_enrichment(
             audit_only=not external_only,
             external_only=external_only,
             on_progress=(lambda snap, _n: publish_cb(snap)) if publish_cb else None,
+            intent=intent,
         )
         touched = min(len(formatted), cap)
         signals = _count_business_event_signals(formatted[:cap])
@@ -2360,13 +3222,11 @@ def main() -> None:
         )
 
     supabase_key = _get_supabase_key()
-    if supabase_key == _SUPABASE_PUBLISHABLE_FALLBACK:
-        print(
-            "[worker_supabase] WARNING: stai usando la publishable key come fallback. "
-            "Se hai RLS attiva, setta la variabile d'ambiente SUPABASE_SERVICE_ROLE_KEY."
-        )
-
     supabase = create_client(SUPABASE_URL, supabase_key)
+
+    def _create_fresh_supabase_client():
+        """Create a new Supabase client for use in background threads."""
+        return create_client(SUPABASE_URL, supabase_key)
 
     def _split_csv(s: str) -> List[str]:
         try:
@@ -2429,8 +3289,26 @@ def main() -> None:
         pass
 
     print("[worker_supabase] Avviato")
-    print(f"[worker_supabase] Supabase URL: {SUPABASE_URL}")
+    _project_ref = SUPABASE_URL.split("//")[-1].split(".")[0] if SUPABASE_URL else "unknown"
+    print(f"[worker_supabase] Supabase project: {_project_ref}")
     print("[worker_supabase] Polling tabella: searches (status=pending) ogni 4 secondi")
+
+    # Recovery: reset stale processing jobs to pending so they are not lost after a crash/restart.
+    def _recover_stale_processing() -> None:
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+            stale = supabase.table("searches").select("id").eq("status", "processing").lt("created_at", cutoff).execute().data or []
+            if stale:
+                print(f"[worker_supabase] Recovery: resetting {len(stale)} stale processing jobs to pending", flush=True)
+                for row in stale:
+                    try:
+                        supabase.table("searches").update({"status": "pending"}).eq("id", row["id"]).execute()
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[worker_supabase] Recovery skipped: {e}", flush=True)
+
+    _recover_stale_processing()
 
     mode = str(getattr(args, "mode", "all") or "all").strip().lower()
     if mode not in {"all", "user", "backlog"}:
@@ -2448,8 +3326,12 @@ def main() -> None:
     if user_recent_minutes < 0:
         user_recent_minutes = 0
 
+    loop_count = 0
     while True:
         try:
+            loop_count += 1
+            if loop_count % 30 == 0:
+                _recover_stale_processing()
             # Desync workers to reduce stampedes / race windows.
             try:
                 time.sleep(random.uniform(1.0, 5.0))
@@ -2501,6 +3383,20 @@ def main() -> None:
             category = (job.get("category") or "").strip()
             location = (job.get("location") or "").strip()
             zone = (job.get("zone") or None)
+            intent = job.get("intent") or None
+            if isinstance(intent, str):
+                try:
+                    intent = json.loads(intent)
+                except Exception:
+                    intent = None
+            intent_signals = []
+            if isinstance(intent, dict):
+                intent_signals = intent.get("signals") or []
+                if intent_signals:
+                    signal_types = [s.get("type") for s in intent_signals if isinstance(s, dict)]
+                    print(f"[worker_supabase] Job intent signals: {signal_types}", flush=True)
+
+            job_user_id = str(job.get("user_id") or "").strip() or None
 
             if not job_id:
                 print("[worker_supabase] WARNING: riga pending senza id. La salto.")
@@ -2524,14 +3420,15 @@ def main() -> None:
             print(f"[worker_supabase] Trovata richiesta pending id={job_id} :: {category} @ {location}")
 
             # Per-job scrape depth: zone may hold the requested lead cap from the frontend.
+            job_max = int(os.getenv("DEMO_MAX_RESULTS", "50") or "50")
             try:
                 default_max = int(os.getenv("DEMO_MAX_RESULTS", "50") or "50")
                 job_max = default_max
                 z = job.get("zone")
                 if isinstance(z, str) and z.strip().isdigit():
-                    job_max = min(500, max(5, int(z.strip())))
+                    job_max = min(10000, max(5, int(z.strip())))
                 elif isinstance(z, dict) and z.get("max_results"):
-                    job_max = min(500, max(5, int(z.get("max_results") or default_max)))
+                    job_max = min(10000, max(5, int(z.get("max_results") or default_max)))
                 os.environ["DEMO_MAX_RESULTS"] = str(job_max)
                 print(f"[worker_supabase] Job max_results={job_max}", flush=True)
             except Exception:
@@ -2604,6 +3501,13 @@ def main() -> None:
                     payload = {"results": merged}
                     if status:
                         payload["status"] = status
+                    _job_uid = None
+                    try:
+                        _job_uid = str(job.get("user_id") or "").strip() or None
+                    except Exception:
+                        _job_uid = None
+                    _sync_search_leads_safe(supabase, job_id, _job_uid, merged)
+                    _sync_neo4j_leads_safe(merged)
                     supabase.table("searches").update(payload).eq("id", job_id).execute()
                     return merged
                 except Exception as e:
@@ -2657,6 +3561,16 @@ def main() -> None:
                             enriched["email"] = clean_email
                         if audited.get("nome") and not str(enriched.get("azienda") or "").strip():
                             enriched["azienda"] = audited.get("nome")
+                        if audited.get("citta") or audited.get("indirizzo"):
+                            try:
+                                from entity_matcher import resolve_lead_city
+                                enriched["citta"] = resolve_lead_city(
+                                    str(audited.get("citta") or ""),
+                                    str(audited.get("indirizzo") or enriched.get("indirizzo") or ""),
+                                    str(enriched.get("citta") or ""),
+                                )
+                            except ImportError:
+                                pass
                         enriched["meta_pixel"] = bool(audited.get("meta_pixel"))
                         enriched["google_tag_manager"] = bool(audited.get("google_tag_manager"))
                         seo_errors = audited.get("seo_errors") if isinstance(audited.get("seo_errors"), list) else []
@@ -2727,10 +3641,13 @@ def main() -> None:
                 except Exception as e:
                     print(f"[worker_supabase] Progressive organic discovery skipped: {e}", flush=True)
 
-            try:
-                __import__('threading').Thread(target=_publish_progressive_organic, daemon=True).start()
-            except Exception as e:
-                print(f"[worker_supabase] Progressive organic thread skipped: {e}", flush=True)
+            _agentic_only = _is_agentic_only_job(intent)
+
+            if not _agentic_only:
+                try:
+                    __import__('threading').Thread(target=_publish_progressive_organic, daemon=True).start()
+                except Exception as e:
+                    print(f"[worker_supabase] Progressive organic thread skipped: {e}", flush=True)
 
             def _on_maps_result(raw_item):
                 try:
@@ -2762,22 +3679,30 @@ def main() -> None:
                 except Exception:
                     pass
 
-            core_results = asyncio.run(_run_core_scraper(category=category, location=location, zone=zone, on_result=_on_maps_result, on_audit_done=_on_audit_done))
-            formatted = _format_results(core_results)
-            try:
-                organic_raw = _discover_organic_website_leads(category=category, location=location)
-                organic_formatted = _format_results(organic_raw)
-                if organic_formatted:
-                    with _rt_lock:
-                        formatted = _merge_formatted_results(_rt_results, formatted)
-                    print(f"[worker_supabase] Organic website discovery final merge uses audited progressive leads only; raw_candidates={len(organic_formatted)}")
-            except Exception as e:
-                print(f"[worker_supabase] Organic website discovery skipped: {e}")
+            if _agentic_only:
+                print(f"[worker_supabase] Agentic-only job {job_id} — skip Maps, target={job_max}", flush=True)
+                with _rt_lock:
+                    formatted = list(_rt_results)
+                _publish_job_results_safe(formatted, status="running")
+            else:
+                core_results = asyncio.run(_run_core_scraper(category=category, location=location, zone=zone, on_result=_on_maps_result, on_audit_done=_on_audit_done, intent=intent))
+                formatted = _format_results(core_results)
+                print(f"[worker_supabase] Formatted Maps leads: {len(formatted)} (core_results={len(core_results)})", flush=True)
+                try:
+                    organic_raw = _discover_organic_website_leads(category=category, location=location)
+                    organic_formatted = _format_results(organic_raw)
+                    print(f"[worker_supabase] Organic website discovery candidates: {len(organic_formatted)}", flush=True)
+                    if organic_formatted:
+                        with _rt_lock:
+                            formatted = _merge_formatted_results(formatted, organic_formatted)
+                        print(f"[worker_supabase] Formatted after organic merge: {len(formatted)}", flush=True)
+                except Exception as e:
+                    print(f"[worker_supabase] Organic website discovery skipped: {e}")
 
-            formatted = _filter_non_domestic_refrigeration_results(category, formatted)
-            with _rt_lock:
-                if _rt_results:
-                    formatted = _merge_formatted_results(_rt_results, formatted)
+                formatted = _filter_non_domestic_refrigeration_results(category, formatted)
+                with _rt_lock:
+                    if _rt_results:
+                        formatted = _merge_formatted_results(_rt_results, formatted)
 
             try:
                 if formatted:
@@ -2794,20 +3719,78 @@ def main() -> None:
             except Exception as e:
                 print(f"[worker_supabase] completion-pass skipped: {e}", flush=True)
 
-            try:
-                job_user_id = str(job.get("user_id") or "").strip() or None
-                formatted = asyncio.run(
-                    _run_business_events_enrichment(
-                        formatted,
-                        location,
-                        supabase=supabase,
-                        user_id=job_user_id,
-                        publish_cb=_publish_job_results_safe,
+            if not _agentic_only:
+                try:
+                    formatted = asyncio.run(
+                        _run_business_events_enrichment(
+                            formatted,
+                            location,
+                            supabase=supabase,
+                            user_id=job_user_id,
+                            publish_cb=_publish_job_results_safe,
+                            intent=intent,
+                        )
                     )
+                    formatted = _publish_job_results_safe(formatted)
+                except Exception as e:
+                    print(f"[worker_supabase] business_events enrichment failed: {e}", flush=True)
+
+            try:
+                _job_query = None
+                if isinstance(intent, dict):
+                    _job_query = intent.get("original_query") or intent.get("query")
+                agentic_exhaustion_msg: Optional[str] = None
+                formatted, agentic_exhaustion_msg = _agentic_gap_fill_safe(
+                    formatted if isinstance(formatted, list) else [],
+                    job_max=job_max,
+                    intent=intent if isinstance(intent, dict) else None,
+                    category=category,
+                    location=location,
+                    original_query=str(_job_query) if _job_query else None,
+                    publish_cb=_publish_job_results_safe,
+                    supabase=supabase,
+                    search_id=str(job_id),
+                    user_id=job_user_id,
                 )
-                formatted = _publish_job_results_safe(formatted)
             except Exception as e:
-                print(f"[worker_supabase] business_events enrichment failed: {e}", flush=True)
+                print(f"[worker_supabase] agentic gap-fill outer skipped: {e}", flush=True)
+                agentic_exhaustion_msg = None
+
+            agentic_count = len(formatted) if isinstance(formatted, list) else 0
+            # ponytail: Maps fallback disabilitato per agentic_only — evita lead Maps spuri (es. Evolve Media)
+            _allow_maps_fallback = False
+            if _allow_maps_fallback and _agentic_only and agentic_count < max(3, min(25, job_max // 15)):
+                print(
+                    f"[worker_supabase] Agentic-only produced {agentic_count} leads — Maps+organic fallback",
+                    flush=True,
+                )
+                try:
+                    core_results = asyncio.run(
+                        _run_core_scraper(
+                            category=category,
+                            location=location,
+                            zone=zone,
+                            on_result=_on_maps_result,
+                            on_audit_done=_on_audit_done,
+                            intent=intent,
+                        )
+                    )
+                    maps_fmt = _format_results(core_results)
+                    organic_raw = _discover_organic_website_leads(category=category, location=location)
+                    organic_formatted = _format_results(organic_raw)
+                    merged_fb = _merge_formatted_results(maps_fmt, organic_formatted)
+                    formatted = _merge_formatted_results(
+                        formatted if isinstance(formatted, list) else [],
+                        merged_fb,
+                    )
+                    formatted = _filter_non_domestic_refrigeration_results(category, formatted)
+                    formatted = _publish_job_results_safe(formatted, status="running")
+                    print(
+                        f"[worker_supabase] Maps fallback total leads: {len(formatted)}",
+                        flush=True,
+                    )
+                except Exception as fb_e:
+                    print(f"[worker_supabase] Maps fallback failed: {fb_e}", flush=True)
 
             pending_left = sum(1 for l in formatted if isinstance(l, dict) and _lead_has_pending_audit(l))
             # Maps scrape finished → mark completed so UI stops spinner; resume-audits finishes light audits.
@@ -2821,6 +3804,18 @@ def main() -> None:
 
             formatted = _publish_job_results_safe(formatted, status=final_status)
 
+            if agentic_exhaustion_msg:
+                try:
+                    merged_intent = dict(intent) if isinstance(intent, dict) else {}
+                    merged_intent["completion_user_message"] = agentic_exhaustion_msg
+                    supabase.table("searches").update({"intent": merged_intent}).eq("id", job_id).execute()
+                    print(
+                        f"[worker_supabase] Saved exhaustion message for job {job_id}",
+                        flush=True,
+                    )
+                except Exception as _ex_msg_err:
+                    print(f"[worker_supabase] exhaustion message save skipped: {_ex_msg_err}", flush=True)
+
             # ---- Universe sidecar ingest (Phase 3) — dopo audit + business events sync ----
             try:
                 from universe.sidecar import ingest_leads_batch
@@ -2830,6 +3825,7 @@ def main() -> None:
                     formatted if isinstance(formatted, list) else [],
                     source="maps_scrape",
                     user_id=job_user_id,
+                    enable_live_sources=False,
                 )
                 if _u_stats["ingested"] or _u_stats["errors"]:
                     print(
@@ -2849,25 +3845,52 @@ def main() -> None:
 
                 def _bg_external_enrich() -> None:
                     try:
+                        pending = [
+                            x for x in _bg_formatted if isinstance(x, dict) and not x.get("business_events_external_at")
+                        ]
+                        if not pending:
+                            return
+                        # Use a fresh client in the background thread to avoid sharing
+                        # the main-thread HTTP connection pool.
+                        sb_bg = _create_fresh_supabase_client()
+
+                        def _bg_publish(new_results, status=None):
+                            try:
+                                payload = {"results": new_results if isinstance(new_results, list) else []}
+                                if status:
+                                    payload["status"] = status
+                                _sync_search_leads_safe(
+                                    sb_bg,
+                                    job_id,
+                                    _bg_user,
+                                    new_results if isinstance(new_results, list) else [],
+                                )
+                                _sync_neo4j_leads_safe(new_results if isinstance(new_results, list) else [])
+                                sb_bg.table("searches").update(payload).eq("id", job_id).execute()
+                            except Exception as e:
+                                print(f"[worker_supabase] bg publish skipped: {e}", flush=True)
+
                         asyncio.run(
                             _run_business_events_enrichment(
-                                _bg_formatted,
+                                pending,
                                 location,
-                                supabase=supabase,
+                                supabase=sb_bg,
                                 user_id=_bg_user,
-                                publish_cb=_publish_job_results_safe,
+                                publish_cb=_bg_publish,
                                 external_only=True,
+                                intent=intent,
                             )
                         )
-                        _publish_job_results_safe(_bg_formatted)
+                        _bg_publish(_bg_formatted)
                         try:
                             from universe.sidecar import ingest_leads_batch
 
                             _u_ext = ingest_leads_batch(
-                                supabase,
+                                sb_bg,
                                 _bg_formatted,
                                 source="business_events_external",
                                 user_id=_bg_user,
+                                enable_live_sources=True,
                             )
                             if _u_ext["ingested"] or _u_ext["errors"]:
                                 print(
@@ -2913,6 +3936,13 @@ def main() -> None:
                             1 for l in current_results if isinstance(l, dict) and _lead_has_pending_audit(l)
                         )
                         err_status = "completed"
+                        _sync_search_leads_safe(
+                            supabase,
+                            locals().get("job_id"),
+                            str(job.get("user_id") or "").strip() if "job" in locals() and isinstance(job, dict) else None,
+                            current_results,
+                        )
+                        _sync_neo4j_leads_safe(current_results)
                         supabase.table("searches").update({"status": err_status, "results": current_results}).eq("id", locals()["job_id"]).execute()
                     else:
                         supabase.table("searches").update(
@@ -3083,6 +4113,8 @@ def run_reaudit_worker(max_leads: int = 20) -> None:
 
             if changed and job_id:
                 try:
+                    _sync_search_leads_safe(supabase, job_id, None, updated_results)
+                    _sync_neo4j_leads_safe(updated_results)
                     supabase.table("searches").update({"results": updated_results}).eq("id", job_id).execute()
                     try:
                         logger.info(f"[reaudit] Job {job_id} aggiornato")

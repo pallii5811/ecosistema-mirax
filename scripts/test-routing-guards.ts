@@ -21,9 +21,8 @@ const cases = [
   },
   {
     query: 'aziende che stanno investendo in marketing',
-    expectStrategy: 'hybrid' as const,
-    notStrategy: 'organic_web_search' as const,
-    expectSector: 'Negozi',
+    expectStrategy: 'organic_web_search' as const,
+    expectSector: 'Segnali acquisto',
     expectSignals: ['investing_marketing'],
     label: 'buyer signal marketing',
   },
@@ -97,14 +96,15 @@ const gptWrong = applyRoutingGuards(
   'aziende che stanno investendo in marketing',
 )
 if (
-  gptWrong.sector !== 'Negozi' ||
+  gptWrong.search_strategy !== 'organic_web_search' ||
+  gptWrong.sector !== 'Segnali acquisto' ||
   !gptWrong.required_signals.includes('investing_marketing') ||
   gptWrong.required_signals.includes('funding_received')
 ) {
   failed++
   console.error('FAIL GPT override for buyer marketing', gptWrong)
 } else {
-  console.log('OK   GPT override buyer marketing → Negozi + investing_marketing')
+  console.log('OK   GPT override buyer marketing → organic_web_search + investing_marketing')
 }
 
 if (failed > 0) {

@@ -13,7 +13,6 @@ import {
 } from '@/types/uqe'
 import { parseSignalIntentHeuristic } from '@/lib/signal-intent/parse-heuristic'
 import {
-  buyerMarketingMapsSector,
   isBuyerMarketingInvestmentQuery,
   isSellerMarketingAgencySector,
 } from '@/lib/signal-intent/marketing-investment'
@@ -24,9 +23,8 @@ const SYSTEM_PROMPT = `Sei il motore semantico di MIRAX. Analizza la query dell'
 
 REGOLE DI ROUTING (CRITICHE):
 1. maps — categoria fisica + città (es. 'imprese edili a Genova', 'ristoranti Milano', 'imprese di pulizie a Otranto') O filtri tecnici sul sito (es. 'senza pixel', 'con errori SEO').
-2. hybrid — query con SEGNALI su aziende target (es. 'aziende che investono in marketing', 'che assumono', 'in espansione', 'hanno vinto gare') SENZA che l'utente venda un servizio. Usa hybrid: Maps + arricchimento segnali.
-3. organic_web_search — SOLO intento venditore/servizio astratto (es. 'sono commercialista cerco clienti', 'trovami lead per vendere servizi da consulente', 'potenziali clienti per il mio studio').
-NON usare organic_web_search per 'aziende che investono in marketing' o simili: è hybrid/maps, non ricerca web agentic pura.
+2. hybrid — settore + geo espliciti con segnali secondari (es. 'hotel a Roma in espansione'). NON usare hybrid per intenti puramente basati su segnale d'acquisto senza categoria Maps.
+3. organic_web_search — (A) intento venditore/servizio astratto (es. 'sono commercialista cerco clienti') OPPURE (B) ricerca per SEGNALI D'ACQUISTO sul web (es. 'aziende che investono in marketing', 'stanno assumendo', 'hanno vinto gare', 'in fase di espansione'). Per (B) il worker usa WebResearcher (articoli, comunicati) — NON Google Maps.
 
 Devi SEMPRE chiamare submit_mirax_query_plan con: search_strategy, sector, location, required_signals, technical_filters, extraction_schema, confidence, intent_summary, is_unmappable.
 - sector: settore/categoria target dedotto dalla query.
@@ -221,26 +219,68 @@ const MAPS_CATEGORY_CITY_RE = new RegExp(
   'i',
 )
 
+const SIGNAL_LED_SEARCH_SIGNALS = new Set([
+  'investing_marketing',
+  'hiring',
+  'tender_won',
+  'sector_investment',
+  'funding_received',
+  'expansion',
+  'executive_change',
+  'registry_change',
+  'seeking_supplier',
+  'new_product',
+  'market_entry',
+])
+
+/** Query basata su segnale d'acquisto astratto → WebResearcher (Fase 5), non Maps. */
+export function isSignalLedAbstractQuery(query: string, requiredSignals: string[]): boolean {
+  const q = query.trim()
+  if (!q || isSellerAbstractQuery(q)) return false
+  if (!requiredSignals.some((s) => SIGNAL_LED_SEARCH_SIGNALS.has(s))) return false
+  if (MAPS_CATEGORY_CITY_RE.test(q)) return false
+  return true
+}
+
+function signalLedAgenticSector(plan: MiraxQueryPlan, query: string): string {
+  if (isBuyerMarketingInvestmentQuery(query)) return 'Segnali acquisto'
+  const sector = plan.sector?.trim() || ''
+  if (
+    sector &&
+    !isSellerMarketingAgencySector(sector) &&
+    !_heuristicVagueSector(sector) &&
+    !/^aziende\s+in\s+crescita$/i.test(sector)
+  ) {
+    return sector
+  }
+  return 'Segnali acquisto'
+}
+
 /**
- * Corregge routing LLM: buyer signals → hybrid/maps, mai organic per errore.
+ * Corregge routing LLM: segnali d'acquisto astratti → organic_web_search (agentic).
  */
 export function applyRoutingGuards(plan: MiraxQueryPlan, query: string): MiraxQueryPlan {
   const q = query.trim()
   if (!q) return plan
 
-  // GPT spesso risponde sector=marketing + funding/expansion — correggiamo sempre per buyer query.
-  if (isBuyerMarketingInvestmentQuery(q)) {
+  const signalLed =
+    isBuyerMarketingInvestmentQuery(q) ||
+    isSignalLedAbstractQuery(q, plan.required_signals)
+
+  if (signalLed) {
     const signals = new Set(plan.required_signals)
-    signals.add('investing_marketing')
-    signals.delete('funding_received')
-    signals.delete('expansion')
+    if (isBuyerMarketingInvestmentQuery(q)) {
+      signals.add('investing_marketing')
+      signals.delete('funding_received')
+      signals.delete('expansion')
+    }
     return {
       ...plan,
-      search_strategy: 'hybrid',
-      sector: buyerMarketingMapsSector(),
+      search_strategy: 'organic_web_search',
+      sector: signalLedAgenticSector(plan, q),
       location: plan.location?.trim() || 'Italia',
       required_signals: normalizeSignals([...signals]),
-      reasoning: `${plan.reasoning || ''} [routing_guard: buyer_investing_marketing]`.trim(),
+      reasoning: `${plan.reasoning || ''} [routing_guard: agentic_signal_search]`.trim(),
     }
   }
 
@@ -251,7 +291,9 @@ export function applyRoutingGuards(plan: MiraxQueryPlan, query: string): MiraxQu
   const hasSignals = plan.required_signals.length > 0
 
   if (strategy === 'organic_web_search' && !isSellerAbstractQuery(q)) {
-    strategy = hasSignals || hasSector ? 'hybrid' : 'maps'
+    if (!isSignalLedAbstractQuery(q, plan.required_signals)) {
+      strategy = hasSignals || hasSector ? 'hybrid' : 'maps'
+    }
   }
 
   if (
@@ -288,6 +330,9 @@ function isRealGeoLocation(location: string): boolean {
 
 function inferStrategyFromQuery(query: string, sector: string, location: string, signals: string[]): UqeSearchStrategy {
   if (isSellerAbstractQuery(query)) return 'organic_web_search'
+  if (isBuyerMarketingInvestmentQuery(query) || isSignalLedAbstractQuery(query, signals)) {
+    return 'organic_web_search'
+  }
   const q = query.toLowerCase()
   const graphHint =
     /\b(forniscono|fornitore|partner|investito|investe|supply chain|catena|relazione|grafo|clienti di|fornisce a)\b/i.test(q)
@@ -398,7 +443,7 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
     isBuyerMarketingInvestmentQuery(query) &&
     (isSellerMarketingAgencySector(sector) || !sector)
   ) {
-    sector = buyerMarketingMapsSector()
+    sector = 'Segnali acquisto'
   }
 
   const search_strategy = inferStrategyFromQuery(query, sector, location, required_signals)
