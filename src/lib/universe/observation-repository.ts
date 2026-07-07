@@ -7,6 +7,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { UniverseObservation, TimelinePoint } from './types.ts'
 import { wrapSupabaseError } from './errors.ts'
+import { stableHash } from './canonical.ts'
 
 export interface CreateObservationInput {
   entity_id: string
@@ -18,21 +19,38 @@ export interface CreateObservationInput {
   metadata?: Record<string, unknown>
 }
 
+function observationDedupKey(input: {
+  entity_id: string
+  attribute: string
+  source: string
+  observed_at: string
+}): string {
+  // Day-granularity idempotency: re-running ingest for the same day updates
+  // the value rather than creating a duplicate row.
+  const day = input.observed_at.slice(0, 10)
+  return `${input.entity_id}:${input.attribute}:${input.source}:${day}`
+}
+
 export async function createObservation(
   sb: SupabaseClient,
   input: CreateObservationInput
 ): Promise<UniverseObservation> {
+  const observed_at = input.observed_at ?? new Date().toISOString()
   const { data, error } = await sb
     .from('universe_observations')
-    .insert({
-      entity_id: input.entity_id,
-      attribute: input.attribute,
-      value: input.value,
-      observed_at: input.observed_at ?? new Date().toISOString(),
-      source: input.source,
-      confidence: input.confidence ?? 1.0,
-      metadata: input.metadata ?? {},
-    })
+    .upsert(
+      {
+        entity_id: input.entity_id,
+        attribute: input.attribute,
+        value: input.value,
+        observed_at,
+        source: input.source,
+        confidence: input.confidence ?? 1.0,
+        metadata: input.metadata ?? {},
+        dedup_key: observationDedupKey({ entity_id: input.entity_id, attribute: input.attribute, source: input.source, observed_at }),
+      },
+      { onConflict: 'dedup_key' }
+    )
     .select()
     .single()
 
@@ -47,17 +65,29 @@ export async function createObservations(
   if (inputs.length === 0) return []
 
   const now = new Date().toISOString()
-  const rows = inputs.map((input) => ({
-    entity_id: input.entity_id,
-    attribute: input.attribute,
-    value: input.value,
-    observed_at: input.observed_at ?? now,
-    source: input.source,
-    confidence: input.confidence ?? 1.0,
-    metadata: input.metadata ?? {},
-  }))
+  const rows = inputs.map((input) => {
+    const observed_at = input.observed_at ?? now
+    return {
+      entity_id: input.entity_id,
+      attribute: input.attribute,
+      value: input.value,
+      observed_at,
+      source: input.source,
+      confidence: input.confidence ?? 1.0,
+      metadata: input.metadata ?? {},
+      dedup_key: observationDedupKey({
+        entity_id: input.entity_id,
+        attribute: input.attribute,
+        source: input.source,
+        observed_at,
+      }),
+    }
+  })
 
-  const { data, error } = await sb.from('universe_observations').insert(rows).select()
+  const { data, error } = await sb
+    .from('universe_observations')
+    .upsert(rows, { onConflict: 'dedup_key' })
+    .select()
   if (error) throw wrapSupabaseError(error)
   return (data as UniverseObservation[]) ?? []
 }

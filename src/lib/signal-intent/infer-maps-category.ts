@@ -1,4 +1,5 @@
 import type { SignalIntentSpec } from '@/lib/signal-intent/types'
+import { isBuyerMarketingInvestmentQuery } from '@/lib/signal-intent/marketing-investment'
 
 /**
  * Categoria Google Maps — MAI "Aziende" generico (restituisce meccaniche/idraulici a caso).
@@ -6,6 +7,13 @@ import type { SignalIntentSpec } from '@/lib/signal-intent/types'
 export function inferMapsCategoryFromIntent(query: string, intent: SignalIntentSpec): string | null {
   const q = (query || '').trim().toLowerCase()
   if (!q) return intent.category ?? null
+
+  if (
+    isBuyerMarketingInvestmentQuery(q) &&
+    intent.required_signals.includes('investing_marketing')
+  ) {
+    return null
+  }
 
   const explicitCategoryPatterns: Array<[RegExp, string]> = [
     [/\bagenzie?\s+(di\s+)?viagg\w*\b/i, 'Agenzie di viaggio'],
@@ -41,7 +49,10 @@ export function inferMapsCategoryFromIntent(query: string, intent: SignalIntentS
     return 'Servizi informatici'
   }
 
-  if (roles.has('marketing') || /\b(marketing\s+manager|seo\b|growth|copywriter)\b/i.test(q)) {
+  if (
+    !isBuyerMarketingInvestmentQuery(q) &&
+    (roles.has('marketing') || /\b(marketing\s+manager|seo\b|growth|copywriter)\b/i.test(q))
+  ) {
     return 'Agenzie di marketing'
   }
 

@@ -24,12 +24,13 @@ export const SIGNAL_REGISTRY: Record<string, SignalConfig> = {
   hiring: {
     sources: [
       { name: 'mirax_audit', type: 'internal', timeout_ms: 500, tier: 'primary' },
-      { name: 'indeed_it', type: 'http_scrape', timeout_ms: 4000, tier: 'primary' },
-      { name: 'infojobs', type: 'http_scrape', timeout_ms: 4000, tier: 'secondary' },
+      { name: 'indeed_it', type: 'http_scrape', timeout_ms: 5000, tier: 'primary' },
+      { name: 'infojobs_it', type: 'http_scrape', timeout_ms: 5000, tier: 'secondary' },
+      { name: 'google_jobs', type: 'http_scrape', timeout_ms: 6000, tier: 'secondary' },
       { name: 'linkedin_jobs', type: 'http_scrape', timeout_ms: 5000, tier: 'tertiary' },
-      { name: 'company_careers_page', type: 'http_scrape', timeout_ms: 3000, tier: 'fallback' },
+      { name: 'company_careers_page', type: 'http_scrape', timeout_ms: 8000, tier: 'fallback' },
     ],
-    max_sources_to_try: 3,
+    max_sources_to_try: 5,
     parallel: false,
     fallback_value: null,
   },

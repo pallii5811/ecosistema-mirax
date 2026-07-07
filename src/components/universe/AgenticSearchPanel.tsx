@@ -13,8 +13,10 @@ import {
   type AgenticLoadingPhase,
 } from '@/lib/universe/agentic-ui'
 import type { SignalIntentSpec } from '@/lib/signal-intent/types'
+import type { CommercialIntent } from '@/lib/signal-intent/commercial-intent'
 import type { UniverseQuery } from '@/lib/universe/query-builder'
 import { AgenticIntentBreakdown } from './AgenticIntentBreakdown'
+import { CommercialIntentBreakdown } from './CommercialIntentBreakdown'
 import { AgenticQueryPlan } from './AgenticQueryPlan'
 import { AgenticResultsTable } from './AgenticResultsTable'
 import { AgenticResultsResponsive } from './AgenticResultsCards'
@@ -54,6 +56,8 @@ export function AgenticSearchPanel({ initialQuery = '', autoRun = false }: Props
   const [state, setState] = useState<SearchState>({ result: null, error: null, hasSearched: false })
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const phaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const requestIdRef = useRef(0)
 
   useEffect(() => {
     if (initialQuery) {
@@ -86,7 +90,12 @@ export function AgenticSearchPanel({ initialQuery = '', autoRun = false }: Props
   const runSearch = useCallback(
     async (q: string) => {
       const trimmed = q.trim()
-      if (!trimmed || searchingRef.current) return
+      if (!trimmed) return
+
+      // Cancel any in-flight request before starting a new one.
+      abortRef.current?.abort()
+      abortRef.current = new AbortController()
+      const thisRequestId = ++requestIdRef.current
       searchingRef.current = true
       setQuery(trimmed)
 
@@ -103,30 +112,47 @@ export function AgenticSearchPanel({ initialQuery = '', autoRun = false }: Props
       phaseTimer.current = setTimeout(() => setPhase('querying'), 700)
 
       try {
-        const result = await runAgenticUniverseSearch({
-          user_query: trimmed,
-          city: cityOverride.trim() || undefined,
-          limit,
-        })
-        setPhase('enriching')
-        await new Promise((r) => setTimeout(r, 350))
+        const result = await runAgenticUniverseSearch(
+          {
+            user_query: trimmed,
+            city: cityOverride.trim() || undefined,
+            limit,
+          },
+          abortRef.current.signal,
+        )
+        // Ignore stale responses; only the latest request updates state.
+        if (thisRequestId !== requestIdRef.current) return
         setState({ result, error: null, hasSearched: true })
       } catch (e) {
-        setState({
-          result: null,
-          error: e instanceof Error ? e.message : 'Errore durante la ricerca',
-          hasSearched: true,
-        })
+        if (thisRequestId !== requestIdRef.current) return
+        if (e instanceof Error && e.name === 'AbortError') {
+          setState({ result: null, error: 'Ricerca annullata', hasSearched: true })
+        } else {
+          setState({
+            result: null,
+            error: e instanceof Error ? e.message : 'Errore durante la ricerca',
+            hasSearched: true,
+          })
+        }
       } finally {
-        clearPhaseTimer()
-        searchingRef.current = false
-        setPhase('idle')
+        if (thisRequestId === requestIdRef.current) {
+          clearPhaseTimer()
+          searchingRef.current = false
+          setPhase('idle')
+          abortRef.current = null
+        }
       }
     },
     [cityOverride, limit, syncUrl],
   )
 
-  useEffect(() => () => clearPhaseTimer(), [])
+  useEffect(
+    () => () => {
+      clearPhaseTimer()
+      abortRef.current?.abort()
+    },
+    [],
+  )
 
   useEffect(() => {
     if (!autoRun || autoRanRef.current) return
@@ -144,6 +170,7 @@ export function AgenticSearchPanel({ initialQuery = '', autoRun = false }: Props
   const loading = phase !== 'idle'
   const result = state.result
   const signalIntent = result?.signal_intent as SignalIntentSpec | undefined
+  const commercialIntent = result?.commercial_intent as CommercialIntent | undefined
   const universeQuery = result?.universe_query as UniverseQuery | undefined
 
   const exportCsv = () => {
@@ -266,23 +293,37 @@ export function AgenticSearchPanel({ initialQuery = '', autoRun = false }: Props
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-3 rounded-xl border border-violet-200 bg-violet-50/50 px-4 py-3">
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-center gap-3 rounded-xl border border-violet-200 bg-violet-50/50 px-4 py-3"
+        >
           <Loader2 className="h-5 w-5 animate-spin text-violet-600 shrink-0" />
           <p className="text-sm font-medium text-violet-900">{AGENTIC_LOADING_COPY[phase]}</p>
         </div>
       ) : null}
 
       {state.error ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{state.error}</div>
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          {state.error}
+        </div>
       ) : null}
 
-      {result && signalIntent && universeQuery ? (
-        <div className="space-y-4">
-          <AgenticIntentBreakdown
-            intent={signalIntent}
-            intentSummary={result.intent_summary}
-            parseSource={result.parse_source}
-          />
+      {result && universeQuery ? (
+        <div role="region" aria-live="polite" aria-label="Risultati ricerca agentica" className="space-y-4">
+          {result.mode === 'commercial' && commercialIntent ? (
+            <CommercialIntentBreakdown
+              intent={commercialIntent}
+              intentSummary={result.intent_summary}
+              parseSource={result.parse_source}
+            />
+          ) : signalIntent ? (
+            <AgenticIntentBreakdown
+              intent={signalIntent}
+              intentSummary={result.intent_summary}
+              parseSource={result.parse_source}
+            />
+          ) : null}
           <AgenticQueryPlan query={universeQuery} />
 
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -314,7 +355,8 @@ export function AgenticSearchPanel({ initialQuery = '', autoRun = false }: Props
           {result.results.length > 0 ? (
             <AgenticResultsResponsive
               results={result.results}
-              table={<AgenticResultsTable results={result.results} />}
+              userQuery={result.user_query ?? undefined}
+              table={<AgenticResultsTable results={result.results} userQuery={result.user_query ?? undefined} />}
             />
           ) : (
             <Card className="border-dashed p-8 text-center">

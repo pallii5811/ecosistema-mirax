@@ -3,9 +3,10 @@
  * Search entities in the knowledge graph.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceRoleClient } from '@/utils/supabase/server'
+import { createClient } from '@/utils/supabase/server'
 import { listEntities, getLatestObservation } from '@/lib/universe'
 import { requireUniverseAuth } from '@/lib/universe/require-auth'
+import { universeClientError } from '@/lib/universe/errors'
 import type { EntityType, UniverseEntity } from '@/lib/universe'
 
 export async function POST(req: NextRequest) {
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
       with_latest_observations,
     } = body || {}
 
-    const sb = createServiceRoleClient()
+    const sb = await createClient()
 
     const entities = await listEntities(sb, {
       entity_type: entity_type as EntityType,
@@ -57,8 +58,8 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ entities: enriched, count: entities.length })
-  } catch (e: any) {
-    console.error('[universe/entities/search] error:', e)
-    return NextResponse.json({ error: e.message || 'Errore ricerca entità' }, { status: 500 })
+  } catch (e: unknown) {
+    const { message, status } = universeClientError(e, 'entities/search')
+    return NextResponse.json({ error: message }, { status })
   }
 }

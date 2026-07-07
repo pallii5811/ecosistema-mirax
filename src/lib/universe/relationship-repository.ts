@@ -18,21 +18,41 @@ export interface CreateRelationshipInput {
   metadata?: Record<string, unknown>
 }
 
+function relationshipDedupKey(input: {
+  source_entity_id: string
+  target_entity_id: string
+  relationship_type: string
+  observed_at: string
+}): string {
+  const day = input.observed_at.slice(0, 10)
+  return `${input.source_entity_id}:${input.target_entity_id}:${input.relationship_type}:${day}`
+}
+
 export async function createRelationship(
   sb: SupabaseClient,
   input: CreateRelationshipInput
 ): Promise<UniverseRelationship> {
+  const observed_at = input.observed_at ?? new Date().toISOString()
   const { data, error } = await sb
     .from('universe_relationships')
-    .insert({
-      source_entity_id: input.source_entity_id,
-      target_entity_id: input.target_entity_id,
-      relationship_type: input.relationship_type,
-      observed_at: input.observed_at ?? new Date().toISOString(),
-      source: input.source,
-      confidence: input.confidence ?? 1.0,
-      metadata: input.metadata ?? {},
-    })
+    .upsert(
+      {
+        source_entity_id: input.source_entity_id,
+        target_entity_id: input.target_entity_id,
+        relationship_type: input.relationship_type,
+        observed_at,
+        source: input.source,
+        confidence: input.confidence ?? 1.0,
+        metadata: input.metadata ?? {},
+        dedup_key: relationshipDedupKey({
+          source_entity_id: input.source_entity_id,
+          target_entity_id: input.target_entity_id,
+          relationship_type: input.relationship_type,
+          observed_at,
+        }),
+      },
+      { onConflict: 'dedup_key' },
+    )
     .select()
     .single()
 
@@ -47,18 +67,27 @@ export async function createRelationships(
   if (inputs.length === 0) return []
 
   const now = new Date().toISOString()
-  const rows = inputs.map((input) => ({
-    source_entity_id: input.source_entity_id,
-    target_entity_id: input.target_entity_id,
-    relationship_type: input.relationship_type,
-    observed_at: input.observed_at ?? now,
-    source: input.source,
-    confidence: input.confidence ?? 1.0,
-    metadata: input.metadata ?? {},
-  }))
+  const rows = inputs.map((input) => {
+    const observed_at = input.observed_at ?? now
+    return {
+      source_entity_id: input.source_entity_id,
+      target_entity_id: input.target_entity_id,
+      relationship_type: input.relationship_type,
+      observed_at,
+      source: input.source,
+      confidence: input.confidence ?? 1.0,
+      metadata: input.metadata ?? {},
+      dedup_key: relationshipDedupKey({
+        source_entity_id: input.source_entity_id,
+        target_entity_id: input.target_entity_id,
+        relationship_type: input.relationship_type,
+        observed_at,
+      }),
+    }
+  })
 
   const { data, error } = await sb.from('universe_relationships').upsert(rows, {
-    onConflict: 'source_entity_id, target_entity_id, relationship_type',
+    onConflict: 'dedup_key',
     ignoreDuplicates: false,
   })
 

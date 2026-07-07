@@ -3,6 +3,7 @@
  */
 
 import type { MiraxSignalRequirement, SignalIntentSpec } from '@/lib/signal-intent/types'
+import type { CommercialIntent } from '@/lib/signal-intent/commercial-intent'
 import type { UniverseQuery } from './query-builder.ts'
 import type { GraphRankFactors } from './graph-ranking.ts'
 import { labelObservation, labelRelationship } from './labels.ts'
@@ -21,12 +22,22 @@ export const SIGNAL_REQUIREMENT_LABELS: Record<MiraxSignalRequirement, string> =
   registry_change: 'Variazione registro',
   sector_investment: 'Investimento settoriale',
   tender_won: 'Gara vinta',
+  funding_received: 'Finanziamento ricevuto',
   crm_detected: 'CRM rilevato',
+  crm_installed: 'CRM installato',
   crm_change: 'Cambio CRM',
   site_stale: 'Sito non aggiornato',
   meta_ads_started: 'Meta Ads attivi',
   google_ads_started: 'Google Ads attivi',
   investing_marketing: 'Investe in marketing',
+  seeking_supplier: 'Cerca fornitore',
+  expansion: 'Espansione',
+  executive_change: 'Cambio dirigenza',
+  investing_expansion: 'Investe in espansione',
+  new_product: 'Nuovo prodotto',
+  market_entry: 'Nuovo mercato',
+  new_company: 'Nuova impresa',
+  tech_migration: 'Migrazione tech',
 }
 
 export const PARSE_SOURCE_LABELS: Record<string, string> = {
@@ -34,6 +45,8 @@ export const PARSE_SOURCE_LABELS: Record<string, string> = {
   semantic_ai: 'Interpretazione AI',
   semantic_graph: 'Grafo semantico',
   merged: 'Interpretazione ibrida',
+  llm: 'Interpretazione AI avanzata',
+  fallback: 'Fallback generico',
 }
 
 export type AgenticLoadingPhase = 'idle' | 'parsing' | 'querying' | 'enriching'
@@ -62,6 +75,8 @@ export function formatTechnicalFilterChip(key: string, value: unknown): string |
     has_ssl: { true: 'Con SSL', false: 'Senza SSL' },
     errors_seo: { true: 'SEO critico', false: 'SEO ok' },
     mobile_friendly: { true: 'Mobile friendly', false: 'Non mobile friendly' },
+    has_chatbot: { true: 'Con chatbot', false: 'Senza chatbot' },
+    has_booking: { true: 'Con booking', false: 'Senza booking' },
   }
   const spec = labels[key]
   if (spec && typeof value === 'boolean') return spec[String(value) as 'true' | 'false']
@@ -91,6 +106,41 @@ export function collectIntentChips(intent: SignalIntentSpec): string[] {
   if (bf.employees_min != null) chips.push(`Dipendenti ≥ ${bf.employees_min}`)
   if (bf.revenue_max != null) chips.push(`Fatturato ≤ ${formatEuro(bf.revenue_max)}`)
   if (bf.employees_max != null) chips.push(`Dipendenti ≤ ${bf.employees_max}`)
+
+  return chips
+}
+
+export function collectCommercialIntentChips(intent: CommercialIntent): string[] {
+  const chips: string[] = []
+  const tp = intent.target_profile
+
+  if (intent.user_service_description) chips.push(`Vendo: ${intent.user_service_description}`)
+  for (const t of tp.entity_types ?? []) chips.push(`Tipo: ${t}`)
+  for (const i of tp.industries ?? []) if (i.trim()) chips.push(`Settore: ${i}`)
+  for (const l of tp.locations ?? []) if (l.trim()) chips.push(`Zona: ${l}`)
+  for (const r of tp.roles ?? []) if (r.trim()) chips.push(`Ruolo: ${r}`)
+
+  const size = tp.company_size
+  if (size) {
+    if (size.min_employees != null) chips.push(`Dipendenti ≥ ${size.min_employees}`)
+    if (size.max_employees != null) chips.push(`Dipendenti ≤ ${size.max_employees}`)
+    if (size.revenue_min != null) chips.push(`Fatturato ≥ ${formatEuro(size.revenue_min)}`)
+    if (size.revenue_max != null) chips.push(`Fatturato ≤ ${formatEuro(size.revenue_max)}`)
+  }
+
+  for (const s of intent.signals) chips.push(`Segnale: ${s.type}`)
+
+  const tech = intent.tech_profile
+  for (const t of tech.has ?? []) chips.push(`Ha ${t}`)
+  for (const t of tech.missing ?? []) chips.push(`Manca ${t}`)
+
+  for (const c of intent.graph_constraints) {
+    chips.push(`Relazione: ${c.relationship_type} (${c.direction})`)
+  }
+
+  if (intent.ranking_hint && intent.ranking_hint !== 'default') {
+    chips.push(`Ordina: ${intent.ranking_hint}`)
+  }
 
   return chips
 }
@@ -159,7 +209,8 @@ function operatorLabel(op: string): string {
     lte: '≤',
     in: 'in',
     is_null: 'assente',
-    is_not_null: 'presente',
+    not_null: 'presente',
+    contains: 'contiene',
   }
   return map[op] ?? op
 }

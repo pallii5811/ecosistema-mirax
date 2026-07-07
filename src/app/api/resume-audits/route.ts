@@ -1,21 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceRoleClient } from '@/utils/supabase/server'
 import { runAuditResumeBatch } from '@/lib/agents/audit-agent'
-
-function parseResults(raw: unknown): Record<string, unknown>[] {
-  if (Array.isArray(raw)) return raw.filter((x) => x && typeof x === 'object') as Record<string, unknown>[]
-  if (typeof raw === 'string') {
-    try {
-      const parsed = JSON.parse(raw)
-      return Array.isArray(parsed)
-        ? (parsed.filter((x) => x && typeof x === 'object') as Record<string, unknown>[])
-        : []
-    } catch {
-      return []
-    }
-  }
-  return []
-}
+import { fetchMergedLeadsForSearch } from '@/lib/search-leads/read-leads'
 
 export async function POST(req: NextRequest) {
   try {
@@ -52,7 +38,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Job non trovato' }, { status: 404 })
     }
 
-    const results = parseResults(job.results)
+    const results = await fetchMergedLeadsForSearch(service, jobId, {
+      legacyResults: job.results,
+    })
+
     const auditResult = await runAuditResumeBatch({
       jobId,
       results,

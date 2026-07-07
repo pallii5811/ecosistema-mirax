@@ -1,7 +1,8 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
-import { ExternalLink, MapPin, Network } from 'lucide-react'
+import { ExternalLink, MapPin, Network, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { calcOpportunityScore } from '@/components/ResultsTable'
 import {
@@ -12,13 +13,28 @@ import {
   readLeadString,
 } from '@/lib/universe/agentic-ui'
 import { SaveToGraphButton } from './SaveToGraphButton'
+import { LeadEvidenceCard, type CommercialSignalUi, type EvidenceUi } from './LeadEvidenceCard'
+import { recordUniverseFeedback } from '@/lib/universe/client'
 import { cn } from '@/lib/utils'
 
 type Props = {
   results: Record<string, unknown>[]
+  userQuery?: string
 }
 
-export function AgenticResultsCards({ results }: Props) {
+export function AgenticResultsCards({ results, userQuery }: Props) {
+  const [feedbackSent, setFeedbackSent] = useState<Set<string>>(new Set())
+
+  const sendFeedback = async (entityId: string, action: 'thumb_up' | 'thumb_down') => {
+    const key = `${entityId}:${action}`
+    if (feedbackSent.has(key)) return
+    try {
+      await recordUniverseFeedback({ entity_id: entityId, action, user_query: userQuery || null })
+      setFeedbackSent((prev) => new Set(prev).add(key))
+    } catch {
+      /* ignore */
+    }
+  }
   return (
     <div className="space-y-3 md:hidden">
       {results.map((lead, idx) => {
@@ -27,7 +43,7 @@ export function AgenticResultsCards({ results }: Props) {
         const site = readLeadString(lead, ['sito', 'website'])
         const entityId = typeof lead.entity_id === 'string' ? lead.entity_id : null
         const graphScore = typeof lead.graph_score === 'number' ? lead.graph_score : null
-        const score = graphScore ?? calcOpportunityScore(lead)
+        const opportunityScore = typeof lead.opportunity_score === 'number' ? lead.opportunity_score : (graphScore ?? calcOpportunityScore(lead))
         const evidence = graphScore != null ? buildGraphRankEvidence(readGraphRankFactors(lead)) : []
 
         return (
@@ -47,9 +63,9 @@ export function AgenticResultsCards({ results }: Props) {
               </div>
               <span
                 title={graphScore != null ? GRAPH_RANK_TOOLTIP : 'Opportunity score'}
-                className={cn('shrink-0 rounded-lg px-2 py-1 text-xs font-bold tabular-nums', graphRankScoreClass(score))}
+                className={cn('shrink-0 rounded-lg px-2 py-1 text-xs font-bold tabular-nums', graphRankScoreClass(opportunityScore))}
               >
-                {score}
+                {opportunityScore}
               </span>
             </div>
             {evidence.length ? (
@@ -66,6 +82,34 @@ export function AgenticResultsCards({ results }: Props) {
             ) : null}
             <div className="mt-3 flex flex-wrap gap-2">
               {entityId ? <SaveToGraphButton entityId={entityId} /> : null}
+              {entityId ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0 text-slate-500"
+                  aria-label="Utile"
+                  title="Utile"
+                  disabled={feedbackSent.has(`${entityId}:thumb_up`)}
+                  onClick={() => sendFeedback(entityId, 'thumb_up')}
+                >
+                  <ThumbsUp className={cn('h-3.5 w-3.5', feedbackSent.has(`${entityId}:thumb_up`) && 'fill-emerald-500 text-emerald-500')} />
+                </Button>
+              ) : null}
+              {entityId ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0 text-slate-500"
+                  aria-label="Non utile"
+                  title="Non utile"
+                  disabled={feedbackSent.has(`${entityId}:thumb_down`)}
+                  onClick={() => sendFeedback(entityId, 'thumb_down')}
+                >
+                  <ThumbsDown className={cn('h-3.5 w-3.5', feedbackSent.has(`${entityId}:thumb_down`) && 'fill-rose-500 text-rose-500')} />
+                </Button>
+              ) : null}
               {entityId ? (
                 <Button asChild variant="outline" size="sm" className="h-8 gap-1 text-xs">
                   <Link href={`/dashboard/universe/${entityId}`}>
@@ -94,14 +138,16 @@ export function AgenticResultsCards({ results }: Props) {
 export function AgenticResultsResponsive({
   results,
   table,
+  userQuery,
 }: {
   results: Record<string, unknown>[]
   table: React.ReactNode
+  userQuery?: string
 }) {
   return (
     <>
       <div className="hidden md:block">{table}</div>
-      <AgenticResultsCards results={results} />
+      <AgenticResultsCards results={results} userQuery={userQuery} />
     </>
   )
 }

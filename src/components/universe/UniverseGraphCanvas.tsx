@@ -116,6 +116,7 @@ export function UniverseGraphCanvas({ city, name, entityId, className, onSelectE
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
   const [selected, setSelected] = useState<string | null>(null)
+  const [focusedIndex, setFocusedIndex] = useState(0)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -166,10 +167,64 @@ export function UniverseGraphCanvas({ city, name, entityId, className, onSelectE
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
 
-  const handleSelect = (id: string) => {
+  const handleSelect = useCallback((id: string) => {
     setSelected(id)
+    const idx = nodes.findIndex((n) => n.id === id)
+    if (idx >= 0) setFocusedIndex(idx)
     onSelectEntity?.(id)
-  }
+  }, [nodes, onSelectEntity])
+
+  const focusNode = useCallback((index: number) => {
+    const id = nodes[index]?.id
+    if (!id) return
+    setFocusedIndex(index)
+    handleSelect(id)
+  }, [nodes, handleSelect])
+
+  const onNodeKeyDown = useCallback((e: React.KeyboardEvent, index: number) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      focusNode(index)
+      return
+    }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      const next = (index + 1) % Math.max(1, nodes.length)
+      focusNode(next)
+      // Move focus to the next node element so screen readers follow.
+      const el = document.getElementById(`graph-node-${nodes[next]?.id}`)
+      el?.focus()
+      return
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const prev = (index - 1 + nodes.length) % Math.max(1, nodes.length)
+      focusNode(prev)
+      const el = document.getElementById(`graph-node-${nodes[prev]?.id}`)
+      el?.focus()
+    }
+  }, [nodes, focusNode])
+
+  const zoomIn = useCallback(() => setZoom((z) => Math.min(1.6, z + 0.1)), [])
+  const zoomOut = useCallback(() => setZoom((z) => Math.max(0.6, z - 0.1)), [])
+  const resetZoom = useCallback(() => setZoom(1), [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault()
+        zoomIn()
+      } else if (e.key === '-') {
+        e.preventDefault()
+        zoomOut()
+      } else if (e.key === '0') {
+        e.preventDefault()
+        resetZoom()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [zoomIn, zoomOut, resetZoom])
 
   return (
     <div className={cn('rounded-2xl border border-slate-200 bg-slate-950 shadow-inner overflow-hidden', className)}>
@@ -180,16 +235,54 @@ export function UniverseGraphCanvas({ city, name, entityId, className, onSelectE
           {city ? <span className="text-slate-400"> · {city}</span> : null}
         </p>
         <div className="flex items-center gap-1">
-          <button type="button" onClick={() => setZoom((z) => Math.max(0.6, z - 0.1))} className="rounded p-1 text-slate-300 hover:bg-white/10">
+          <button
+            type="button"
+            aria-label="Riduci zoom"
+            onClick={zoomOut}
+            className="rounded p-1 text-slate-300 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-violet-500/50"
+          >
             <ZoomOut className="h-4 w-4" />
           </button>
-          <button type="button" onClick={() => setZoom((z) => Math.min(1.6, z + 0.1))} className="rounded p-1 text-slate-300 hover:bg-white/10">
+          <span className="min-w-[3ch] text-center text-xs text-slate-400 tabular-nums">{Math.round(zoom * 100)}%</span>
+          <button
+            type="button"
+            aria-label="Aumenta zoom"
+            onClick={zoomIn}
+            className="rounded p-1 text-slate-300 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-violet-500/50"
+          >
             <ZoomIn className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="Reset zoom"
+            onClick={resetZoom}
+            className="ml-1 rounded p-1 text-[10px] text-slate-400 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-violet-500/50"
+          >
+            100%
           </button>
         </div>
       </div>
 
-      <div ref={wrapRef} className="relative min-h-[420px] w-full" style={{ height: size.h }}>
+      {nodes.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-white/10 bg-slate-900/80 px-4 py-1.5">
+          {Object.entries(TYPE_COLORS)
+            .filter(([k]) => k !== 'default')
+            .map(([type, color]) => (
+              <div key={type} className="flex items-center gap-1.5 text-[10px] text-slate-300">
+                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
+                <span className="capitalize">{type}</span>
+              </div>
+            ))}
+        </div>
+      )}
+
+      <div
+        ref={wrapRef}
+        className="relative min-h-[420px] w-full"
+        style={{ height: size.h }}
+        role="img"
+        aria-label={`Grafo del knowledge graph con ${nodes.length} nodi e ${edges.length} relazioni`}
+      >
         {loading ? (
           <div className="absolute inset-0 flex items-center justify-center text-slate-400">
             <Loader2 className="h-8 w-8 animate-spin text-violet-400" />
@@ -219,22 +312,28 @@ export function UniverseGraphCanvas({ city, name, entityId, className, onSelectE
                   </g>
                 )
               })}
-              {nodes.map((n) => {
+              {nodes.map((n, i) => {
                 const r = n.entity_type === 'company' ? 22 : 16
                 const active = selected === n.id
+                const focused = focusedIndex === i
                 return (
                   <g
                     key={n.id}
-                    className="cursor-pointer"
+                    id={`graph-node-${n.id}`}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`${n.name}, ${n.entity_type}${n.city ? `, ${n.city}` : ''}`}
+                    className="cursor-pointer focus:outline-none"
                     onClick={() => handleSelect(n.id)}
+                    onKeyDown={(e) => onNodeKeyDown(e, i)}
                   >
                     <circle
                       cx={n.x}
                       cy={n.y}
                       r={r}
                       fill={nodeColor(n.entity_type)}
-                      stroke={active ? '#fbbf24' : '#1e293b'}
-                      strokeWidth={active ? 3 : 2}
+                      stroke={active ? '#fbbf24' : focused ? '#38bdf8' : '#1e293b'}
+                      strokeWidth={active ? 3 : focused ? 3 : 2}
                       opacity={0.95}
                     />
                     <text

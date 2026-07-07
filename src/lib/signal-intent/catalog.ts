@@ -20,6 +20,10 @@ export const SIGNAL_REQUIREMENT_META: Record<
     label: 'Gara vinta',
     description: 'Aggiudicazioni / appalti pubblici rilevati',
   },
+  funding_received: {
+    label: 'Finanziamento',
+    description: 'Round di investimento o finanziamento rilevato',
+  },
   crm_detected: {
     label: 'CRM rilevato',
     description: 'Stack CRM presente sul sito (HubSpot, Salesforce, …)',
@@ -27,6 +31,10 @@ export const SIGNAL_REQUIREMENT_META: Record<
   crm_change: {
     label: 'Cambio CRM',
     description: 'Variazione stack CRM rispetto audit precedente',
+  },
+  crm_installed: {
+    label: 'CRM installato',
+    description: 'Nuova installazione CRM rilevata',
   },
   site_stale: {
     label: 'Sito datato',
@@ -43,6 +51,38 @@ export const SIGNAL_REQUIREMENT_META: Record<
   investing_marketing: {
     label: 'Investe in marketing',
     description: 'Budget ads / tracking già attivo',
+  },
+  seeking_supplier: {
+    label: 'Cerca fornitore',
+    description: 'Evidenze di ricerca fornitori o appalto',
+  },
+  expansion: {
+    label: 'Espansione',
+    description: 'Apertura sedi, crescita geografica o team',
+  },
+  executive_change: {
+    label: 'Cambio dirigenza',
+    description: 'Nuovo CEO, direttore o amministratore',
+  },
+  investing_expansion: {
+    label: 'Investe in espansione',
+    description: 'Segnali di crescita organica o geografica',
+  },
+  new_product: {
+    label: 'Nuovo prodotto',
+    description: 'Lancio prodotto/servizio rilevato',
+  },
+  market_entry: {
+    label: 'Nuovo mercato',
+    description: 'Entrata in nuovo mercato o settore',
+  },
+  new_company: {
+    label: 'Nuova impresa',
+    description: 'Costituzione o apertura recente — ideale per commercialisti/consulenti',
+  },
+  tech_migration: {
+    label: 'Migrazione tech',
+    description: 'Digital transformation, cloud, stack obsoleto',
   },
 }
 
@@ -61,7 +101,7 @@ export const NL_SIGNAL_PATTERNS: Array<{
   {
     requirement: 'registry_change',
     patterns: [
-      /\b(registro|camera\s+di\s+commercio|bilancio|fatturato|crescita\s+organico|dipendenti\s+in\s+aumento)\b/i,
+      /\b(registro|camera\s+di\s+commercio|bilancio|crescita\s+organico|dipendenti\s+in\s+aumento)\b/i,
     ],
   },
   {
@@ -79,6 +119,18 @@ export const NL_SIGNAL_PATTERNS: Array<{
     ],
   },
   {
+    requirement: 'funding_received',
+    patterns: [
+      /\b(finanziamento|funding|round\s+di|investimento|venture|capital|seed|startup\s+finanziata)\b/i,
+    ],
+  },
+  {
+    requirement: 'crm_installed',
+    patterns: [
+      /\b(crm\s+installato|installato\s+crm|nuovo\s+crm|ha\s+appena\s+messo\s+crm)\b/i,
+    ],
+  },
+  {
     requirement: 'crm_change',
     patterns: [
       /\b(cambiat\w*\s+crm|nuovo\s+crm|migrat\w*\s+(a|su|verso|da)?|switch\s+crm|sostituit\w*\s+crm)\b/i,
@@ -93,7 +145,7 @@ export const NL_SIGNAL_PATTERNS: Array<{
   {
     requirement: 'investing_marketing',
     patterns: [
-      /\b(investono\s+in\s+marketing|budget\s+marketing|spendono\s+in\s+pubblicit\w*)\b/i,
+      /\b(invest\w*\s+in\s+marketing|budget\s+marketing|spendono\s+in\s+pubblicit\w*)\b/i,
     ],
   },
   {

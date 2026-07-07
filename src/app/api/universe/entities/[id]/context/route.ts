@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { requireUniverseAuth } from '@/lib/universe/require-auth'
+import { universeClientError } from '@/lib/universe/errors'
 import {
   deleteUserContext,
   listUserContextForEntity,
@@ -73,8 +74,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     return NextResponse.json({ ok: true, context: ctx })
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : 'Errore contesto'
-    return NextResponse.json({ error: message }, { status: 500 })
+    const { message, status } = universeClientError(e, 'entities/:id/context')
+    return NextResponse.json({ error: message }, { status })
   }
 }
 
@@ -102,7 +103,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     await deleteUserContext(supabase, user.id, id, context_type)
     return NextResponse.json({ ok: true })
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : 'Errore rimozione contesto'
-    return NextResponse.json({ error: message }, { status: 500 })
+    const { message, status } = universeClientError(e, 'entities/:id/context')
+    return NextResponse.json({ error: message }, { status })
   }
 }

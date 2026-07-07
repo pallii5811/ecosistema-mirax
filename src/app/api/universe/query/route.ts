@@ -3,9 +3,10 @@
  * Structured query on the knowledge graph (foundation for Agentic Search).
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceRoleClient } from '@/utils/supabase/server'
+import { createClient } from '@/utils/supabase/server'
 import { executeUniverseQuery } from '@/lib/universe'
 import { requireUniverseAuth } from '@/lib/universe/require-auth'
+import { universeClientError } from '@/lib/universe/errors'
 import type { UniverseQuery } from '@/lib/universe'
 
 export async function POST(req: NextRequest) {
@@ -22,12 +23,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'entity_type obbligatorio' }, { status: 400 })
     }
 
-    const sb = createServiceRoleClient()
+    const sb = await createClient()
     const result = await executeUniverseQuery(sb, query)
 
     return NextResponse.json(result)
-  } catch (e: any) {
-    console.error('[universe/query] error:', e)
-    return NextResponse.json({ error: e.message || 'Errore query grafo' }, { status: 500 })
+  } catch (e: unknown) {
+    const { message, status } = universeClientError(e, 'query')
+    return NextResponse.json({ error: message }, { status })
   }
 }

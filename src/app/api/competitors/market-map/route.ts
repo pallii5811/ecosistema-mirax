@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { filterMarketPoints, leadToMarketPoint } from '@/lib/competitive/market-metrics'
+import {
+  fetchSearchLeadRows,
+  mergeSearchLeadRow,
+  parseLegacySearchResults,
+} from '@/lib/search-leads/read-leads'
 
 /**
  * GET /api/competitors/market-map?category=&city=&minIntent=
@@ -54,13 +59,26 @@ export async function GET(req: NextRequest) {
     .limit(8)
 
   for (const row of searches ?? []) {
-    const results = (row as { results?: unknown }).results
-    if (!Array.isArray(results)) continue
-    for (let i = 0; i < Math.min(results.length, 25); i++) {
-      const r = results[i]
-      if (!r || typeof r !== 'object') continue
-      const lead = r as Record<string, unknown>
-      const id = `${row.id}:${i}`
+    const searchId = row.id as string
+    let leads: Record<string, unknown>[] = []
+
+    try {
+      const slRows = await fetchSearchLeadRows(supabase, searchId)
+      if (slRows.length > 0) {
+        leads = slRows.map(mergeSearchLeadRow)
+      }
+    } catch (e) {
+      console.warn('[market-map] search_leads fetch failed search_id=%s', searchId, e)
+    }
+
+    if (leads.length === 0) {
+      leads = parseLegacySearchResults((row as { results?: unknown }).results)
+    }
+
+    for (let i = 0; i < Math.min(leads.length, 25); i++) {
+      const lead = leads[i]
+      if (!lead || typeof lead !== 'object') continue
+      const id = `${searchId}:${i}`
       points.push(leadToMarketPoint(lead, id, 'lead'))
     }
   }
@@ -79,6 +97,5 @@ export async function GET(req: NextRequest) {
       categories: categories.sort(),
       cities: cities.sort(),
     },
-    tableMissing: compErr ? /does not exist/i.test(compErr.message) : false,
   })
 }

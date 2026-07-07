@@ -8,16 +8,19 @@ import { EMPTY_SIGNAL_INTENT } from '@/lib/signal-intent/types'
 import { intentSpecHasMatches } from '@/lib/signal-intent/parse-semantic'
 import { hasBusinessSignalType } from '@/lib/mirax-signals'
 import { analyzeMiraxSignals } from '@/lib/mirax-signals'
+import { hiringMatchTextFromLead, textMatchesHiringRoles } from '@/lib/signal-intent/hiring-roles'
+import { readClaudeEnrichment } from '@/lib/claude-intent-enrich/types'
+import {
+  findInvestingMarketingBusinessSignal,
+  hasVerifiedMarketingAdSpend,
+  isInvestingMarketingEnrichmentPending,
+} from '@/lib/signal-intent/marketing-investment'
 
 function jobMatchesRoles(lead: Record<string, unknown>, roles: string[]): boolean {
   if (!roles.length) return true
-  const jobs = lead.business_hiring_jobs
-  if (!Array.isArray(jobs) || jobs.length === 0) return false
-  const hay = jobs
-    .map((j) => (j && typeof j === 'object' ? String((j as Record<string, unknown>).title || '') : ''))
-    .join(' ')
-    .toLowerCase()
-  return roles.some((r) => hay.includes(r.toLowerCase()))
+  const hay = hiringMatchTextFromLead(lead)
+  if (!hay.trim()) return false
+  return textMatchesHiringRoles(hay, roles)
 }
 
 function crmMatchesKeywords(lead: Record<string, unknown>, keywords: string[]): boolean {
@@ -57,8 +60,15 @@ function requirementSatisfied(lead: Record<string, unknown>, req: MiraxSignalReq
       return hasBusinessSignalType(summary, ['meta_ads_started'])
     case 'google_ads_started':
       return hasBusinessSignalType(summary, ['google_ads_started'])
-    case 'investing_marketing':
-      return summary.intentSignals.length > 0 || hasBusinessSignalType(summary, ['meta_ads_started', 'google_ads_started'])
+    case 'investing_marketing': {
+      const claude = readClaudeEnrichment(lead)
+      if (claude?.matches_request === true) return true
+      if (claude?.checked_at) return false
+      if (hasVerifiedMarketingAdSpend(lead)) return true
+      if (findInvestingMarketingBusinessSignal(lead)) return true
+      if (isInvestingMarketingEnrichmentPending(lead)) return false
+      return false
+    }
     case 'sector_investment':
       return detectSectorInvestmentSignals(lead, intent.sector_keywords).length > 0
     case 'tender_won':

@@ -2,23 +2,7 @@ import { NextRequest } from 'next/server'
 import { apiError, apiResponse, authenticateApiKey } from '@/lib/api-auth'
 import { createServiceRoleClient } from '@/utils/supabase/server'
 import { normalizeLead } from '@/lib/nous/normalizer'
-
-function safeArray(v: any): any[] {
-  if (!v) return []
-  if (Array.isArray(v)) return v
-  if (typeof v === 'string') {
-    try {
-      const parsed = JSON.parse(v)
-      if (Array.isArray(parsed)) return parsed
-      if (parsed && Array.isArray((parsed as any).results)) return (parsed as any).results
-      return []
-    } catch {
-      return []
-    }
-  }
-  if (typeof v === 'object' && Array.isArray((v as any).results)) return (v as any).results
-  return []
-}
+import { fetchMergedLeadsFiltered } from '@/lib/search-leads/read-leads'
 
 export async function GET(req: NextRequest) {
   const { userId, error } = await authenticateApiKey(req)
@@ -41,7 +25,7 @@ export async function GET(req: NextRequest) {
 
   const { data: searches, error: qErr } = await supabase
     .from('searches')
-    .select('results')
+    .select('id, results')
     .eq('user_id', userId)
     .ilike('category', `%${categoria}%`)
     .ilike('location', `%${citta}%`)
@@ -55,14 +39,46 @@ export async function GET(req: NextRequest) {
     return apiResponse({ data: [], total: 0, page, limit, pages: 0 })
   }
 
-  let leads = (searches as any[]).flatMap((s) => safeArray((s as any)?.results))
+  const searchIds = searches.map((s) => s.id)
+  const legacyRows = searches.map((s) => ({
+    searchId: s.id,
+    results: (s as { results?: unknown }).results,
+  }))
 
-  if (no_pixel) leads = leads.filter((l: any) => !l?.meta_pixel && !l?.has_pixel)
-  if (min_score > 0) leads = leads.filter((l: any) => (Number(l?.score) || 0) >= min_score)
+  let leads = await fetchMergedLeadsFiltered(
+    supabase,
+    {
+      searchIds,
+      noPixel: no_pixel,
+      minQueryScore: min_score > 0 ? min_score : undefined,
+    },
+    legacyRows,
+  )
+
+  // Fallback score filter on merged payload when query_score hot col is null
+  if (min_score > 0) {
+    leads = leads.filter((l) => {
+      const hot = Number(l.query_score)
+      const legacy = Number(l.score)
+      const score = Number.isFinite(hot) ? hot : legacy
+      return score >= min_score
+    })
+  }
+
+  if (no_pixel) {
+    leads = leads.filter((l) => {
+      const px = l.has_pixel ?? l.meta_pixel
+      return px !== true
+    })
+  }
 
   const seen = new Set<string>()
-  leads = leads.filter((l: any) => {
-    const key = String(l?.sito || l?.website || l?.nome || l?.name || '').trim().toLowerCase()
+  leads = leads.filter((l) => {
+    const key = String(
+      l.website_domain || l.sito || l.website || l.nome || l.azienda || l.name || '',
+    )
+      .trim()
+      .toLowerCase()
     if (!key) return false
     if (seen.has(key)) return false
     seen.add(key)
@@ -73,9 +89,9 @@ export async function GET(req: NextRequest) {
   const pages = Math.ceil(total / limit)
   const paginated = leads.slice((page - 1) * limit, page * limit)
 
-  const clean = paginated.map((l: any) => {
+  const clean = paginated.map((l) => {
     if (!l || typeof l !== 'object') return l
-    const { __ckb_search_id, ...rest } = l
+    const { __ckb_search_id, ...rest } = l as Record<string, unknown>
     return rest
   })
 

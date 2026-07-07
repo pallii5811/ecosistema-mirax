@@ -14,17 +14,20 @@ import {
 export async function getUniverseAnalyticsCached(
   sb: SupabaseClient,
   days = 30,
+  cacheClient?: SupabaseClient,
 ): Promise<{ analytics: UniverseAnalyticsSummary; cache_hit: boolean }> {
+  const cacheSb = cacheClient ?? sb
+
   if (!isUniverseCacheEnabled()) {
     const analytics = await getUniverseAnalytics(sb, days)
     return { analytics, cache_hit: false }
   }
 
   const cacheKey = buildUniverseCacheKey('analytics', { days })
-  const hit = await getQueryCache<UniverseAnalyticsSummary>(sb, cacheKey)
+  const hit = await getQueryCache<UniverseAnalyticsSummary>(cacheSb, cacheKey)
   if (hit) return { analytics: hit, cache_hit: true }
 
   const analytics = await getUniverseAnalytics(sb, days)
-  await setQueryCache(sb, cacheKey, 'analytics', analytics)
+  await setQueryCache(cacheSb, cacheKey, 'analytics', analytics)
   return { analytics, cache_hit: false }
 }

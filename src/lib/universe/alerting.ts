@@ -60,16 +60,24 @@ async function findAlertUserIds(sb: SupabaseClient, entityId: string, domain: st
   return [...ids]
 }
 
+export type UniverseAlertDispatchResult = {
+  ok: boolean
+  notified: number
+  skipped: boolean
+  user_ids: string[]
+  error?: string
+}
+
 export async function dispatchUniverseEventAlerts(
   sb: SupabaseClient,
   event: UniverseEvent,
-): Promise<{ notified: number; skipped: boolean; user_ids: string[] }> {
-  if (!isUniverseAlertingEnabled()) return { notified: 0, skipped: true, user_ids: [] }
-  if (!UNIVERSE_ALERT_TYPES.has(event.event_type)) return { notified: 0, skipped: true, user_ids: [] }
-  if (!event.entity_id) return { notified: 0, skipped: true, user_ids: [] }
+): Promise<UniverseAlertDispatchResult> {
+  if (!isUniverseAlertingEnabled()) return { ok: true, notified: 0, skipped: true, user_ids: [] }
+  if (!UNIVERSE_ALERT_TYPES.has(event.event_type)) return { ok: true, notified: 0, skipped: true, user_ids: [] }
+  if (!event.entity_id) return { ok: true, notified: 0, skipped: true, user_ids: [] }
 
   const entity = await getEntityById(sb, event.entity_id)
-  if (!entity) return { notified: 0, skipped: true, user_ids: [] }
+  if (!entity) return { ok: true, notified: 0, skipped: true, user_ids: [] }
 
   const domain =
     entity.entity_type === 'company' && entity.canonical_id.includes('.')
@@ -77,7 +85,7 @@ export async function dispatchUniverseEventAlerts(
       : null
 
   const userIds = await findAlertUserIds(sb, event.entity_id, domain)
-  if (!userIds.length) return { notified: 0, skipped: false, user_ids: [] }
+  if (!userIds.length) return { ok: true, notified: 0, skipped: false, user_ids: [] }
 
   const headline = formatEventHeadline(event)
   const title = `Grafo · ${labelEvent(event.event_type)} — ${entity.name}`
@@ -86,6 +94,7 @@ export async function dispatchUniverseEventAlerts(
   const rows = userIds.map((user_id) => ({
     user_id,
     alert_type: 'universe_graph',
+    event_id: event.id,
     title,
     body,
     payload: {
@@ -103,8 +112,8 @@ export async function dispatchUniverseEventAlerts(
   const { error } = await sb.from('lead_alerts').insert(rows)
   if (error) {
     console.warn('[universe/alerting] insert failed:', error.message)
-    return { notified: 0, skipped: false, user_ids: userIds }
+    return { ok: false, notified: 0, skipped: false, user_ids: userIds, error: error.message }
   }
 
-  return { notified: rows.length, skipped: false, user_ids: userIds }
+  return { ok: true, notified: rows.length, skipped: false, user_ids: userIds }
 }

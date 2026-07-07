@@ -1,5 +1,6 @@
 'use client'
 
+import { useRef } from 'react'
 import { Search, Briefcase } from 'lucide-react'
 import { MAX_LEADS_PER_SEARCH } from '@/lib/search-job-payload'
 import { BUSINESS_SIGNAL_FILTER_OPTIONS, type BusinessSignalType } from '@/lib/business-events/types'
@@ -7,7 +8,7 @@ import { useDashboard } from '@/components/DashboardContext'
 import { searchLocaleHint, t } from '@/lib/i18n'
 import type { SearchSource } from '@/lib/search-source'
 
-const BASE_LEAD_OPTIONS = [10, 25, 50, 100, 200, 300, 400, 500]
+const BASE_LEAD_OPTIONS = [10, 25, 50, 100, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000]
 
 function buildLeadOptions(credits: number): number[] {
   const cap = Math.min(MAX_LEADS_PER_SEARCH, Math.max(10, credits))
@@ -17,7 +18,7 @@ function buildLeadOptions(credits: number): number[] {
 type SniperAreaProps = {
   query: string
   onQueryChange: (value: string) => void
-  onStart: () => void | Promise<void>
+  onStart: (submittedQuery: string) => void | Promise<void>
   isLoading: boolean
   error: string | null
   aiDebug?: unknown
@@ -44,6 +45,7 @@ const SniperArea = ({
   searchSource = 'maps',
 }: SniperAreaProps) => {
   const { locale } = useDashboard()
+  const inputRef = useRef<HTMLInputElement>(null)
   const localeHint = searchLocaleHint(locale)
   const leadOptions = buildLeadOptions(Math.max(credits, 10))
   const selectValue = leadOptions.includes(maxLeads) ? maxLeads : (leadOptions[leadOptions.length - 1] ?? maxLeads)
@@ -65,7 +67,8 @@ const SniperArea = ({
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          onStart()
+          const submitted = (inputRef.current?.value ?? query).trim()
+          onStart(submitted)
         }}
         className="relative"
       >
@@ -73,6 +76,7 @@ const SniperArea = ({
         <div className="flex items-center gap-3.5 bg-white rounded-full border-2 border-violet-200/70 shadow-xl shadow-violet-200/40 px-6 sm:px-8 py-2 focus-within:border-violet-500 focus-within:shadow-violet-400/50 focus-within:shadow-2xl transition-all duration-300 hover:border-violet-300 hover:shadow-violet-300/40">
           <Search className="w-7 h-7 text-violet-500 flex-shrink-0" />
           <input
+            ref={inputRef}
             type="text"
             placeholder={t(locale, 'search_placeholder')}
             title="Scrivi in linguaggio naturale: assunzioni, gare d'appalto, investimenti settoriali, cambi CRM, filtri tecnici…"

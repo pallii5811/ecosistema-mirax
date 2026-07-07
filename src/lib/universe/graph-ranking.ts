@@ -4,7 +4,6 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { SignalIntentSpec } from '@/lib/signal-intent/types'
 import type { UniverseEntity } from './types.ts'
 
 export type GraphRankFactors = {
@@ -41,9 +40,14 @@ export function computeGraphRankScore(factors: GraphRankFactors): number {
   return Math.min(100, Math.round(score))
 }
 
+export type RankableIntent = {
+  location?: string | null
+  category?: string | null
+}
+
 export function buildGraphRankFactors(
   entity: UniverseEntity,
-  intent: SignalIntentSpec,
+  intent: RankableIntent,
   counts: { recent_events: number; relationships: number; observations: number },
 ): GraphRankFactors {
   const days = daysSince(entity.last_seen_at ?? entity.updated_at)
@@ -121,7 +125,7 @@ async function batchEntityCounts(
 export async function rankUniverseEntities(
   sb: SupabaseClient,
   entities: UniverseEntity[],
-  intent: SignalIntentSpec,
+  intent: RankableIntent,
 ): Promise<Array<{ entity: UniverseEntity; graph_score: number; graph_rank_factors: GraphRankFactors }>> {
   if (!entities.length) return []
 

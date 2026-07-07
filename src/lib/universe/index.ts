@@ -58,8 +58,11 @@ export {
 export {
   signalIntentToUniverseQuery,
   executeAgenticUniverseSearch,
+  commercialIntentToUniverseQuery,
+  executeCommercialUniverseSearch,
   entityToMiraxLeadRow,
   type UniverseQueryIntent,
+  type CommercialUniverseQueryIntent,
 } from './agentic-search.ts'
 
 export {
@@ -67,6 +70,43 @@ export {
   hydrateLeadFromUniverse,
   hydrateLeadsFromUniverse,
 } from './hydrate-leads.ts'
+
+export {
+  detectCommercialSignals,
+  detectCommercialSignalsForEntity,
+  loadEntityFacts,
+  computeCommercialSignalStrength,
+  type CommercialSignal,
+  type CommercialSignalType,
+  type CommercialSignalEvidence,
+  type EntityFacts,
+  type EntitySignalBundle,
+} from './commercial-signals.ts'
+
+export {
+  buildCommercialOpportunities,
+  buildOpportunityForEntity,
+  rankOpportunities,
+  topEvidence,
+  formatOpportunityScore,
+  type CommercialOpportunity,
+} from './opportunity.ts'
+
+export {
+  recordFeedback,
+  listFeedback,
+  getEntityFeedbackBoostMap,
+  applyFeedbackBoost,
+  getUserFeedbackProfile,
+  buildFeedbackPromptExamples,
+  FEEDBACK_ACTION_WEIGHTS,
+  feedbackActionToValue,
+  type FeedbackAction,
+  type FeedbackRecord,
+  type FeedbackInput,
+  type UserFeedbackProfile,
+  type FeedbackPromptExample,
+} from './feedback.ts'
 
 export { buildDigitalTwin, type DigitalTwinSnapshot } from './digital-twin.ts'
 
@@ -114,3 +154,22 @@ export {
 } from './webhooks.ts'
 
 export { archiveOldUniverseEvents, universeArchiveDays } from './event-archive.ts'
+
+export {
+  getUniverseQualityMetrics,
+  getSearchQualityMetrics,
+  getUserLearningMetrics,
+  type UniverseQualityMetrics,
+  type SearchQualityMetrics,
+} from './quality.ts'
+
+export {
+  getEntityPii,
+  logPiiAccess,
+  checkPiiAccessAllowed,
+  entityToMiraxLeadRowWithPii,
+  DEFAULT_PII_POLICY,
+  type EntityPii,
+  type PiiAccessType,
+  type PiiAccessLog,
+} from './pii.ts'

@@ -14,6 +14,7 @@ import { LeadActionButtons } from '@/components/LeadActionButtons'
 import { InviaCRMButton } from '@/components/InviaCRMButton'
 import { analyzeBuyingSignals } from '@/utils/buyingSignals'
 import type { BuyingSignalSummary } from '@/utils/buyingSignals'
+import { MiraxLogo } from '@/components/MiraxLogo'
 import { analyzeMiraxSignals } from '@/lib/mirax-signals'
 import { BusinessSignalBadge } from '@/components/BusinessSignalBadge'
 import { IntentScoreBadge } from '@/components/IntentScoreBadge'
@@ -23,7 +24,10 @@ import { UniverseHydratedBadge } from '@/components/universe/UniverseHydratedBad
 import { MarketingInvestorBadge } from '@/components/MarketingInvestorBadge'
 import type { SignalIntentSpec } from '@/lib/signal-intent/types'
 import { intentCellForLead, showIntentDataColumn, intentColumnTitle } from '@/lib/signal-intent/intent-cell'
+import { isSignalFocusedIntent, signalFilterButtonLabel } from '@/lib/signal-intent/lead-visibility'
+import { leadMatchesSignalIntent } from '@/lib/signal-intent/match-lead'
 import { isAuditPendingLead } from '@/lib/lead-audit-status'
+import { leadRowKey, leadStableKey } from '@/components/dashboard/lead-utils'
 import { computeFreshnessScore, freshnessLabel } from '@/lib/lead-object'
 
 type LeadRecord = Record<string, unknown>
@@ -157,6 +161,9 @@ const ResultsTable = ({
 }: ResultsTableProps) => {
   const showIntentColumn = showIntentDataColumn(signalIntent)
   const intentColTitle = intentColumnTitle(signalIntent)
+  const focusedSignalQuery = Boolean(signalIntent?.required_signals?.length)
+  const signalFocused = isSignalFocusedIntent(signalIntent)
+  const signalFilterLabel = signalFilterButtonLabel(signalIntent)
   const [activeCRM, setActiveCRM] = useState<{ id: string; type: string; name?: string } | null>(null)
   const [pitchOpen, setPitchOpen] = useState(false)
   const [pitchLoading, setPitchLoading] = useState(false)
@@ -174,6 +181,11 @@ const ResultsTable = ({
   useEffect(() => {
     setHotOnly(false)
   }, [searchId, query])
+
+  // Durante streaming: mai filtrare righe via "Solo caldi/investimenti" — causa sparizioni.
+  useEffect(() => {
+    if (isScraping) setHotOnly(false)
+  }, [isScraping])
 
   const [saveOpen, setSaveOpen] = useState(false)
   const [saveLoading, setSaveLoading] = useState(false)
@@ -352,12 +364,13 @@ const ResultsTable = ({
     return `mailto:${encodeURIComponent(to)}?subject=${subject}&body=${body}`
   }, [pitchBody, pitchLead, pitchSubject])
 
-  // Buying Signal Summary per ogni lead, calcolato dai dati gia presenti (nessuna fetch extra).
+  // Buying Signal Summary per ogni lead (chiave stabile — non usare riferimento oggetto).
   const buyingByItem = useMemo(() => {
-    const map = new Map<unknown, BuyingSignalSummary>()
+    const map = new Map<string, BuyingSignalSummary>()
     for (const item of results) {
       try {
-        map.set(item, analyzeBuyingSignals(asRecord(item) || {}))
+        const obj = asRecord(item) || {}
+        map.set(leadStableKey(obj), analyzeBuyingSignals(obj))
       } catch {
         // un lead malformato non deve mai rompere la tabella
       }
@@ -366,10 +379,11 @@ const ResultsTable = ({
   }, [results])
 
   const miraxByItem = useMemo(() => {
-    const map = new Map<unknown, ReturnType<typeof analyzeMiraxSignals>>()
+    const map = new Map<string, ReturnType<typeof analyzeMiraxSignals>>()
     for (const item of results) {
       try {
-        map.set(item, analyzeMiraxSignals(asRecord(item) || {}))
+        const obj = asRecord(item) || {}
+        map.set(leadStableKey(obj), analyzeMiraxSignals(obj))
       } catch {
         /* ignore */
       }
@@ -378,10 +392,11 @@ const ResultsTable = ({
   }, [results])
 
   const intentByItem = useMemo(() => {
-    const map = new Map<unknown, ReturnType<typeof calculateIntentScoreFromLead>>()
+    const map = new Map<string, ReturnType<typeof calculateIntentScoreFromLead>>()
     for (const item of results) {
       try {
-        map.set(item, calculateIntentScoreFromLead(item))
+        const obj = asRecord(item) || {}
+        map.set(leadStableKey(obj), calculateIntentScoreFromLead(item))
       } catch {
         /* ignore */
       }
@@ -389,21 +404,49 @@ const ResultsTable = ({
     return map
   }, [results])
 
-  const getBuyingScore = (item: unknown) => buyingByItem.get(item)?.score ?? 0
+  const leadKey = (item: unknown, rowIdx = 0) => leadRowKey(item, rowIdx)
 
-  const hotCount = useMemo(
-    () => results.filter((it) => getBuyingScore(it) >= 60).length,
+  const getBuyingScore = (item: unknown) => {
+    const obj = asRecord(item)
+    if (!obj) return 0
+    return buyingByItem.get(leadStableKey(obj))?.score ?? 0
+  }
+
+  const getMirax = (item: unknown) => {
+    const obj = asRecord(item)
+    if (!obj) return undefined
+    return miraxByItem.get(leadStableKey(obj))
+  }
+
+  const getIntent = (item: unknown) => {
+    const obj = asRecord(item)
+    if (!obj) return undefined
+    return intentByItem.get(leadStableKey(obj))
+  }
+
+  const signalMatchCount = useMemo(() => {
+    if (!focusedSignalQuery || !signalIntent) return 0
+    return results.filter((it) => leadMatchesSignalIntent(it, signalIntent)).length
+  }, [results, signalIntent, focusedSignalQuery])
+
+  const hotCount = useMemo(() => {
+    if (signalFocused && signalIntent) return signalMatchCount
+    return results.filter((it) => getBuyingScore(it) >= 60).length
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [results, buyingByItem],
-  )
+  }, [results, buyingByItem, signalFocused, signalMatchCount])
 
   const displayResults = useMemo(() => {
     let sorted = [...results]
-    if (hotOnly) {
-      sorted = sorted.filter((it) => (buyingByItem.get(it)?.score ?? 0) >= 60)
+    const filterHot = hotOnly && !isScraping
+    if (filterHot) {
+      if (signalFocused && signalIntent) {
+        sorted = sorted.filter((it) => leadMatchesSignalIntent(it, signalIntent))
+      } else {
+        sorted = sorted.filter((it) => (buyingByItem.get(leadStableKey(asRecord(it) || {}))?.score ?? 0) >= 60)
+      }
     }
     if (sortBySignals) {
-      sorted.sort((a, b) => (buyingByItem.get(b)?.score ?? 0) - (buyingByItem.get(a)?.score ?? 0))
+      sorted.sort((a, b) => (getBuyingScore(b) - getBuyingScore(a)))
     } else if (sortByScore) {
       sorted.sort((a, b) => calcOpportunityScore(asRecord(b) || {}) - calcOpportunityScore(asRecord(a) || {}))
     }
@@ -416,7 +459,7 @@ const ResultsTable = ({
       })
     }
     return sorted
-  }, [results, sortByScore, sortAlpha, sortBySignals, hotOnly, buyingByItem])
+  }, [results, sortByScore, sortAlpha, sortBySignals, hotOnly, buyingByItem, signalFocused, signalIntent, isScraping])
 
   const exportCsv = () => {
     const rows = displayResults.map((item) => {
@@ -1034,8 +1077,9 @@ const ResultsTable = ({
         </div>
       ) : showIntentColumn ? (
         <div className="mx-6 mt-5 mb-0 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">
-          <span className="font-semibold">Arricchimento Claude attivo.</span>
-          {' '}Colonna <strong>{intentColTitle.toUpperCase()}</strong>: viola = corrisponde alla tua richiesta · giallo = analisi in corso · grigio = nessuna evidenza. Pixel/SEO restano in Opportunità.
+          <span className="font-semibold">Arricchimento attivo.</span>
+          {' '}Colonna <strong>{intentColTitle.toUpperCase()}</strong>: viola = corrisponde alla richiesta · giallo = analisi in corso · grigio = nessuna evidenza. Usa{' '}
+          <strong>Solo con segnale</strong> per filtrare solo i match confermati.
         </div>
       ) : null}
       <div className="px-6 py-5 border-b border-zinc-100">
@@ -1045,21 +1089,42 @@ const ResultsTable = ({
             <p className="text-sm text-zinc-500 mt-0.5">
               {isLoading
                 ? 'Ricerca in corso…'
-                : missingSignals && hasActiveBusinessFilter && totalUnfilteredCount
-                  ? `${results.length} candidati — verifica segnale per "${query || '—'}"`
-                  : totalUnfilteredCount && totalUnfilteredCount !== results.length
-                    ? `${results.length} di ${totalUnfilteredCount} risultati (filtro business attivo) per "${query || '—'}"`
-                    : `${results.length} risultati per "${query || '—'}"`}
+                : signalFocused
+                  ? isScraping
+                    ? `${results.length} aziende · ${signalMatchCount} con segnale confermato · analisi in corso`
+                    : `${results.length} aziende · ${signalMatchCount} con segnale confermato`
+                  : missingSignals && hasActiveBusinessFilter && totalUnfilteredCount
+                    ? `${results.length} candidati — verifica segnale per "${query || '—'}"`
+                    : totalUnfilteredCount && totalUnfilteredCount !== results.length
+                      ? `${results.length} di ${totalUnfilteredCount} risultati (filtro business attivo) per "${query || '—'}"`
+                      : `${results.length} risultati per "${query || '—'}"`}
             </p>
           </div>
           <div className="flex items-center space-x-2">
             {isLoading ? (
-              <Badge variant="secondary" className="bg-zinc-100 text-zinc-500 border border-zinc-200 text-xs">
+              <Badge variant="secondary" className="bg-zinc-100 text-zinc-500 border border-zinc-200 text-xs gap-2">
+                <span className="inline-flex animate-spin">
+                  <MiraxLogo size={16} showWordmark={false} />
+                </span>
                 Loading
               </Badge>
             ) : null}
           </div>
         </div>
+
+        {isScraping ? (
+          <div className="mt-3 flex items-center gap-3 rounded-xl border border-violet-200 bg-violet-50/70 px-4 py-3">
+            <div className="animate-spin rounded-full p-1">
+              <MiraxLogo size={28} showWordmark={false} />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-violet-900">Analisi in tempo reale</p>
+              <p className="text-xs text-violet-700">
+                MIRAX arricchisce le agenzie trovate: la colonna ASSUNZIONI si aggiorna (giallo → viola o grigio). Il totale non scende.
+              </p>
+            </div>
+          </div>
+        ) : null}
 
         <div className="mt-4 flex items-center gap-2 flex-wrap">
           <button
@@ -1110,14 +1175,19 @@ const ResultsTable = ({
           <button
             type="button"
             onClick={() => setHotOnly((v) => !v)}
-            title="Mostra solo i lead caldi/caldissimi: quelli con i segnali d'acquisto piu forti da chiamare subito"
+            title={
+              signalFocused
+                ? `Mostra solo le aziende con ${signalFilterLabel.replace('Solo con ', '')} confermato`
+                : "Mostra solo i lead caldi/caldissimi: quelli con i segnali d'acquisto piu forti da chiamare subito"
+            }
             className={`flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg border font-semibold transition-all ${hotOnly
               ? 'bg-rose-600 text-white border-rose-600'
               : 'bg-white text-rose-600 border-rose-200 hover:border-rose-400'
             }`}
           >
             <Flame className={`h-3.5 w-3.5 ${hotOnly ? 'text-white' : 'text-rose-500'}`} />
-            Solo caldi{hotCount > 0 ? ` (${hotCount})` : ''}
+            {signalFocused ? signalFilterLabel : 'Solo caldi'}
+            {hotCount > 0 ? ` (${hotCount})` : ''}
           </button>
 
           <button
@@ -1135,7 +1205,7 @@ const ResultsTable = ({
         <div className="md:hidden px-4 py-4 space-y-3">
           {isLoading ? <div className="text-sm text-slate-500">Caricamento…</div> : null}
           {!isLoading
-            ? displayResults.map((item) => {
+            ? displayResults.map((item, rowIdx) => {
                 const obj = item && typeof item === 'object' ? (item as Record<string, unknown>) : {}
                 const name = renderLeadString(obj, ['nome', 'azienda', 'company', 'name']) || 'N/D'
                 const sito = renderLeadString(obj, ['sito', 'website', 'url'])
@@ -1152,11 +1222,7 @@ const ResultsTable = ({
 
                 return (
                   <div
-                    key={(() => {
-                      const row = asRecord(item)
-                      if (typeof row?.id === 'string') return row.id
-                      return `${Math.random().toString(16).slice(2)}`
-                    })()}
+                    key={leadKey(item, rowIdx)}
                     className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -1168,15 +1234,36 @@ const ResultsTable = ({
                         </div>
                       </div>
                       <div className="shrink-0 flex flex-col items-end gap-1">
-                        <IntentScoreBadge breakdown={intentByItem.get(item) ?? { score: 0, basePoints: 0, recentMultiplier: 1, strengthMultiplier: 1, relationshipMultiplier: 1, contributors: [], signalTypes: [] }} compact />
-                        <ScoreBadge score={score} />
-                        <BuyingBadge summary={buyingByItem.get(item)} compact />
-                        <BusinessSignalBadge signals={miraxByItem.get(item)?.businessSignals ?? []} compact />
-                        {(miraxByItem.get(item)?.intentSignals?.length ?? 0) > 0 ? (
-                          <MarketingInvestorBadge compact />
-                        ) : null}
-                        <LeadComplianceBadge status="unknown" compact />
-                        <UniverseHydratedBadge lead={obj} compact />
+                        {focusedSignalQuery ? (
+                          (() => {
+                            const cell = intentCellForLead(obj, signalIntent)
+                            if (!cell) return null
+                            return (
+                              <div className="flex flex-col items-end gap-1 max-w-[140px]">
+                                <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${cell.className}`}>
+                                  {cell.label}
+                                </span>
+                                {cell.detail ? (
+                                  <span className="text-[9px] text-violet-800 text-right line-clamp-2" title={cell.detail}>
+                                    {cell.detail}
+                                  </span>
+                                ) : null}
+                              </div>
+                            )
+                          })()
+                        ) : (
+                          <>
+                            <IntentScoreBadge breakdown={getIntent(item) ?? { score: 0, basePoints: 0, recentMultiplier: 1, strengthMultiplier: 1, relationshipMultiplier: 1, contributors: [], signalTypes: [] }} compact />
+                            <ScoreBadge score={score} />
+                            <BuyingBadge summary={buyingByItem.get(leadStableKey(obj))} compact />
+                            <BusinessSignalBadge signals={getMirax(item)?.businessSignals ?? []} compact />
+                            {(getMirax(item)?.intentSignals?.length ?? 0) > 0 ? (
+                              <MarketingInvestorBadge compact />
+                            ) : null}
+                            <LeadComplianceBadge status="unknown" compact />
+                            <UniverseHydratedBadge lead={obj} compact />
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -1327,15 +1414,11 @@ const ResultsTable = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {isLoading ? skeletonRows : null}
+              {isLoading && !isScraping ? skeletonRows : null}
 
-              {!isLoading
+              {!isLoading || isScraping
                 ? displayResults.map((item, rowIdx) => (
-                    <tr key={(() => {
-                      const row = asRecord(item)
-                      if (typeof row?.id === 'string') return row.id
-                      return `${Math.random().toString(16).slice(2)}`
-                    })()} className={`bg-white hover:bg-zinc-50 transition-colors duration-100 group`}>
+                    <tr key={leadKey(item, rowIdx)} className={`bg-white hover:bg-zinc-50 transition-colors duration-100 group`}>
                       <td className="px-2 py-3 overflow-hidden align-top">
                         <div className="flex flex-col gap-1 w-full">
                           {(() => {
@@ -1390,16 +1473,46 @@ const ResultsTable = ({
 
                       <td className="px-2 py-3 align-top">
                         <div className="flex flex-col items-center gap-1">
-                          <IntentScoreBadge breakdown={intentByItem.get(item) ?? { score: 0, basePoints: 0, recentMultiplier: 1, strengthMultiplier: 1, relationshipMultiplier: 1, contributors: [], signalTypes: [] }} compact />
-                          <ScoreBadge score={calcOpportunityScore(item as Record<string, unknown>)} />
-                          <FreshnessBadge lead={item as Record<string, unknown>} />
-                          <BuyingBadge summary={buyingByItem.get(item)} compact />
-                          <BusinessSignalBadge signals={miraxByItem.get(item)?.businessSignals ?? []} compact />
-                          {(miraxByItem.get(item)?.intentSignals?.length ?? 0) > 0 ? (
-                            <MarketingInvestorBadge compact />
-                          ) : null}
-                          <LeadComplianceBadge status="unknown" compact />
-                          <UniverseHydratedBadge lead={item as Record<string, unknown>} compact />
+                          {focusedSignalQuery ? (
+                            (() => {
+                              const obj = item && typeof item === 'object' ? (item as Record<string, unknown>) : {}
+                              const cell = intentCellForLead(obj, signalIntent)
+                              if (!cell) {
+                                return <span className="text-[11px] text-gray-400">—</span>
+                              }
+                              return (
+                                <div className="flex flex-col items-center gap-1 min-w-0 max-w-[120px]">
+                                  <span
+                                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold text-center leading-tight ${cell.className}`}
+                                    title={cell.detail || cell.label}
+                                  >
+                                    {cell.label}
+                                  </span>
+                                  {cell.detail ? (
+                                    <span
+                                      className="text-[9px] text-violet-800 text-center line-clamp-2 leading-snug"
+                                      title={cell.detail}
+                                    >
+                                      {cell.detail}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              )
+                            })()
+                          ) : (
+                            <>
+                              <IntentScoreBadge breakdown={getIntent(item) ?? { score: 0, basePoints: 0, recentMultiplier: 1, strengthMultiplier: 1, relationshipMultiplier: 1, contributors: [], signalTypes: [] }} compact />
+                              <ScoreBadge score={calcOpportunityScore(item as Record<string, unknown>)} />
+                              <FreshnessBadge lead={item as Record<string, unknown>} />
+                              <BuyingBadge summary={buyingByItem.get(leadStableKey(asRecord(item) || {}))} compact />
+                              <BusinessSignalBadge signals={getMirax(item)?.businessSignals ?? []} compact />
+                              {(getMirax(item)?.intentSignals?.length ?? 0) > 0 ? (
+                                <MarketingInvestorBadge compact />
+                              ) : null}
+                              <LeadComplianceBadge status="unknown" compact />
+                              <UniverseHydratedBadge lead={item as Record<string, unknown>} compact />
+                            </>
+                          )}
                         </div>
                       </td>
 

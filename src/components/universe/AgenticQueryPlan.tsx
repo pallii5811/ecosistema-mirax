@@ -21,12 +21,15 @@ const ICONS = {
 export function AgenticQueryPlan({ query, className }: Props) {
   const [open, setOpen] = useState(false)
   const steps = buildUniverseQueryPlan(query)
+  const panelId = 'agentic-query-plan-steps'
 
   return (
     <div className={cn('rounded-xl border border-slate-200 bg-slate-50/80', className)}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={panelId}
         className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
       >
         <span className="text-xs font-bold uppercase tracking-wide text-slate-500">
@@ -35,7 +38,7 @@ export function AgenticQueryPlan({ query, className }: Props) {
         {open ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
       </button>
       {open ? (
-        <ol className="space-y-2 border-t border-slate-200 px-4 py-3">
+        <ol id={panelId} className="space-y-2 border-t border-slate-200 px-4 py-3">
           {steps.map((step, i) => {
             const Icon = ICONS[step.icon]
             return (

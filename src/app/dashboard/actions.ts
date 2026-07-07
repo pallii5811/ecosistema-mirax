@@ -23,6 +23,7 @@ import {
   type SignalIntentSpec,
 } from '@/lib/signal-intent'
 import { inferMapsCategoryFromIntent, inferSearchKeywordsFromIntent, queryNamesExplicitCategory } from '@/lib/signal-intent/infer-maps-category'
+import { filterLeadsWithAI } from '@/lib/lead-relevance'
 
 
 
@@ -197,90 +198,6 @@ type TextToFilterSearchResponse = {
 
 export type SearchActionOptions = {
   maxLeads?: number
-}
-
-
-
-async function filterLeadsWithAI(leads: any[], originalQuery: string): Promise<any[]> {
-
-  if (leads.length === 0) return []
-
-  const sample = leads.slice(0, 150)
-
-  const leadSummaries = sample.map((lead, i) => ({
-
-    i,
-
-    nome: lead.nome || '',
-
-    categoria: lead.categoria || '',
-
-  }))
-
-  const prompt = `L'utente ha cercato: "${originalQuery}"\n\nAnalizza questa lista di aziende e dimmi quali sono PERTINENTI alla ricerca dell'utente.\n\nUn'azienda è pertinente SOLO se appartiene alla stessa categoria o a una categoria strettamente correlata.\n\nEsempi:\n- Cerca "discoteche" → pertinenti: club, pub, bar, locali notturni. NON pertinenti: web agency, dentisti\n- Cerca "avvocati" → pertinenti: studi legali, notai. NON pertinenti: ristoranti, palestre\n- Cerca "sviluppatori web" → pertinenti: web agency, software house. NON pertinenti: ristoranti, dentisti\n\nLista aziende:\n${JSON.stringify(leadSummaries)}\n\nRispondi SOLO con array JSON degli indici pertinenti.\nEsempio: [0,1,3,5]\nZero testo aggiuntivo. Solo l'array.`
-
-  try {
-
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-
-      method: 'POST',
-
-      headers: {
-
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-
-        'Content-Type': 'application/json',
-
-      },
-
-      body: JSON.stringify({
-
-        model: 'gpt-4o-mini',
-
-        messages: [{ role: 'user', content: prompt }],
-
-        max_tokens: 300,
-
-        temperature: 0,
-
-      }),
-
-    })
-
-    const data = await response.json()
-
-    // Safety: if OpenAI returned no choices (rate limit, error, etc.), skip filter
-    if (!data.choices?.[0]?.message?.content) {
-      console.warn('[AI FILTER] OpenAI returned no choices, skipping filter')
-      return leads
-    }
-
-    const content = data.choices[0].message.content
-
-    const clean = content.replace(/```json|```/g, '').trim()
-
-    const relevantIndices: number[] = JSON.parse(clean)
-
-    // Safety: if AI returned empty but we had leads, don't wipe everything
-    if (relevantIndices.length === 0 && sample.length > 0) {
-      console.warn('[AI FILTER] AI returned empty array for', sample.length, 'leads — skipping filter')
-      return leads
-    }
-
-    const filteredSample = sample.filter((_, i) => relevantIndices.includes(i))
-
-    const rest = leads.slice(150)
-
-    return [...filteredSample, ...rest]
-
-  } catch (e) {
-
-    console.error('[AI FILTER] Errore OpenAI:', e)
-
-    return leads
-
-  }
-
 }
 
 
@@ -1286,83 +1203,6 @@ export async function textToFilterSearchActionExpanded(userQuery: string): Promi
 
 
 
-    async function filterLeadsWithAI(leads: any[], originalQuery: string): Promise<any[]> {
-      if (leads.length === 0) return []
-
-      const sample = leads.slice(0, 150)
-
-      const leadSummaries = sample.map((lead, i) => ({
-        i,
-        nome: lead.nome || '',
-        categoria: lead.categoria || '',
-      }))
-
-      const prompt = `L'utente ha cercato: "${originalQuery}"
-
-Analizza questa lista di aziende e dimmi quali sono 
-PERTINENTI alla ricerca dell'utente.
-
-Un'azienda è pertinente SOLO se appartiene alla stessa 
-categoria o a una categoria strettamente correlata.
-
-Esempi:
-- Cerca "discoteche" → pertinenti: club, pub, bar, 
-  locali notturni. NON pertinenti: web agency, dentisti
-- Cerca "avvocati" → pertinenti: studi legali, notai.
-  NON pertinenti: ristoranti, palestre
-- Cerca "sviluppatori web" → pertinenti: web agency, 
-  software house. NON pertinenti: ristoranti, dentisti
-
-Lista aziende:
-${JSON.stringify(leadSummaries)}
-
-Rispondi SOLO con array JSON degli indici pertinenti.
-Esempio: [0,1,3,5]
-Zero testo aggiuntivo. Solo l'array.`
-
-      try {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            messages: [{ role: 'user', content: prompt }],
-            max_tokens: 800,
-            temperature: 0,
-          }),
-        })
-
-        const data = await response.json()
-
-        // Safety: if OpenAI returned no choices (rate limit, error, etc.), skip filter
-        if (!data.choices?.[0]?.message?.content) {
-          console.warn('[AI FILTER] OpenAI returned no choices, skipping filter')
-          return leads
-        }
-
-        const content = data.choices[0].message.content
-        const clean = content.replace(/```json|```/g, '').trim()
-        const relevantIndices: number[] = JSON.parse(clean)
-
-        // Safety: if AI returned empty but we had leads, don't wipe everything
-        if (relevantIndices.length === 0 && sample.length > 0) {
-          console.warn('[AI FILTER] AI returned empty array for', sample.length, 'leads — skipping filter')
-          return leads
-        }
-
-        const filteredSample = sample.filter((_, i) => relevantIndices.includes(i))
-        const rest = leads.slice(150)
-
-        return [...filteredSample, ...rest]
-      } catch (e) {
-        console.error('[AI FILTER] Errore OpenAI:', e)
-        return leads
-      }
-    }
-
     const citta = cityBase.toLowerCase()
 
     if (citta) validLeads = validLeads.filter((lead) => (lead.citta || '').toLowerCase().includes(citta))
@@ -1397,7 +1237,7 @@ Zero testo aggiuntivo. Solo l'array.`
 
     {
       const before = validLeads.length
-      validLeads = await filterLeadsWithAI(validLeads, query)
+      validLeads = (await filterLeadsWithAI(validLeads as any[], query)) as typeof validLeads
       console.log('RELEVANCE FILTER:', {
         before,
         after: validLeads.length,
@@ -4012,127 +3852,152 @@ export async function textToFilterSearchAction(
 
     const existingJobMaxAgeMs = 10 * 60 * 1000
 
-    const available = await fetchAvailableSearchOptions(supabase)
+    // FAST PATH: simple city+category queries skip slow LLM calls.
+    const heur = heuristicSearchNlpParams(query)
+    const offlineIntent = parseSignalIntentOffline(query)
+    const inferredCategory = inferMapsCategoryFromIntent(query, offlineIntent)
+    const fastCity = heur.city
+    const fastCategory = heur.category || inferredCategory
+    const canFastPath = Boolean(fastCity && fastCategory && offlineIntent.required_signals.length === 0)
 
-    let nlp = await openaiSearchNlpParams(query, available)
+    let available: { available_categories: string[]; available_locations: string[] } = { available_categories: [], available_locations: [] }
+    let nlp: SearchNlpParams
+
+    if (canFastPath) {
+      nlp = {
+        ...heur,
+        category: fastCategory,
+        keywords: heur.keywords ?? [],
+        excluded_keywords: heur.excluded_keywords ?? [],
+        technical_filters: heur.technical_filters,
+        signal_intent: offlineIntent,
+      }
+    } else {
+      available = await fetchAvailableSearchOptions(supabase)
+      nlp = await openaiSearchNlpParams(query, available)
+    }
 
     // Hard-enforce negative intents from raw query so they are never ignored.
 
     // (Example: "senza Instagram" must always behave as instagram_missing=true)
 
-    const heur = heuristicSearchNlpParams(query)
+    if (!canFastPath) {
+
+      // If the raw query clearly contains a strong category signal, prefer heuristic category
+
+      // over a hallucinated LLM category.
+
+      const norm = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase().replace(/\s+/g, ' ') : '')
+
+      try {
+
+        const qNorm = query.trim().toLowerCase().replace(/\s+/g, ' ')
+
+        const _stopLoc2 = new Set(['a','ad','in','su','da','di','per','con','tra','fra','al','del','nel','dal','sul'])
+
+        const findBestMatch = (candidates: string[]) => {
+
+          let best: string | null = null
+
+          for (const raw of candidates) {
+
+            if (typeof raw !== 'string') continue
+
+            const cand = raw.trim()
+
+            if (!cand || _stopLoc2.has(cand.toLowerCase())) continue
+
+            const candNorm = cand.toLowerCase()
+
+            const re = new RegExp(`\\b${candNorm.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'i')
+
+            if (re.test(qNorm)) {
+
+              if (!best || cand.length > best.length) best = cand
+
+            }
+
+          }
+
+          return best
+
+        }
 
 
 
-    // If the raw query clearly contains a strong category signal, prefer heuristic category
+        const cityFromQuery = findBestMatch(Array.isArray(available.available_locations) ? available.available_locations : [])
 
-    // over a hallucinated LLM category.
+        if (cityFromQuery) {
 
-    const norm = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase().replace(/\s+/g, ' ') : '')
+          const llmCity = norm((nlp as any)?.city)
 
-    try {
+          const picked = cityFromQuery.trim()
 
-      const qNorm = query.trim().toLowerCase().replace(/\s+/g, ' ')
+          if (!llmCity || llmCity !== norm(picked)) {
 
-      const _stopLoc2 = new Set(['a','ad','in','su','da','di','per','con','tra','fra','al','del','nel','dal','sul'])
-
-      const findBestMatch = (candidates: string[]) => {
-
-        let best: string | null = null
-
-        for (const raw of candidates) {
-
-          if (typeof raw !== 'string') continue
-
-          const cand = raw.trim()
-
-          if (!cand || _stopLoc2.has(cand.toLowerCase())) continue
-
-          const candNorm = cand.toLowerCase()
-
-          const re = new RegExp(`\\b${candNorm.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'i')
-
-          if (re.test(qNorm)) {
-
-            if (!best || cand.length > best.length) best = cand
+            nlp = { ...nlp, city: picked }
 
           }
 
         }
 
-        return best
-
-      }
 
 
+        const categoryFromQuery = findBestMatch(Array.isArray(available.available_categories) ? available.available_categories : [])
 
-      const cityFromQuery = findBestMatch(Array.isArray(available.available_locations) ? available.available_locations : [])
+        if (categoryFromQuery) {
 
-      if (cityFromQuery) {
+          const llmCat2 = norm((nlp as any)?.category)
 
-        const llmCity = norm((nlp as any)?.city)
+          const picked = categoryFromQuery.trim()
 
-        const picked = cityFromQuery.trim()
+          if (!llmCat2 || llmCat2 !== norm(picked)) {
 
-        if (!llmCity || llmCity !== norm(picked)) {
+            nlp = { ...nlp, category: picked }
 
-          nlp = { ...nlp, city: picked }
+          }
 
         }
 
-      }
+      } catch (e) {
 
-
-
-      const categoryFromQuery = findBestMatch(Array.isArray(available.available_categories) ? available.available_categories : [])
-
-      if (categoryFromQuery) {
-
-        const llmCat2 = norm((nlp as any)?.category)
-
-        const picked = categoryFromQuery.trim()
-
-        if (!llmCat2 || llmCat2 !== norm(picked)) {
-
-          nlp = { ...nlp, category: picked }
-
-        }
+        console.log('[hybrid] deterministic match failed:', e)
 
       }
 
-    } catch (e) {
+      const heurCity = norm((heur as any)?.city)
 
-      console.log('[hybrid] deterministic match failed:', e)
+      const llmCity = norm((nlp as any)?.city)
+
+      // Only use heuristic city as fallback when LLM didn't find one,
+
+      // AND the heuristic city looks like a real location (not a category word)
+
+      const knownLocations = (Array.isArray(available?.available_locations) ? available.available_locations : []).map(l => l.toLowerCase())
+
+      const heurCityIsKnown = heurCity && knownLocations.some(loc => loc.includes(heurCity) || heurCity.includes(loc))
+
+      if (heurCity && !llmCity && heurCityIsKnown) {
+
+        nlp = { ...nlp, city: (heur as any).city }
+
+      }
+
+      const heurCat = norm(heur.category)
+
+      const llmCat = norm(nlp.category)
+
+      if (heurCat && !llmCat) {
+
+        nlp = { ...nlp, category: heur.category }
+
+      }
 
     }
 
-    const heurCity = norm((heur as any)?.city)
-
-    const llmCity = norm((nlp as any)?.city)
-
-    // Only use heuristic city as fallback when LLM didn't find one,
-    // AND the heuristic city looks like a real location (not a category word)
-    const knownLocations = (Array.isArray(available?.available_locations) ? available.available_locations : []).map(l => l.toLowerCase())
-    const heurCityIsKnown = heurCity && knownLocations.some(loc => loc.includes(heurCity) || heurCity.includes(loc))
-    if (heurCity && !llmCity && heurCityIsKnown) {
-
-      nlp = { ...nlp, city: (heur as any).city }
-
-    }
-
-    const heurCat = norm(heur.category)
-
-    const llmCat = norm(nlp.category)
-
-    if (heurCat && !llmCat) {
-
-      nlp = { ...nlp, category: heur.category }
-
-    }
 
 
-
-    const semanticIntent = await parseSignalIntent(query)
+    const semanticIntent = canFastPath ? offlineIntent : await parseSignalIntent(query)
 
     const inferredMapsCategory = inferMapsCategoryFromIntent(query, semanticIntent)
     let resolvedCategory =
@@ -4612,6 +4477,7 @@ export async function textToFilterSearchAction(
           maxLeads: requestedMaxLeads,
           userId: user?.id,
           categoryVariants,
+          originalQuery: query,
         })
 
         console.log('[hybrid] incremental scrape (empty cache):', scrape)
@@ -5206,7 +5072,7 @@ export async function textToFilterSearchAction(
 
     console.log('LEAD FILTRATI (COUNT):', validLeads.length)
 
-    validLeads = await filterLeadsWithAI(validLeads, query)
+    validLeads = (await filterLeadsWithAI(validLeads as any[], query)) as typeof validLeads
 
     console.log('LEAD FILTRATI AI (COUNT):', validLeads.length)
 
@@ -5408,6 +5274,7 @@ export async function textToFilterSearchAction(
           maxLeads: requestedMaxLeads,
           userId: user?.id,
           categoryVariants,
+          originalQuery: query,
         })
         derivedSearchIdFinal = scrape.jobId
         cacheMeta = {

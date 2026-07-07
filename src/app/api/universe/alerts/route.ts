@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { requireUniverseAuth } from '@/lib/universe/require-auth'
+import { universeClientError } from '@/lib/universe/errors'
 
 export async function GET(req: NextRequest) {
   const auth = await requireUniverseAuth()
@@ -62,6 +63,9 @@ export async function PATCH(req: NextRequest) {
     .eq('user_id', user.id)
     .eq('alert_type', 'universe_graph')
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    console.error('[universe/alerts] update error', error)
+    return NextResponse.json({ error: 'Errore aggiornamento alert' }, { status: 500 })
+  }
   return NextResponse.json({ ok: true })
 }

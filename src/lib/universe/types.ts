@@ -15,6 +15,9 @@ export type EntityType =
   | 'document'
   | 'product'
   | 'location'
+  | 'tender'
+  | 'investor'
+  | 'product_category'
 
 export type RelationshipType =
   | 'owns'
@@ -27,11 +30,25 @@ export type RelationshipType =
   | 'located_in'
   | 'related_to'
   | 'mentioned_in'
+  | 'supplies'
+  | 'supplied_by'
+  | 'sells_to'
+  | 'buys_from'
+  | 'partner_of'
+  | 'invested_in'
+  | 'received_investment_from'
+  | 'customer_of'
+  | 'has_customer'
+  | 'awarded_to'
+  | 'awarded_by'
+  | 'competed_for'
 
 export type AliasType =
   | 'domain'
   | 'vat'
   | 'linkedin'
+  | 'facebook'
+  | 'instagram'
   | 'phone'
   | 'email'
   | 'name_variant'
@@ -43,11 +60,20 @@ export type UniverseEventType =
   | 'new_hiring'
   | 'new_director'
   | 'crm_installed'
+  | 'crm_change'
+  | 'ads_started'
   | 'tender_won'
   | 'funding_received'
   | 'registry_change'
+  | 'sector_investment'
   | 'revenue_changed'
   | 'employees_changed'
+  | 'supplier_sought'
+  | 'expansion_started'
+  | 'new_product_launched'
+  | 'market_entered'
+  | 'executive_change'
+  | 'partnership_announced'
 
 export interface UniverseEntity {
   id: string
@@ -85,6 +111,7 @@ export interface UniverseObservation {
   source: string
   confidence?: number
   metadata?: Record<string, unknown>
+  dedup_key?: string
   created_at?: string
 }
 
@@ -111,6 +138,7 @@ export interface UniverseEvent {
   processed?: boolean
   error_count?: number
   error_message?: string | null
+  dedup_key?: string
   created_at?: string
 }
 

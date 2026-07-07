@@ -6,13 +6,19 @@ import type {
   UniverseEvent,
 } from './types.ts'
 import type { SignalIntentSpec } from '@/lib/signal-intent/types'
+import type { CommercialIntent } from '@/lib/signal-intent/commercial-intent'
 import type { UniverseQuery } from './query-builder.ts'
+import type { FeedbackAction } from './feedback.ts'
 
 export type AgenticSearchResult = {
   ok: boolean
+  mode?: 'commercial' | 'signal'
   user_query: string | null
   intent_summary: string
+  reasoning?: string | null
+  confidence?: number | null
   parse_source: string
+  commercial_intent?: CommercialIntent | null
   signal_intent?: SignalIntentSpec
   universe_query: UniverseQuery
   total: number
@@ -20,16 +26,20 @@ export type AgenticSearchResult = {
   elapsed_ms?: number
 }
 
-export async function runAgenticUniverseSearch(opts: {
-  user_query: string
-  city?: string
-  limit?: number
-}): Promise<AgenticSearchResult> {
+export async function runAgenticUniverseSearch(
+  opts: {
+    user_query: string
+    city?: string
+    limit?: number
+  },
+  signal?: AbortSignal,
+): Promise<AgenticSearchResult> {
   const res = await fetch('/api/universe/agentic-search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(opts),
     cache: 'no-store',
+    signal,
   })
   return parseJson<AgenticSearchResult>(res)
 }
@@ -95,6 +105,13 @@ export async function getUniverseDigitalTwin(entityId: string) {
   return parseJson<DigitalTwinResponse>(res)
 }
 
+export async function getUniverseUserContext(entityId: string) {
+  const res = await fetch(`/api/universe/entities/${encodeURIComponent(entityId)}/context`, {
+    cache: 'no-store',
+  })
+  return parseJson<{ ok: boolean; contexts: Array<{ context_type: string; metadata?: Record<string, unknown> }> }>(res)
+}
+
 export async function setUniverseUserContext(
   entityId: string,
   context_type: 'saved' | 'contacted' | 'pipeline' | 'ignored' | 'note' | 'hidden',
@@ -118,6 +135,23 @@ export async function removeUniverseUserContext(
     { method: 'DELETE' },
   )
   return parseJson<{ ok: boolean }>(res)
+}
+
+export async function recordUniverseFeedback(opts: {
+  entity_id?: string | null
+  action: FeedbackAction
+  user_query?: string | null
+  search_intent?: Record<string, unknown>
+  outcome?: string | null
+  feedback_value?: number | null
+  metadata?: Record<string, unknown>
+}) {
+  const res = await fetch('/api/universe/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  return parseJson<{ ok: boolean; feedback: unknown }>(res)
 }
 
 export async function runUniverseAgentPipeline(opts: {
@@ -145,4 +179,9 @@ export async function getUniverseTimeline(entityId: string, attribute?: string) 
   if (attribute) qs.set('attribute', attribute)
   const res = await fetch(`/api/universe/timeline/${encodeURIComponent(entityId)}?${qs}`, { cache: 'no-store' })
   return parseJson<{ points: TimelinePoint[]; count: number }>(res)
+}
+
+export async function getEntityPii(entityId: string) {
+  const res = await fetch(`/api/universe/entities/${encodeURIComponent(entityId)}/pii`, { cache: 'no-store' })
+  return parseJson<{ ok: boolean; pii: { phone: string | null; email: string | null; pec_email: string | null; mobile_phone: string | null }; remaining: number; count: number }>(res)
 }

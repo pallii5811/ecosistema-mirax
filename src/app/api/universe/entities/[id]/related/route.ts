@@ -3,9 +3,10 @@
  * Get related entities filtered by relationship type.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceRoleClient } from '@/utils/supabase/server'
+import { createClient } from '@/utils/supabase/server'
 import { getRelatedEntities, getSubgraph } from '@/lib/universe'
 import { requireUniverseAuth } from '@/lib/universe/require-auth'
+import { universeClientError } from '@/lib/universe/errors'
 import type { RelationshipType } from '@/lib/universe'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const body = await req.json().catch(() => ({}))
     const { relationship_type, depth = 1 } = body || {}
 
-    const sb = createServiceRoleClient()
+    const sb = await createClient()
 
     if (depth > 1) {
       const graph = await getSubgraph(sb, id, depth)
@@ -28,8 +29,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const related = await getRelatedEntities(sb, id, relationship_type as RelationshipType)
     return NextResponse.json({ related })
-  } catch (e: any) {
-    console.error('[universe/entities/:id/related] error:', e)
-    return NextResponse.json({ error: e.message || 'Errore lettura relazioni' }, { status: 500 })
+  } catch (e: unknown) {
+    const { message, status } = universeClientError(e, 'entities/:id/related')
+    return NextResponse.json({ error: message }, { status })
   }
 }

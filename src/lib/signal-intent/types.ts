@@ -7,12 +7,22 @@ export type MiraxSignalRequirement =
   | 'registry_change'
   | 'sector_investment'
   | 'tender_won'
+  | 'funding_received'
   | 'crm_detected'
+  | 'crm_installed'
   | 'crm_change'
   | 'site_stale'
   | 'meta_ads_started'
   | 'google_ads_started'
   | 'investing_marketing'
+  | 'seeking_supplier'
+  | 'expansion'
+  | 'executive_change'
+  | 'investing_expansion'
+  | 'new_product'
+  | 'market_entry'
+  | 'new_company'
+  | 'tech_migration'
 
 export type IntentTechnicalFilters = {
   has_gtm?: boolean | null
@@ -22,12 +32,20 @@ export type IntentTechnicalFilters = {
   errors_seo?: boolean | null
   site_speed?: 'fast' | 'slow' | null
   mobile_friendly?: boolean | null
+  load_speed_slow?: boolean | null
+  has_chatbot?: boolean | null
+  has_booking?: boolean | null
+  /** Tecnologie / piattaforme rilevate dalla query (wordpress, shopify, react, ...) */
+  technologies?: string[] | null
 }
 
 export type IntentSocialFilters = {
   has_instagram?: boolean | null
   has_facebook?: boolean | null
   has_linkedin?: boolean | null
+  missing_instagram?: boolean | null
+  missing_facebook?: boolean | null
+  missing_linkedin?: boolean | null
   reviews_negative?: boolean | null
   social_followers_low?: boolean | null
 }

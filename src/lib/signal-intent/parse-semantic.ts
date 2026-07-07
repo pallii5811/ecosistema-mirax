@@ -234,7 +234,10 @@ export async function parseSignalIntent(query: string): Promise<SignalIntentSpec
 /** Per test offline — salta chiamate AI */
 export function parseSignalIntentOffline(query: string): SignalIntentSpec {
   const heuristic = parseSignalIntentHeuristic(query)
-  if (intentSpecHasMatches(heuristic)) return mergeIntentSummary({ ...heuristic, parse_source: 'heuristic' })
+  // Se l'euristica ha già estratto categoria o location, usala senza aggiungere segnali "a caso" dal graph fallback.
+  if (intentSpecHasMatches(heuristic) || heuristic.category || heuristic.location) {
+    return mergeIntentSummary({ ...heuristic, parse_source: 'heuristic' })
+  }
   return mergeIntentSummary(inferFromSemanticGraph(query))
 }
 

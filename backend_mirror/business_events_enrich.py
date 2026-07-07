@@ -10,8 +10,10 @@ import os
 import random
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Set
-from urllib.parse import quote
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from urllib.parse import quote, urljoin
+
+from anac_client import search_anac_tenders
 
 CRM_PATTERNS: List[tuple[str, re.Pattern[str]]] = [
     ("HubSpot", re.compile(r"hubspot|js\.hs-scripts\.com|hsforms\.net", re.I)),
@@ -122,6 +124,168 @@ def detect_crm_from_html(html: Optional[str]) -> List[str]:
         if pat.search(html):
             found.append(label)
     return list(dict.fromkeys(found))
+
+
+def detect_crm_signal(lead: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Segnale CRM rilevato sul sito o nello stack tecnologico."""
+    crms = lead.get("detected_crm_stack") or []
+    if not isinstance(crms, list) or not crms:
+        stack = _tech_stack_text(lead).lower()
+        crms = detect_crm_from_html(stack)
+    if not crms:
+        return []
+    website = _lead_website(lead)
+    return [
+        _make_signal(
+            "crm_installed",
+            f"CRM rilevato: {', '.join(str(c) for c in crms[:3])}",
+            severity="medium",
+            confidence=85,
+            evidence=[
+                {"label": "CRM", "value": str(crms[0]), "source": "mirax_audit", "url": website or None},
+                {"label": "Tecnologie", "value": ", ".join(str(c) for c in crms[:3]), "source": "mirax_audit"},
+            ],
+        )
+    ]
+
+
+def detect_marketing_investment_signal(lead: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Segnale investimento marketing — solo Meta Ad Library verificata (non pixel/tag tecnici)."""
+    signals: List[Dict[str, Any]] = []
+    tr = _tech_report(lead)
+    website = _lead_website(lead)
+
+    active_meta = tr.get("active_meta_ads") or lead.get("active_meta_ads")
+    meta_verified = bool(tr.get("meta_ads_verified") or lead.get("meta_ads_verified"))
+    try:
+        active_count = int(active_meta) if active_meta is not None else 0
+    except (TypeError, ValueError):
+        active_count = 0
+
+    if meta_verified and active_count > 0:
+        signals.append(
+            _make_signal(
+                "investing_marketing",
+                f"Investe in Meta Advertising — {active_count} inserzioni attive",
+                severity="high",
+                confidence=94,
+                evidence=[
+                    {
+                        "label": "Meta Ad Library",
+                        "value": f"{active_count} inserzioni attive",
+                        "source": "meta_ad_library",
+                        "url": website or None,
+                    }
+                ],
+            )
+        )
+    return signals
+
+
+def _intent_signal_types(intent: Optional[Dict[str, Any]]) -> Set[str]:
+    if not isinstance(intent, dict):
+        return set()
+    signals = intent.get("signals") or []
+    return {str(s.get("type", "")).lower() for s in signals if isinstance(s, dict) and s.get("type")}
+
+
+def _intent_hiring_roles(intent: Optional[Dict[str, Any]]) -> List[str]:
+    """Ruoli hiring da CommercialIntent, SignalIntentSpec legacy e params segnali."""
+    if not isinstance(intent, dict):
+        return []
+    out: List[str] = []
+    seen: Set[str] = set()
+
+    def _add(role: Any) -> None:
+        r = str(role or "").strip()
+        if not r:
+            return
+        key = r.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(r)
+
+    for s in intent.get("signals") or []:
+        if not isinstance(s, dict) or str(s.get("type", "")).lower() != "hiring":
+            continue
+        params = s.get("params") or {}
+        _add(params.get("role"))
+        for r in params.get("roles") or []:
+            _add(r)
+    for r in intent.get("hiring_roles") or []:
+        _add(r)
+    tp = intent.get("target_profile") or {}
+    if isinstance(tp, dict):
+        for r in tp.get("roles") or []:
+            _add(r)
+    return out
+
+
+_EXTERNAL_SIGNAL_TYPES = frozenset(
+    {
+        "hiring",
+        "tender_won",
+        "funding_received",
+        "executive_change",
+        "website_changed",
+        "crm_change",
+        "crm_installed",
+    }
+)
+
+
+def intent_requires_external_enrichment(intent: Optional[Dict[str, Any]]) -> bool:
+    """True se la query richiede fonti live (Indeed, ANAC, careers, …)."""
+    if not isinstance(intent, dict):
+        return False
+    if _intent_signal_types(intent) & _EXTERNAL_SIGNAL_TYPES:
+        return True
+    req = intent.get("required_signals") or []
+    if isinstance(req, list):
+        return bool({str(x).lower() for x in req} & _EXTERNAL_SIGNAL_TYPES)
+    return False
+
+
+def resolve_enrichment_cap(intent: Optional[Dict[str, Any]], total_leads: int) -> int:
+    """Cap lead da arricchire — più alto quando servono segnali live (hiring, gare)."""
+    base = int(os.getenv("ENRICH_BUSINESS_EVENTS_MAX", "40") or "40")
+    hard_max = int(os.getenv("ENRICH_BUSINESS_EVENTS_HARD_MAX", "120") or "120")
+    cap = max(1, min(base, hard_max))
+    if intent_requires_external_enrichment(intent):
+        cap = max(cap, min(max(1, total_leads), hard_max))
+    return cap
+
+
+def _roles_from_query_text(intent: Optional[Dict[str, Any]]) -> List[str]:
+    """Fallback: estrae ruoli hiring dalla query originale se i params segnali sono vuoti."""
+    if not isinstance(intent, dict):
+        return []
+    q = str(intent.get("query") or intent.get("original_query") or "").lower()
+    if not q:
+        return []
+    out: List[str] = []
+    if re.search(r"\bcommercial\w*\b", q):
+        out.append("commerciale")
+    if re.search(r"\bprogrammator\w*|developer\w*|sviluppat\w*\b", q):
+        out.append("programmatore")
+    if re.search(r"\bmarketing\s+manager\b|\bcopywriter\b|\bseo\b", q):
+        out.append("marketing")
+    return out
+
+
+def _intent_hiring_roles_full(intent: Optional[Dict[str, Any]]) -> List[str]:
+    roles = _intent_hiring_roles(intent)
+    if roles:
+        return roles
+    return _roles_from_query_text(intent)
+
+
+def _intent_sector_keywords(intent: Optional[Dict[str, Any]]) -> List[str]:
+    if not isinstance(intent, dict):
+        return []
+    industries = intent.get("target_profile", {}).get("industries") or []
+    return [str(i).strip() for i in industries if str(i).strip()]
 
 
 def detect_sector_hits(text: str, extra_keywords: Optional[List[str]] = None) -> List[Dict[str, str]]:
@@ -310,7 +474,7 @@ def detect_signals_from_audit(lead: Dict[str, Any]) -> List[Dict[str, Any]]:
         lead["detected_crm_stack"] = crms
         signals.append(
             _make_signal(
-                "crm_detected",
+                "crm_installed",
                 f"CRM rilevato — {', '.join(crms[:2])}",
                 severity="medium",
                 confidence=88,
@@ -432,17 +596,233 @@ async def detect_registry_signals_api(piva: str) -> List[Dict[str, Any]]:
         return []
 
 
-async def detect_hiring_signal(company_name: str, city: str) -> List[Dict[str, Any]]:
-    """Indeed IT via HTTP — no Playwright."""
+_HIRING_WORDS = [
+    "lavora", "candidati", "posizioni aperte", "job", "careers", "assumiamo",
+    "opportunità", "lavoro", "team", "join us", "lavora con noi", "carriere",
+    "work with us", "we are hiring", "diventa parte", "invia cv",
+]
+
+_CAREER_LINK_KEYWORDS = [
+    "lavora", "careers", "jobs", "posizioni", "lavoro", "join us", "assumiamo",
+    "carriere", "work with us", "lavora con noi",
+]
+
+_HIRING_CAREERS_PATHS = [
+    "/lavora-con-noi",
+    "/careers",
+    "/jobs",
+    "/lavora",
+    "/posizioni-aperte",
+    "/carriere",
+    "/work-with-us",
+]
+
+_JOB_TITLE_HINTS = (
+    "commerc", "sales", "vendit", "marketing", "developer", "programm", "designer",
+    "manager", "specialist", "consultant", "assistent", "account", "stage", "tirocinio",
+    "junior", "senior", "coordinator", "analyst", "engineer", "copywriter", "seo",
+)
+
+
+def _extract_job_titles_from_careers_html(html: str, role_variants: Optional[List[str]] = None) -> List[str]:
+    """Estrae titoli offerte da HTML pagina careers (deterministico, testabile)."""
+    if not html:
+        return []
+    titles: List[str] = []
+    seen: Set[str] = set()
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html, "html.parser")
+        for el in soup.find_all(["h1", "h2", "h3", "h4", "li", "a", "p", "strong", "span"]):
+            t = el.get_text(" ", strip=True)
+            if not (5 <= len(t) <= 140):
+                continue
+            tl = t.lower()
+            if tl in seen or tl in {"lavora con noi", "careers", "jobs", "carriere", "candidati", "work with us"}:
+                continue
+            job_like = any(h in tl for h in _JOB_TITLE_HINTS)
+            if role_variants:
+                if not any(r in tl for r in role_variants):
+                    continue
+            elif not job_like:
+                continue
+            seen.add(tl)
+            titles.append(t[:200])
+            if len(titles) >= 5:
+                break
+    except Exception:
+        pass
+    return titles
+
+
+def _careers_html_qualifies(lower: str, role_variants: List[str]) -> bool:
+    if not any(w in lower for w in _HIRING_WORDS):
+        return False
+    if role_variants:
+        for r in role_variants:
+            if len(r) <= 4:
+                if re.search(rf"\b{re.escape(r)}\b", lower):
+                    return True
+            elif r in ("commerciale", "commercial"):
+                if re.search(r"\bcommerciale\b|\bcommercial\b|\bsales\b|\bvenditor\w*\b", lower):
+                    return True
+            elif r in lower:
+                return True
+        return False
+    return True
+
+
+def _hiring_signal_from_careers_jobs(
+    name: str,
+    url: str,
+    job_titles: List[str],
+    *,
+    role_specific: bool,
+) -> List[Dict[str, Any]]:
+    if not job_titles:
+        return []
+    primary = job_titles[0]
+    title = (
+        f"Sta assumendo — {primary}"
+        if len(job_titles) == 1
+        else f"Sta assumendo — {len(job_titles)} posizioni aperte"
+    )
+    evidence: List[Dict[str, Any]] = [
+        {"label": "Fonte", "value": "Sito aziendale", "source": "website_careers", "url": url, "company": name},
+    ]
+    for jt in job_titles[:3]:
+        evidence.append({"label": "Offerta", "value": jt, "source": "website_careers", "url": url, "company": name})
+    return [
+        _make_signal(
+            "hiring",
+            title,
+            severity="high" if role_specific else "medium",
+            confidence=85 if role_specific else 70,
+            evidence=evidence,
+        )
+    ]
+
+
+def _hiring_signals_for_careers_html(
+    name: str,
+    url: str,
+    html: str,
+    role_variants: List[str],
+) -> List[Dict[str, Any]]:
+    lower = (html or "").lower()
+    if not _careers_html_qualifies(lower, role_variants):
+        return []
+    titles = _extract_job_titles_from_careers_html(html, role_variants or None)
+    if role_variants and not titles:
+        matched = [r for r in role_variants if r in lower]
+        if matched:
+            titles = [f"{matched[0].title()} — pagina careers"]
+    if not titles and not role_variants:
+        titles = ["Posizioni aperte — pagina careers"]
+    if not titles:
+        return []
+    return _hiring_signal_from_careers_jobs(name, url, titles, role_specific=bool(role_variants))
+
+
+async def detect_hiring_via_website(lead: Dict[str, Any], roles: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Fallback se Indeed/InfoJobs falliscono: cerca pagine careers sul sito aziendale."""
+    website = _lead_website(lead)
+    name = _lead_name(lead)
+    if not website:
+        return []
+    role_variants = _expand_hiring_roles(roles or [])
+    try:
+        import httpx
+
+        headers = dict(random.choice(HEADERS_POOL))
+
+        async def _fetch(url: str, client: httpx.AsyncClient) -> Tuple[int, str]:
+            try:
+                resp = await client.get(url, headers=headers)
+                return resp.status_code, resp.text or ""
+            except Exception:
+                return 0, ""
+
+        async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+            urls_to_fetch = [website] + [website.rstrip("/") + p for p in _HIRING_CAREERS_PATHS]
+            fetched = await asyncio.gather(*[_fetch(u, client) for u in urls_to_fetch])
+
+            for url, (status, text) in zip(urls_to_fetch, fetched):
+                if status != 200:
+                    continue
+                sigs = _hiring_signals_for_careers_html(name, url, text, role_variants)
+                if sigs:
+                    return sigs
+
+            home_status, home_text = fetched[0]
+            if home_status == 200 and home_text:
+                from bs4 import BeautifulSoup
+
+                soup = BeautifulSoup(home_text, "html.parser")
+                careers_links: List[str] = []
+                for a in soup.find_all("a", href=True):
+                    href = str(a.get("href") or "").lower()
+                    text = a.get_text(" ", strip=True).lower()
+                    if any(k in href or k in text for k in _CAREER_LINK_KEYWORDS):
+                        full = urljoin(website, a["href"])
+                        if full.startswith("http") and full not in careers_links:
+                            careers_links.append(full)
+                careers_links = careers_links[:3]
+                if careers_links:
+                    link_results = await asyncio.gather(*[_fetch(u, client) for u in careers_links])
+                    for url, (status, text) in zip(careers_links, link_results):
+                        if status != 200:
+                            continue
+                        sigs = _hiring_signals_for_careers_html(name, url, text, role_variants)
+                        if sigs:
+                            return sigs
+    except Exception as e:
+        print(f"[enrich] website hiring skip: {e}", flush=True)
+    return []
+
+
+def _expand_hiring_roles(roles: List[str]) -> List[str]:
+    """Espande un ruolo in varianti italiane/inglesi per match sui titoli Indeed."""
+    synonyms: Dict[str, List[str]] = {
+        "sviluppatore": ["sviluppatore", "developer", "programmatore", "software engineer", "software developer", "full stack", "frontend", "backend", "web developer"],
+        "developer": ["developer", "sviluppatore", "programmatore", "software engineer", "software developer", "full stack", "frontend", "backend"],
+        "programmatore": ["programmatore", "sviluppatore", "developer", "software engineer", "software developer"],
+        "commerciale": [
+            "commerciale", "commercial", "sales", "account manager", "business developer",
+            "sales manager", "venditore", "venditrice", "venditori", "area manager",
+            "sales representative", "business development", "inside sales", "field sales",
+        ],
+        "marketing": ["marketing", "digital marketing", "marketing manager", "growth", "seo", "copywriter"],
+        "designer": ["designer", "graphic designer", "ux designer", "ui designer", "web designer"],
+        "project manager": ["project manager", "pm", "product manager"],
+        "cameriere": ["cameriere", "cameriera", "waiter", "waitress", "food and beverage", "f&b", "sala"],
+    }
+    out: Set[str] = set()
+    for r in roles:
+        key = r.strip().lower()
+        out.update(synonyms.get(key, [key]))
+        out.add(key)
+    return sorted(out)
+
+
+async def detect_hiring_signal(company_name: str, city: str, roles: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Indeed IT via HTTP — no Playwright. Se roles è fornito, filtra i titoli per ruolo."""
     name = (company_name or "").strip()
     loc = (city or "").strip().split(",")[0].strip() or "Italia"
     if len(name) < 2:
         return []
+    target_roles = [r.strip().lower() for r in (roles or []) if str(r).strip()]
+    role_variants = _expand_hiring_roles(target_roles) if target_roles else []
     try:
         import httpx
 
-        await asyncio.sleep(random.uniform(1.5, 3.0))
-        q = quote(f'"{name}"')
+        await asyncio.sleep(random.uniform(0.3, 0.8) if os.getenv("ENRICH_PARALLEL_WORKERS") else random.uniform(1.0, 2.0))
+        # Query: ruolo + azienda quando richiesto (semantic intent)
+        if role_variants:
+            q = quote(f"{role_variants[0]} {name}")
+        else:
+            q = quote(f'"{name}"')
         l = quote(loc)
         url = f"https://it.indeed.com/jobs?q={q}&l={l}&sort=date&fromage=30"
         headers = dict(random.choice(HEADERS_POOL))
@@ -473,6 +853,9 @@ async def detect_hiring_signal(company_name: str, city: str) -> List[Dict[str, A
                     continue
                 if name_lower and name_lower not in text and name_lower[:8] not in text:
                     continue
+                title_lower = title.lower()
+                if role_variants and not any(r in title_lower for r in role_variants):
+                    continue
                 jobs.append({"title": title[:200], "source": "indeed_it", "date": _utc_now_iso()})
                 if len(jobs) >= 3:
                     break
@@ -480,6 +863,9 @@ async def detect_hiring_signal(company_name: str, city: str) -> List[Dict[str, A
             for m in re.finditer(r'class="jobTitle"[^>]*>.*?<span[^>]*>([^<]{5,200})</span>', html, re.S | re.I):
                 title = re.sub(r"\s+", " ", m.group(1)).strip()
                 if title:
+                    title_lower = title.lower()
+                    if role_variants and not any(r in title_lower for r in role_variants):
+                        continue
                     jobs.append({"title": title[:200], "source": "indeed_it", "date": _utc_now_iso()})
                 if len(jobs) >= 3:
                     break
@@ -510,139 +896,84 @@ async def detect_hiring_signal(company_name: str, city: str) -> List[Dict[str, A
         return []
 
 
-async def detect_tender_signals(company_name: str) -> List[Dict[str, Any]]:
-    """ANAC Open Data — best effort, fallback silenzioso se HTML/non-JSON."""
-    name = (company_name or "").strip()
-    if len(name) < 3:
-        return []
 
-    def _records_from_payload(data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        if not data:
-            return []
-        result = data.get("result") if isinstance(data.get("result"), dict) else {}
-        records = result.get("records") or []
-        if records:
-            return [r for r in records if isinstance(r, dict)]
-        packages = result.get("results") or []
-        out: List[Dict[str, Any]] = []
-        for pkg in packages:
-            if not isinstance(pkg, dict):
-                continue
-            resources = pkg.get("resources") or []
-            for res in resources:
-                if isinstance(res, dict) and res.get("datastore_active"):
-                    out.append(res)
-        return out
 
-    try:
-        import httpx
+async def detect_tender_signals(company_name: str, cf: Optional[str] = None) -> List[Dict[str, Any]]:
+    """ANAC Open Data — structured tender records via anac_client."""
+    return await search_anac_tenders(company_name, cf=cf, max_records=5)
 
-        attempts = [
-            (
-                "https://dati.anticorruzione.it/opendata/api/3/action/datastore_search",
-                {"q": name[:40], "limit": 8},
-            ),
-            (
-                "https://dati.anticorruzione.it/opendata/api/3/action/package_search",
-                {"q": name[:40], "rows": 5},
-            ),
-        ]
-        records: List[Dict[str, Any]] = []
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            for url, params in attempts:
-                resp = await client.get(
-                    url,
-                    params=params,
-                    headers={"Accept": "application/json"},
-                )
-                if resp.status_code != 200:
-                    continue
-                ctype = (resp.headers.get("content-type") or "").lower()
-                body = resp.text or ""
-                if "json" not in ctype and (body.lstrip().startswith("<") or "<html" in body[:300].lower()):
-                    continue
-                try:
-                    data = resp.json() or {}
-                except Exception:
-                    continue
-                records = _records_from_payload(data)
-                if records:
-                    break
 
-        if not records:
-            return []
-
-        from entity_matcher import filter_records_for_lead
-
-        lead_stub = {"azienda": name, "nome": name}
-        records = filter_records_for_lead(lead_stub, records, fallback_name=name)
-        if not records:
-            return []
-
-        cutoff = datetime.now() - timedelta(days=365)
-        name_lower = name.lower()[:15]
-        recent: List[Dict[str, Any]] = []
-        for r in records:
-            if not isinstance(r, dict):
-                continue
-            blob = " ".join(str(v) for v in r.values()).lower()
-            if name_lower not in blob:
-                continue
-            date_str = str(r.get("DATA_AGGIUDICAZIONE") or r.get("data_aggiudicazione") or r.get("data") or "")[:10]
-            try:
-                if date_str and datetime.strptime(date_str, "%Y-%m-%d") < cutoff:
-                    continue
-            except ValueError:
-                pass
-            recent.append(r)
-
-        if not recent:
-            return []
-
-        obj = str(recent[0].get("OGGETTO") or recent[0].get("oggetto") or "Appalto pubblico")[:80]
-        return [
-            _make_signal(
-                "tender_won",
-                f"Gara vinta: {obj}",
-                severity="high",
-                confidence=80,
-                evidence=[
-                    {
-                        "label": "Fonte",
-                        "value": f"ANAC — {name}",
-                        "source": "anac_opendata",
-                        "url": "https://dati.anticorruzione.it/opendata",
-                        "company": name,
-                    },
-                    {
-                        "label": "Oggetto",
-                        "value": obj,
-                        "source": "anac_opendata",
-                        "company": name,
-                    },
-                ],
-                entity_verified=True,
-            )
-        ]
-    except Exception:
-        return []
+def _hiring_jobs_from_signal(sig: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Deriva business_hiring_jobs da evidenze strutturate del segnale hiring."""
+    jobs: List[Dict[str, str]] = []
+    for ev in sig.get("evidence") or []:
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("label") not in ("Offerta", "Ruolo", "Posizione"):
+            continue
+        val = str(ev.get("value") or "").strip()
+        if len(val) < 4:
+            continue
+        jobs.append(
+            {
+                "title": val[:200],
+                "source": str(ev.get("source") or sig.get("source") or "website_careers"),
+                "date": _utc_now_iso(),
+            }
+        )
+    if jobs:
+        return jobs
+    title = str(sig.get("title") or "").strip()
+    if title and "pagina careers rilevata" not in title.lower():
+        return [{"title": title[:200], "source": "indeed_it", "date": _utc_now_iso()}]
+    return []
 
 
 def apply_signals_to_lead(lead: Dict[str, Any], signals: List[Dict[str, Any]]) -> None:
-    """Popola campi legacy sul lead per badge UI."""
+    """Popola campi legacy sul lead per badge UI. Deduplica per tipo segnale."""
     if not signals:
         return
-    lead["business_signals"] = signals
+    # Keep first signal of each type to avoid noisy duplicates (e.g. multiple site_stale).
+    seen_types: Set[str] = set()
+    deduped: List[Dict[str, Any]] = []
     for sig in signals:
         st = sig.get("type")
+        if st in seen_types:
+            continue
+        seen_types.add(st)
+        deduped.append(sig)
+    lead["business_signals"] = deduped
+    for sig in deduped:
+        st = sig.get("type")
         if st == "hiring":
-            jobs = lead.get("business_hiring_jobs")
-            if not isinstance(jobs, list):
-                lead["business_hiring_jobs"] = [{"title": sig.get("title", ""), "source": "indeed_it", "date": _utc_now_iso()}]
+            parsed = _hiring_jobs_from_signal(sig)
+            if parsed:
+                lead["business_hiring_jobs"] = parsed
+            elif not isinstance(lead.get("business_hiring_jobs"), list):
+                generic = str(sig.get("title") or "").strip()
+                if generic and "pagina careers rilevata" not in generic.lower():
+                    lead["business_hiring_jobs"] = [{"title": generic[:200], "source": "indeed_it", "date": _utc_now_iso()}]
         elif st == "tender_won":
-            lead["business_tender_hits"] = [{"title": sig.get("title", ""), "source": "anac_opendata", "date": _utc_now_iso()}]
+            hit = {
+                "title": sig.get("title", ""),
+                "source": "anac_opendata",
+                "date": sig.get("date") or _utc_now_iso(),
+                "cig": sig.get("cig"),
+                "object": sig.get("object"),
+                "amount": sig.get("amount"),
+                "authority": sig.get("authority"),
+                "region": sig.get("region"),
+                "province": sig.get("province"),
+                "status": sig.get("status"),
+                "source_url": sig.get("source_url"),
+            }
+            lead["business_tender_hits"] = [hit]
         elif st == "sector_investment":
             lead["business_sector_hits"] = lead.get("business_sector_hits") or [{"keyword": "sector", "snippet": sig.get("title", "")}]
+        elif st == "investing_marketing":
+            lead["business_investing_marketing"] = True
+        elif st == "crm_installed":
+            lead["business_crm_detected"] = True
 
 
 def persist_signals_to_db(
@@ -699,15 +1030,16 @@ async def enrich_lead_external_signals(
     *,
     want_hiring: bool = True,
     want_tender: bool = True,
+    hiring_roles: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Fonti esterne — parallelo con timeout."""
     name = _lead_name(lead)
     piva = _lead_piva(lead)
     tasks = []
     if want_hiring and name:
-        tasks.append(asyncio.wait_for(detect_hiring_signal(name, location), timeout=12.0))
+        tasks.append(asyncio.wait_for(detect_hiring_signal(name, location, roles=hiring_roles), timeout=12.0))
     if want_tender and name:
-        tasks.append(asyncio.wait_for(detect_tender_signals(name), timeout=10.0))
+        tasks.append(asyncio.wait_for(detect_tender_signals(name, cf=piva), timeout=15.0))
     if piva:
         tasks.append(asyncio.wait_for(detect_registry_signals_api(piva), timeout=9.0))
 
@@ -720,6 +1052,33 @@ async def enrich_lead_external_signals(
             continue
         if isinstance(r, list):
             out.extend(r)
+    # Fallback multi-fonte hiring (Indeed → InfoJobs → Google Jobs → LinkedIn → careers)
+    if want_hiring and name and not any(s.get("type") == "hiring" for s in out):
+        from hiring_sources import (
+            detect_hiring_via_google_jobs,
+            detect_hiring_via_infojobs_it,
+            detect_hiring_via_linkedin_jobs,
+        )
+
+        roles = hiring_roles
+        for fetcher, timeout in (
+            (detect_hiring_via_infojobs_it, 10.0),
+            (detect_hiring_via_google_jobs, 11.0),
+            (detect_hiring_via_linkedin_jobs, 9.0),
+        ):
+            try:
+                extra = await asyncio.wait_for(fetcher(name, location, roles=roles), timeout=timeout)
+                if extra:
+                    out.extend(extra)
+                    break
+            except Exception:
+                continue
+    if want_hiring and name and not any(s.get("type") == "hiring" for s in out):
+        try:
+            fallback = await asyncio.wait_for(detect_hiring_via_website(lead, roles=hiring_roles), timeout=10.0)
+            out.extend(fallback)
+        except Exception:
+            pass
     return out
 
 
@@ -733,9 +1092,15 @@ async def enrich_lead_business_events(
     skip_external: bool = False,
     want_hiring: bool = True,
     want_tender: bool = True,
+    intent: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Arricchisce un singolo lead — non solleva eccezioni."""
     name = _lead_name(lead)
+    intent_types = _intent_signal_types(intent)
+    intent_roles = _intent_hiring_roles_full(intent)
+    intent_sectors = _intent_sector_keywords(intent)
+    if intent_sectors:
+        sector_keywords = list({*(sector_keywords or []), *intent_sectors})
 
     if html:
         crms = detect_crm_from_html(html)
@@ -767,6 +1132,11 @@ async def enrich_lead_business_events(
     signals.extend(detect_signals_from_audit(lead))
     signals.extend(detect_registry_signals_from_lead(lead))
 
+    if "crm_installed" in intent_types or "crm_change" in intent_types:
+        signals.extend(detect_crm_signal(lead))
+    if "investing_marketing" in intent_types:
+        signals.extend(detect_marketing_investment_signal(lead))
+
     if not _lead_has_valid_website(lead):
         try:
             fallback = await enrich_poor_lead_fallback(lead, location)
@@ -777,7 +1147,13 @@ async def enrich_lead_business_events(
     if not skip_external:
         try:
             external = await asyncio.wait_for(
-                enrich_lead_external_signals(lead, location, want_hiring=want_hiring, want_tender=want_tender),
+                enrich_lead_external_signals(
+                    lead,
+                    location,
+                    want_hiring=want_hiring or ("hiring" in intent_types),
+                    want_tender=want_tender or ("tender_won" in intent_types),
+                    hiring_roles=intent_roles,
+                ),
                 timeout=14.0,
             )
             signals.extend(external)
@@ -804,15 +1180,21 @@ async def enrich_lead_business_events(
     return lead
 
 
-def enrich_lead_audit_only(lead: Dict[str, Any]) -> List[Dict[str, Any]]:
+def enrich_lead_audit_only(lead: Dict[str, Any], intent: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """Fase sync pre-completed — solo audit, zero network."""
+    intent_types = _intent_signal_types(intent)
     signals: List[Dict[str, Any]] = []
     signals.extend(detect_signals_from_audit(lead))
     signals.extend(detect_registry_signals_from_lead(lead))
+    if "crm_installed" in intent_types or "crm_change" in intent_types:
+        signals.extend(detect_crm_signal(lead))
+    if "investing_marketing" in intent_types:
+        signals.extend(detect_marketing_investment_signal(lead))
     if not signals and not _lead_has_valid_website(lead) and _lead_piva(lead):
         lead.setdefault("enrich_note", "no_website_piva_only")
     text_parts = [str(lead.get("category") or lead.get("categoria") or ""), _lead_name(lead)]
-    sector_hits = detect_sector_hits("\n".join(text_parts))
+    intent_sectors = _intent_sector_keywords(intent)
+    sector_hits = detect_sector_hits("\n".join(text_parts), intent_sectors)
     if sector_hits:
         lead["business_sector_hits"] = sector_hits
     apply_signals_to_lead(lead, signals)
@@ -856,6 +1238,69 @@ def count_lead_signals(lead: Dict[str, Any]) -> int:
     return n
 
 
+async def _enrich_one_lead_external(
+    lead: Dict[str, Any],
+    location: str,
+    *,
+    intent: Optional[Dict[str, Any]],
+    intent_types: Set[str],
+    intent_roles: List[str],
+    supabase: Any,
+    user_id: Optional[str],
+    index: int,
+) -> int:
+    """Enrichment live singolo lead — ritorna count segnali."""
+    use_wf = os.getenv("USE_WATERFALL_ENRICH", "1").strip().lower() in {"1", "true", "yes"}
+    if use_wf:
+        try:
+            from waterfall_enrich import get_waterfall_enricher
+
+            wf = get_waterfall_enricher(supabase)
+            required = list(intent_types) if intent_types else [
+                "hiring", "tender_won", "funding_received", "executive_change", "website_changed"
+            ]
+            await wf.enrich_lead(
+                lead, location, required_signals=required, skip_audit=True, hiring_roles=intent_roles
+            )
+        except Exception as e:
+            print(f"[enrich] waterfall external skip: {e}", flush=True)
+    else:
+        existing = list(lead.get("business_signals") or [])
+        try:
+            extra = await enrich_lead_external_signals(
+                lead,
+                location,
+                want_hiring=("hiring" in intent_types) or (index < 8),
+                want_tender=("tender_won" in intent_types) or True,
+                hiring_roles=intent_roles,
+            )
+        except Exception:
+            extra = []
+        merged = existing + extra
+        seen: Set[str] = set()
+        unique: List[Dict[str, Any]] = []
+        for s in merged:
+            if not isinstance(s, dict):
+                continue
+            key = f"{s.get('type')}::{s.get('title')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(s)
+        apply_signals_to_lead(lead, unique)
+        lead["business_events_external_at"] = _utc_now_iso()
+        lead["business_events_enriched_at"] = _utc_now_iso()
+    if supabase and user_id:
+        sigs = lead.get("business_signals") or []
+        persist_signals_to_db(supabase, user_id, lead, sigs if isinstance(sigs, list) else [])
+    n = count_lead_signals(lead)
+    if n:
+        name = _lead_name(lead)[:40]
+        types = [s.get("type") if isinstance(s, dict) else "?" for s in (lead.get("business_signals") or [])[:3]]
+        print(f"[enrich] '{name}' → {n} segnali ({', '.join(types)})", flush=True)
+    return n
+
+
 async def enrich_results_business_events(
     results: List[Dict[str, Any]],
     location: str,
@@ -867,69 +1312,76 @@ async def enrich_results_business_events(
     audit_only: bool = False,
     external_only: bool = False,
     on_progress: Optional[Callable[[List[Dict[str, Any]], int], None]] = None,
+    intent: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Enrichment batch post-audit."""
     if not results:
         return results
     cap = min(len(results), max(1, max_leads))
+    intent_types = _intent_signal_types(intent)
+    needs_external = intent_requires_external_enrichment(intent)
+    batch = list(results[:cap])
+    if needs_external:
+        batch.sort(key=lambda l: (0 if _lead_has_valid_website(l) else 1))
     total_signals = 0
-    for i, lead in enumerate(results[:cap]):
-        try:
-            if audit_only:
-                sigs = enrich_lead_audit_only(lead)
-                total_signals += len(sigs)
-            elif external_only:
-                use_wf = os.getenv("USE_WATERFALL_ENRICH", "1").strip().lower() in {"1", "true", "yes"}
-                if use_wf:
-                    try:
-                        from waterfall_enrich import get_waterfall_enricher
 
-                        wf = get_waterfall_enricher()
-                        required = ["hiring", "tender_won", "funding_received", "executive_change", "website_changed"]
-                        await wf.enrich_lead(lead, location, required_signals=required, skip_audit=True)
-                    except Exception as e:
-                        print(f"[enrich] waterfall external skip: {e}", flush=True)
+    if external_only and batch:
+        os.environ["ENRICH_PARALLEL_WORKERS"] = os.getenv("ENRICH_PARALLEL_WORKERS", "6")
+        workers = int(os.environ["ENRICH_PARALLEL_WORKERS"] or "6")
+        workers = max(1, min(workers, 12))
+        intent_roles = _intent_hiring_roles_full(intent)
+        sem = asyncio.Semaphore(workers)
+        done = 0
+
+        async def _run_one(i: int, lead: Dict[str, Any]) -> int:
+            nonlocal done, total_signals
+            async with sem:
+                try:
+                    n = await _enrich_one_lead_external(
+                        lead,
+                        location,
+                        intent=intent,
+                        intent_types=intent_types,
+                        intent_roles=intent_roles,
+                        supabase=supabase,
+                        user_id=user_id,
+                        index=i,
+                    )
+                except Exception as e:
+                    print(f"[enrich] lead error: {e}", flush=True)
+                    n = 0
+                done += 1
+                total_signals += n
+                if on_progress and done % 5 == 0:
+                    on_progress(list(results), total_signals)
+                return n
+
+        await asyncio.gather(*[_run_one(i, lead) for i, lead in enumerate(batch)])
+        if on_progress:
+            on_progress(list(results), total_signals)
+    else:
+        for i, lead in enumerate(batch):
+            try:
+                if audit_only:
+                    sigs = enrich_lead_audit_only(lead, intent=intent)
+                    total_signals += len(sigs)
                 else:
-                    existing = list(lead.get("business_signals") or [])
-                    try:
-                        extra = await enrich_lead_external_signals(lead, location, want_hiring=(i < 8), want_tender=True)
-                    except Exception:
-                        extra = []
-                    merged = existing + extra
-                    seen: Set[str] = set()
-                    unique: List[Dict[str, Any]] = []
-                    for s in merged:
-                        if not isinstance(s, dict):
-                            continue
-                        key = f"{s.get('type')}::{s.get('title')}"
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        unique.append(s)
-                    apply_signals_to_lead(lead, unique)
-                    lead["business_events_external_at"] = _utc_now_iso()
-                    lead["business_events_enriched_at"] = _utc_now_iso()
-                total_signals += count_lead_signals(lead)
-            else:
-                await enrich_lead_business_events(
-                    lead,
-                    location,
-                    sector_keywords=sector_keywords,
-                    skip_external=(i >= 8),
-                )
-                total_signals += count_lead_signals(lead)
-            if supabase and user_id:
-                sigs = lead.get("business_signals") or []
-                persist_signals_to_db(supabase, user_id, lead, sigs if isinstance(sigs, list) else [])
-            name = _lead_name(lead)[:40]
-            n = count_lead_signals(lead)
-            if n:
-                types = [s.get("type") if isinstance(s, dict) else "?" for s in (lead.get("business_signals") or [])[:3]]
-                print(f"[enrich] '{name}' → {n} segnali ({', '.join(types)})", flush=True)
-            if on_progress and (i + 1) % 2 == 0:
-                on_progress(list(results), total_signals)
-        except Exception as e:
-            print(f"[enrich] lead error: {e}", flush=True)
+                    await enrich_lead_business_events(
+                        lead,
+                        location,
+                        sector_keywords=sector_keywords,
+                        skip_external=(i >= 8),
+                        intent=intent,
+                    )
+                    total_signals += count_lead_signals(lead)
+                if supabase and user_id:
+                    sigs = lead.get("business_signals") or []
+                    persist_signals_to_db(supabase, user_id, lead, sigs if isinstance(sigs, list) else [])
+                if on_progress and (i + 1) % 2 == 0:
+                    on_progress(list(results), total_signals)
+            except Exception as e:
+                print(f"[enrich] lead error: {e}", flush=True)
+
     phase = "audit" if audit_only else ("external" if external_only else "full")
     print(f"[enrich] Job batch ({phase}): {cap} lead, {total_signals} segnali totali", flush=True)
     return results

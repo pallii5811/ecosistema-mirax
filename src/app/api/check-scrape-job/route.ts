@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceRoleClient } from '@/utils/supabase/server'
 import { hydrateLeadsFromUniverse, isUniverseReadEnabled } from '@/lib/universe/hydrate-leads'
+import { fetchMergedLeadsForSearch } from '@/lib/search-leads/read-leads'
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,7 +16,7 @@ export async function GET(request: NextRequest) {
 
     const { data, error } = await supabase
       .from('searches')
-      .select('status, results')
+      .select('status, results, intent, updated_at')
       .eq('id', jobId)
       .single()
 
@@ -23,24 +24,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ status: 'not_found', results: [] })
     }
 
-    // Handle results in various formats: array, single object, or JSON string
-    let results: any[] = []
-    if (Array.isArray(data.results)) {
-      results = data.results
-    } else if (typeof data.results === 'string') {
-      try {
-        const parsed = JSON.parse(data.results)
-        results = Array.isArray(parsed) ? parsed : parsed && typeof parsed === 'object' ? [parsed] : []
-      } catch { results = [] }
-    } else if (data.results && typeof data.results === 'object') {
-      results = [data.results]
-    }
+    let results = await fetchMergedLeadsForSearch(supabase, jobId, {
+      legacyResults: data.results,
+    })
 
     let universe_hydrated = 0
     if (isUniverseReadEnabled() && results.length > 0) {
       try {
         const svc = createServiceRoleClient()
-        const hydrated = await hydrateLeadsFromUniverse(svc, results as Record<string, unknown>[], { max: 100 })
+        const hydrated = await hydrateLeadsFromUniverse(svc, results, { max: 100 })
         results = hydrated.leads
         universe_hydrated = hydrated.hydrated_count
       } catch (e) {
@@ -48,12 +40,19 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const intent = data.intent as Record<string, unknown> | null
+    const user_message =
+      intent && typeof intent.completion_user_message === 'string'
+        ? intent.completion_user_message
+        : null
+
     return NextResponse.json({
       status: data.status,
       results,
       universe_hydrated,
+      user_message,
+      updated_at: data.updated_at ?? null,
     })
-
   } catch (error) {
     console.error('check-scrape-job error:', error)
     return NextResponse.json({ status: 'error', results: [] })

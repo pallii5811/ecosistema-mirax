@@ -3,9 +3,10 @@
  * Fase 6 — arricchisce lead JSONB legacy con osservazioni dal grafo (read sidecar).
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceRoleClient } from '@/utils/supabase/server'
+import { createClient } from '@/utils/supabase/server'
 import { requireUniverseAuth } from '@/lib/universe/require-auth'
 import { hydrateLeadsFromUniverse, isUniverseReadEnabled } from '@/lib/universe/hydrate-leads'
+import { universeClientError } from '@/lib/universe/errors'
 
 export async function POST(req: NextRequest) {
   const auth = await requireUniverseAuth()
@@ -33,7 +34,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'leads[] richiesto' }, { status: 400 })
     }
 
-    const sb = createServiceRoleClient()
+    const sb = await createClient()
     const result = await hydrateLeadsFromUniverse(sb, leads, { max })
 
     return NextResponse.json({
@@ -43,8 +44,7 @@ export async function POST(req: NextRequest) {
       leads: result.leads,
     })
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : 'Errore hydrate'
-    console.error('[universe/hydrate-leads]', message)
-    return NextResponse.json({ error: message }, { status: 500 })
+    const { message, status } = universeClientError(e, 'hydrate-leads')
+    return NextResponse.json({ error: message }, { status })
   }
 }

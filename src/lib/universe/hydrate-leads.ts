@@ -20,8 +20,6 @@ const HYDRATE_ATTRS = [
   'employees',
   'revenue',
   'category',
-  'phone',
-  'email',
 ] as const
 
 const LEAD_FIELD_MAP: Record<string, string[]> = {
@@ -36,8 +34,6 @@ const LEAD_FIELD_MAP: Record<string, string[]> = {
   employees: ['dipendenti', 'employees'],
   revenue: ['fatturato', 'revenue'],
   category: ['categoria', 'category'],
-  phone: ['telefono', 'phone'],
-  email: ['email'],
 }
 
 export function isUniverseReadEnabled(): boolean {

@@ -22,7 +22,7 @@ import {
   setUniverseUserContext,
   type DigitalTwinResponse,
 } from '@/lib/universe/client'
-import { formatObservationValue, labelObservation } from '@/lib/universe/labels'
+import { formatObservationValue, labelEvent, labelObservation } from '@/lib/universe/labels'
 import { UniverseLiveEventsFeed } from './UniverseLiveEventsFeed'
 import { cn } from '@/lib/utils'
 
@@ -31,6 +31,37 @@ type Props = {
 }
 
 type ContextType = 'saved' | 'pipeline' | 'contacted'
+
+function ExpandableList<T extends { entity_id: string; name: string }>({
+  items,
+  initial = 5,
+}: {
+  items: T[]
+  initial?: number
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const shown = expanded ? items : items.slice(0, initial)
+  return (
+    <>
+      <ul className="mt-2 space-y-1">
+        {shown.map((item) => (
+          <li key={item.entity_id} className="text-sm text-slate-800">
+            {item.name}
+          </li>
+        ))}
+      </ul>
+      {items.length > initial ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-2 text-xs font-medium text-violet-600 hover:text-violet-700"
+        >
+          {expanded ? 'Mostra meno' : `Mostra tutti (${items.length})`}
+        </button>
+      ) : null}
+    </>
+  )
+}
 
 const CONTEXT_ACTIONS: { type: ContextType; label: string; icon: typeof Bookmark }[] = [
   { type: 'saved', label: 'Salva', icon: Bookmark },
@@ -45,6 +76,7 @@ export function UniverseDigitalTwinPanel({ entityId }: Props) {
   const [contextBusy, setContextBusy] = useState<ContextType | null>(null)
   const [pitchLoading, setPitchLoading] = useState(false)
   const [pitchResult, setPitchResult] = useState<{ subject?: string; body?: string } | null>(null)
+  const [pitchError, setPitchError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -84,6 +116,7 @@ export function UniverseDigitalTwinPanel({ entityId }: Props) {
     if (!twin) return
     setPitchLoading(true)
     setPitchResult(null)
+    setPitchError(null)
     try {
       const res = await runUniverseAgentPipeline({
         pipeline: ['universe', 'pitch'],
@@ -96,9 +129,13 @@ export function UniverseDigitalTwinPanel({ entityId }: Props) {
         },
       })
       const pitchStep = res.results?.[1] as { data?: { subject?: string; body?: string } } | undefined
-      if (pitchStep?.data) setPitchResult(pitchStep.data)
-    } catch {
-      setPitchResult(null)
+      if (pitchStep?.data) {
+        setPitchResult(pitchStep.data)
+      } else {
+        setPitchError('Il pitch non ha prodotto output valido.')
+      }
+    } catch (e) {
+      setPitchError(e instanceof Error ? e.message : 'Errore durante la generazione del pitch')
     } finally {
       setPitchLoading(false)
     }
@@ -153,6 +190,7 @@ export function UniverseDigitalTwinPanel({ entityId }: Props) {
               size="sm"
               variant={active ? 'default' : 'outline'}
               className={cn('gap-1.5 text-xs', active && 'bg-violet-600 hover:bg-violet-700')}
+              aria-pressed={active}
               disabled={contextBusy === type}
               onClick={() => void toggleContext(type)}
             >
@@ -178,6 +216,12 @@ export function UniverseDigitalTwinPanel({ entityId }: Props) {
         </Button>
       </div>
 
+      {pitchError ? (
+        <Card className="border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          {pitchError}
+        </Card>
+      ) : null}
+
       {pitchResult?.subject ? (
         <Card className="border-violet-200 bg-violet-50/50 p-4 text-sm">
           <p className="font-semibold text-violet-900">{pitchResult.subject}</p>
@@ -193,11 +237,7 @@ export function UniverseDigitalTwinPanel({ entityId }: Props) {
             <p className="flex items-center gap-1.5 text-xs font-bold uppercase text-slate-500">
               <Cpu className="h-3.5 w-3.5" /> Tech stack
             </p>
-            <ul className="mt-2 space-y-1">
-              {twin.tech_stack.slice(0, 6).map((t) => (
-                <li key={t.entity_id} className="text-sm text-slate-800">{t.name}</li>
-              ))}
-            </ul>
+            <ExpandableList items={twin.tech_stack} initial={6} />
           </Card>
         ) : null}
 
@@ -206,11 +246,7 @@ export function UniverseDigitalTwinPanel({ entityId }: Props) {
             <p className="flex items-center gap-1.5 text-xs font-bold uppercase text-slate-500">
               <Briefcase className="h-3.5 w-3.5" /> Assunzioni
             </p>
-            <ul className="mt-2 space-y-1">
-              {twin.hiring.slice(0, 5).map((h) => (
-                <li key={h.entity_id} className="text-sm text-slate-800">{h.name}</li>
-              ))}
-            </ul>
+            <ExpandableList items={twin.hiring} initial={5} />
           </Card>
         ) : null}
 
@@ -219,11 +255,7 @@ export function UniverseDigitalTwinPanel({ entityId }: Props) {
             <p className="flex items-center gap-1.5 text-xs font-bold uppercase text-slate-500">
               <Users className="h-3.5 w-3.5" /> Persone
             </p>
-            <ul className="mt-2 space-y-1">
-              {twin.people.slice(0, 5).map((p) => (
-                <li key={p.entity_id} className="text-sm text-slate-800">{p.name}</li>
-              ))}
-            </ul>
+            <ExpandableList items={twin.people} initial={5} />
           </Card>
         ) : null}
       </div>
@@ -248,15 +280,20 @@ export function UniverseDigitalTwinPanel({ entityId }: Props) {
         <Card className="p-4">
           <p className="text-xs font-bold uppercase text-slate-500 mb-2">Eventi recenti</p>
           <ul className="space-y-1.5 text-sm text-slate-700">
-            {twin.events_recent.slice(0, 5).map((ev) => (
+            {twin.events_recent.slice(0, 8).map((ev) => (
               <li key={ev.id} className="flex justify-between gap-2">
-                <span>{ev.event_type.replace(/_/g, ' ')}</span>
+                <span>{labelEvent(ev.event_type)}</span>
                 <span className="text-xs text-slate-400 shrink-0">
                   {new Date(ev.occurred_at).toLocaleDateString('it-IT')}
                 </span>
               </li>
             ))}
           </ul>
+          {twin.events_recent.length > 8 ? (
+            <p className="mt-2 text-xs text-slate-400">
+              {twin.events_recent.length - 8} eventi aggiuntivi nella tab Eventi
+            </p>
+          ) : null}
         </Card>
       ) : null}
 

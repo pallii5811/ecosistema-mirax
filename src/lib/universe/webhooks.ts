@@ -1,20 +1,54 @@
 /**
  * Fase 10 — Webhook outbound per eventi Universe (Zapier/Make/user_integrations).
+ *
+ * Sicurezza:
+ * - Solo URL https pubbliche (nessun IP privato/localhost).
+ * - Firma HMAC-SHA256 obbligatoria: nessun webhook senza secret.
+ * - Replay protection tramite timestamp X-MiraX-Timestamp incluso nella firma.
+ * - Confronto signature in tempo costante.
  */
 
-import { createHmac } from 'node:crypto'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { UniverseEntity, UniverseEvent } from './types.ts'
 import { labelEvent } from './labels.ts'
 import { wrapSupabaseError } from './errors.ts'
 
 const TIMEOUT_MS = 12_000
+const MAX_SIGNATURE_AGE_MS = 5 * 60 * 1000 // 5 minuti
 
 export function isUniverseWebhooksEnabled(): boolean {
   return process.env.UNIVERSE_WEBHOOKS_ENABLED === '1' || process.env.UNIVERSE_ENABLED === '1'
 }
 
-type WebhookTarget = { user_id: string; url: string; secret?: string }
+type WebhookTarget = { user_id: string; url: string; secret: string }
+
+function isPrivateOrReservedHost(host: string): boolean {
+  const lower = host.toLowerCase()
+  if (lower === 'localhost') return true
+  if (/^127\./.test(lower)) return true
+  if (/^10\./.test(lower)) return true
+  if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(lower)) return true
+  if (/^192\.168\./.test(lower)) return true
+  if (lower.startsWith('[') && lower.includes('::1')) return true
+  if (/\.local$/.test(lower)) return true
+  return false
+}
+
+function validateWebhookUrl(url: string): { ok: true } | { ok: false; error: string } {
+  if (!/^https:\/\//i.test(url)) {
+    return { ok: false, error: 'I webhook Universe accettano solo URL https' }
+  }
+  try {
+    const parsed = new URL(url)
+    if (isPrivateOrReservedHost(parsed.hostname)) {
+      return { ok: false, error: 'URL riservato o privato non ammesso' }
+    }
+    return { ok: true }
+  } catch {
+    return { ok: false, error: 'URL webhook non valido' }
+  }
+}
 
 async function findWebhookTargets(sb: SupabaseClient, userIds: string[]): Promise<WebhookTarget[]> {
   const targets: WebhookTarget[] = []
@@ -23,17 +57,21 @@ async function findWebhookTargets(sb: SupabaseClient, userIds: string[]): Promis
   for (const userId of userIds) {
     const { data: integ } = await sb
       .from('user_integrations')
-      .select('webhook_url')
+      .select('webhook_url, webhook_secret')
       .eq('user_id', userId)
       .maybeSingle()
 
     const url = typeof integ?.webhook_url === 'string' ? integ.webhook_url.trim() : ''
-    if (url && /^https?:\/\//i.test(url)) {
+    const secret = typeof integ?.webhook_secret === 'string' ? integ.webhook_secret.trim() : ''
+    const urlValid = validateWebhookUrl(url)
+    if (url && secret && urlValid.ok) {
       const key = `${userId}:${url}`
       if (!seen.has(key)) {
         seen.add(key)
-        targets.push({ user_id: userId, url })
+        targets.push({ user_id: userId, url, secret })
       }
+    } else if (url && !secret) {
+      console.warn(`[universe/webhooks] skip user_integrations webhook for ${userId}: missing webhook_secret`)
     }
 
     const { data: crmRows } = await sb
@@ -46,13 +84,16 @@ async function findWebhookTargets(sb: SupabaseClient, userIds: string[]): Promis
     for (const row of crmRows ?? []) {
       const cfg = row.config && typeof row.config === 'object' ? (row.config as Record<string, unknown>) : {}
       const crmUrl = typeof cfg.url === 'string' ? cfg.url.trim() : ''
-      const secret = typeof cfg.secret === 'string' ? cfg.secret : undefined
-      if (crmUrl && /^https?:\/\//i.test(crmUrl)) {
+      const crmSecret = typeof cfg.secret === 'string' ? cfg.secret.trim() : ''
+      const crmValid = validateWebhookUrl(crmUrl)
+      if (crmUrl && crmSecret && crmValid.ok) {
         const key = `${userId}:${crmUrl}`
         if (!seen.has(key)) {
           seen.add(key)
-          targets.push({ user_id: userId, url: crmUrl, secret })
+          targets.push({ user_id: userId, url: crmUrl, secret: crmSecret })
         }
+      } else if (crmUrl && !crmSecret) {
+        console.warn(`[universe/webhooks] skip crm_integrations webhook for ${userId}: missing secret`)
       }
     }
   }
@@ -60,21 +101,38 @@ async function findWebhookTargets(sb: SupabaseClient, userIds: string[]): Promis
   return targets
 }
 
-function signPayload(secret: string, body: string): string {
-  return `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`
+function signPayload(secret: string, timestamp: string, body: string): string {
+  const baseString = `${timestamp}.${body}`
+  return `sha256=${createHmac('sha256', secret).update(baseString).digest('hex')}`
+}
+
+function verifySignature(secret: string, timestamp: string, body: string, signature: string): boolean {
+  const expected = signPayload(secret, timestamp, body)
+  try {
+    const expectedBuf = Buffer.from(expected)
+    const actualBuf = Buffer.from(signature)
+    return expectedBuf.length === actualBuf.length && timingSafeEqual(expectedBuf, actualBuf)
+  } catch {
+    return false
+  }
 }
 
 async function postWebhook(
   url: string,
   body: Record<string, unknown>,
-  secret?: string,
+  secret: string,
 ): Promise<{ ok: boolean; status?: number; error?: string }> {
+  const urlValid = validateWebhookUrl(url)
+  if (!urlValid.ok) return { ok: false, error: urlValid.error }
+
+  const timestamp = Math.floor(Date.now() / 1000).toString()
   const payload = JSON.stringify(body)
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'User-Agent': 'MIRAX-Universe/1.0',
+    'X-MiraX-Timestamp': timestamp,
+    'X-MiraX-Signature': signPayload(secret, timestamp, payload),
   }
-  if (secret) headers['X-MiraX-Signature'] = signPayload(secret, payload)
 
   try {
     const res = await fetch(url, {
@@ -108,17 +166,25 @@ async function logDelivery(
   }
 }
 
+export type UniverseWebhookDispatchResult = {
+  ok: boolean
+  delivered: number
+  errors: number
+  skipped: boolean
+  details: { url: string; ok: boolean; status?: number; error?: string }[]
+}
+
 export async function dispatchUniverseEventWebhooks(
   sb: SupabaseClient,
   event: UniverseEvent,
   entity: UniverseEntity,
   userIds: string[],
-): Promise<{ sent: number; failed: number; skipped: boolean }> {
-  if (!isUniverseWebhooksEnabled()) return { sent: 0, failed: 0, skipped: true }
-  if (!userIds.length) return { sent: 0, failed: 0, skipped: false }
+): Promise<UniverseWebhookDispatchResult> {
+  if (!isUniverseWebhooksEnabled()) return { ok: true, delivered: 0, errors: 0, skipped: true, details: [] }
+  if (!userIds.length) return { ok: true, delivered: 0, errors: 0, skipped: false, details: [] }
 
   const targets = await findWebhookTargets(sb, userIds)
-  if (!targets.length) return { sent: 0, failed: 0, skipped: false }
+  if (!targets.length) return { ok: true, delivered: 0, errors: 0, skipped: false, details: [] }
 
   const envelope = {
     type: 'universe.graph.event',
@@ -134,8 +200,10 @@ export async function dispatchUniverseEventWebhooks(
     payload: event.payload,
   }
 
-  let sent = 0
-  let failed = 0
+  let delivered = 0
+  let errors = 0
+  const details: UniverseWebhookDispatchResult['details'] = []
+  let anyFailed = false
 
   for (const t of targets) {
     const result = await postWebhook(t.url, envelope, t.secret)
@@ -149,11 +217,15 @@ export async function dispatchUniverseEventWebhooks(
       error_message: result.error,
       payload: envelope,
     })
-    if (result.ok) sent++
-    else failed++
+    details.push({ url: t.url, ok: result.ok, status: result.status, error: result.error })
+    if (result.ok) delivered++
+    else {
+      errors++
+      anyFailed = true
+    }
   }
 
-  return { sent, failed, skipped: false }
+  return { ok: !anyFailed, delivered, errors, skipped: false, details }
 }
 
 export async function listWebhookDeliveries(

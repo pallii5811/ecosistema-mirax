@@ -6,9 +6,13 @@ import {
 } from '@/lib/signal-intent/catalog'
 import {
   EMPTY_SIGNAL_INTENT,
+  type IntentBusinessFilters,
+  type IntentSocialFilters,
+  type IntentTechnicalFilters,
   type MiraxSignalRequirement,
   type SignalIntentSpec,
 } from '@/lib/signal-intent/types'
+import { isBuyerMarketingInvestmentQuery } from '@/lib/signal-intent/marketing-investment'
 
 function unique<T>(arr: T[]): T[] {
   return [...new Set(arr)]
@@ -29,6 +33,142 @@ function extractTimeWindowDays(query: string): number | null {
   return null
 }
 
+function extractTechnicalFilters(q: string): IntentTechnicalFilters {
+  const f: IntentTechnicalFilters = {}
+  const neg = /\b(non\s+|senza\s+|manca\s+|nessun\s+|no\s+)/i
+  const clause = (phrase: string) => {
+    const before = q.slice(0, q.toLowerCase().indexOf(phrase.toLowerCase()))
+    return neg.test(before.slice(-30))
+  }
+
+  if (/\bgoogle\s+analytics\b|\bga4\b/i.test(q)) f.has_google_analytics = !clause('google analytics') && !clause('ga4')
+  if (/\b(tag\s+manager|gtm|google\s+tag\s+manager)\b/i.test(q)) f.has_gtm = !clause('tag manager') && !clause('gtm')
+  if (/\bmeta\s+pixel\b|\bfacebook\s+pixel\b|\bpixel\s+meta\b/i.test(q)) f.has_meta_pixel = !clause('meta pixel') && !clause('facebook pixel')
+  if (/\bssl\b|\bcertificato\s+ssl\b/i.test(q)) f.has_ssl = !clause('ssl')
+  if (/\bsito\s+lento\b|\bcaricamento\s+lento\b|\blento\s+a\s+caricare\b|\bload\s+speed\s+slow\b/i.test(q)) {
+    f.site_speed = 'slow'
+    f.load_speed_slow = true
+  }
+  if (/\bsito\s+veloce\b|\bcaricamento\s+veloce\b/i.test(q)) f.site_speed = 'fast'
+  if (/\bmobile\s+friendly\b|\bmobile\s+friendly\b|\bresponsiv/i.test(q)) f.mobile_friendly = !clause('mobile')
+  if (/\berrori\s+seo\b|\bseo\s+disaster\b|\bproblemi\s+seo\b/i.test(q)) f.errors_seo = true
+  if (/\bchatbot\b|\bchat\s+bot\b/i.test(q)) f.has_chatbot = !clause('chatbot')
+  if (/\bbooking\b|\bprenotazione\s+online\b/i.test(q)) f.has_booking = !clause('booking')
+
+  const techPatterns: Array<[RegExp, string]> = [
+    [/\bwordpress\b/i, 'wordpress'],
+    [/\bshopify\b/i, 'shopify'],
+    [/\b(?:react\.js|reactjs|react)\b/i, 'react'],
+    [/\bangular\b/i, 'angular'],
+    [/\bvue(?:\.js|js)?\b/i, 'vue'],
+    [/\bprestashop\b/i, 'prestashop'],
+    [/\bmagento\b/i, 'magento'],
+    [/\bsalesforce\b/i, 'salesforce'],
+    [/\bhubspot\b/i, 'hubspot'],
+    [/\bzoho\b/i, 'zoho'],
+  ]
+  const detected = techPatterns.filter(([re]) => re.test(q)).map(([, name]) => name)
+  if (detected.length) f.technologies = unique(detected)
+
+  // Clean nulls
+  for (const k of Object.keys(f) as Array<keyof IntentTechnicalFilters>) {
+    if (f[k] === null || f[k] === undefined) delete f[k]
+  }
+  return f
+}
+
+function extractSocialFilters(q: string): IntentSocialFilters {
+  const f: IntentSocialFilters = {}
+  const neg = /\b(non\s+|senza\s+|manca\s+|nessun\s+|no\s+)/i
+  const clause = (phrase: string) => {
+    const idx = q.toLowerCase().indexOf(phrase.toLowerCase())
+    if (idx < 0) return false
+    const before = q.slice(0, idx)
+    return neg.test(before.slice(-30))
+  }
+
+  if (/\binstagram\b/i.test(q)) {
+    f.has_instagram = !clause('instagram')
+    if (clause('instagram')) f.missing_instagram = true
+  }
+  if (/\bfacebook\b/i.test(q)) {
+    f.has_facebook = !clause('facebook')
+    if (clause('facebook')) f.missing_facebook = true
+  }
+  if (/\blinkedin\b/i.test(q)) {
+    f.has_linkedin = !clause('linkedin')
+    if (clause('linkedin')) f.missing_linkedin = true
+  }
+  if (/\brecensioni\s+negative\b|\breputazion\b|\b1\s+stella\b/i.test(q)) f.reviews_negative = true
+  if (/\bpoco\s+seguit\b|\bsocial\s+piccol\b|\bpochi\s+follower\b/i.test(q)) f.social_followers_low = true
+
+  for (const k of Object.keys(f) as Array<keyof IntentSocialFilters>) {
+    if (f[k] === null || f[k] === undefined) delete f[k]
+  }
+  return f
+}
+
+function parseRevenueAmount(value: string, unit: string): number {
+  const n = parseFloat(value.replace(/\./g, '').replace(/,/g, '.'))
+  if (!unit) return n
+  const u = unit.toLowerCase()
+  if (u.startsWith('milion')) return n * 1_000_000
+  if (u.startsWith('miliard')) return n * 1_000_000_000
+  if (u === 'k') return n * 1_000
+  if (u === 'm') return n * 1_000_000
+  if (u === 'b') return n * 1_000_000_000
+  return n
+}
+
+function extractBusinessFilters(q: string): IntentBusinessFilters {
+  const f: IntentBusinessFilters = {}
+
+  const revMin = q.match(/\bfatturato\s+(superiore\s+a|oltre|>)\s*([\d\.]+)([kKmMbB]?)\b/i)
+  if (revMin) f.revenue_min = parseRevenue(revMin[2], revMin[3])
+  const revMax = q.match(/\bfatturato\s+(inferiore\s+a|sotto|<)\s*([\d\.]+)([kKmMbB]?)\b/i)
+  if (revMax) f.revenue_max = parseRevenue(revMax[2], revMax[3])
+
+  // Spoken Italian variants: "fatturato superiore a 1 milione", "oltre 2 milioni di fatturato".
+  const revMinWords = q.match(/\bfatturato\s+(superiore\s+a|oltre|>)\s*([\d\.]+)\s*(milion[ei]|miliard[oi])\b/i)
+  if (revMinWords) f.revenue_min = parseRevenueAmount(revMinWords[2], revMinWords[3])
+  const revMaxWords = q.match(/\bfatturato\s+(inferiore\s+a|sotto|<)\s*([\d\.]+)\s*(milion[ei]|miliard[oi])\b/i)
+  if (revMaxWords) f.revenue_max = parseRevenueAmount(revMaxWords[2], revMaxWords[3])
+  const revMinAlt = q.match(/\b(oltre|superiore\s+a|>)\s*([\d\.]+)\s*(milion[ei]|miliard[oi])\s+(?:di\s+)?fatturato\b/i)
+  if (revMinAlt) f.revenue_min = parseRevenueAmount(revMinAlt[2], revMinAlt[3])
+  const revMaxAlt = q.match(/\b(sotto|inferiore\s+a|<)\s*([\d\.]+)\s*(milion[ei]|miliard[oi])\s+(?:di\s+)?fatturato\b/i)
+  if (revMaxAlt) f.revenue_max = parseRevenueAmount(revMaxAlt[2], revMaxAlt[3])
+
+  const empMin = q.match(/\b(dipendent[ei]|dipendenti)\s+(oltre|superiore\s+a|>|più\s+di)\s*(\d+)\b/i)
+  if (empMin) f.employees_min = parseInt(empMin[3], 10)
+  const empMax = q.match(/\b(dipendent[ei]|dipendenti)\s+(sotto|inferiore\s+a|<|meno\s+di)\s*(\d+)\b/i)
+  if (empMax) f.employees_max = parseInt(empMax[3], 10)
+
+  // Spoken variants: "con più di 10 dipendenti", "oltre 10 dipendenti".
+  const empMinAlt = q.match(/\b(oltre|superiore\s+a|>|più\s+di)\s*(\d+)\s+dipendent[ei]\b/i)
+  if (empMinAlt) f.employees_min = parseInt(empMinAlt[2], 10)
+  const empMaxAlt = q.match(/\b(sotto|inferiore\s+a|<|meno\s+di)\s*(\d+)\s+dipendent[ei]\b/i)
+  if (empMaxAlt) f.employees_max = parseInt(empMaxAlt[2], 10)
+
+  const foundedAfter = q.match(/\b(fondata\s+dopo|nata\s+dopo)\s+(\d{4})\b/i)
+  if (foundedAfter) f.founded_after = `${foundedAfter[2]}-01-01`
+  const foundedBefore = q.match(/\b(fondata\s+prima|nata\s+prima)\s+(\d{4})\b/i)
+  if (foundedBefore) f.founded_before = `${foundedBefore[2]}-01-01`
+
+  for (const k of Object.keys(f) as Array<keyof IntentBusinessFilters>) {
+    if (f[k] === null || f[k] === undefined) delete f[k]
+  }
+  return f
+}
+
+function parseRevenue(value: string, suffix: string): number {
+  const n = parseFloat(value.replace(/\./g, '').replace(/,/g, '.'))
+  const s = suffix.toLowerCase()
+  if (s === 'k') return n * 1_000
+  if (s === 'm') return n * 1_000_000
+  if (s === 'b') return n * 1_000_000_000
+  return n
+}
+
 function buildSummary(spec: SignalIntentSpec): string | null {
   const parts: string[] = []
   if (spec.required_signals.length) {
@@ -38,6 +178,42 @@ function buildSummary(spec: SignalIntentSpec): string | null {
   if (spec.sector_keywords.length) parts.push(`Settore: ${spec.sector_keywords.join(', ')}`)
   if (spec.crm_keywords.length) parts.push(`CRM: ${spec.crm_keywords.join(', ')}`)
   if (spec.time_window_days) parts.push(`Finestra: ${spec.time_window_days}g`)
+
+  const tf = spec.technical_filters
+  if (tf?.has_meta_pixel === false) parts.push('Senza Meta Pixel')
+  if (tf?.has_meta_pixel === true) parts.push('Con Meta Pixel')
+  if (tf?.has_gtm === false) parts.push('Senza Google Tag Manager')
+  if (tf?.has_gtm === true) parts.push('Con Google Tag Manager')
+  if (tf?.has_google_analytics === false) parts.push('Senza Google Analytics')
+  if (tf?.has_google_analytics === true) parts.push('Con Google Analytics')
+  if (tf?.site_speed === 'slow') parts.push('Sito lento')
+  if (tf?.site_speed === 'fast') parts.push('Sito veloce')
+  if (tf?.has_ssl === false) parts.push('Senza SSL')
+  if (tf?.has_ssl === true) parts.push('Con SSL')
+  if (tf?.errors_seo) parts.push('Errori SEO')
+  if (tf?.has_chatbot === true) parts.push('Con chatbot')
+  if (tf?.has_chatbot === false) parts.push('Senza chatbot')
+  if (tf?.has_booking === true) parts.push('Con booking')
+  if (tf?.has_booking === false) parts.push('Senza booking')
+
+  const sf = spec.social_filters
+  if (sf?.missing_instagram) parts.push('Senza Instagram')
+  if (sf?.has_instagram) parts.push('Con Instagram')
+  if (sf?.missing_facebook) parts.push('Senza Facebook')
+  if (sf?.has_facebook) parts.push('Con Facebook')
+  if (sf?.missing_linkedin) parts.push('Senza LinkedIn')
+  if (sf?.has_linkedin) parts.push('Con LinkedIn')
+  if (sf?.reviews_negative) parts.push('Recensioni negative')
+  if (sf?.social_followers_low) parts.push('Poco social')
+
+  const bf = spec.business_filters
+  if (bf?.revenue_min) parts.push(`Fatturato > ${bf.revenue_min.toLocaleString('it-IT')}€`)
+  if (bf?.revenue_max) parts.push(`Fatturato < ${bf.revenue_max.toLocaleString('it-IT')}€`)
+  if (bf?.employees_min) parts.push(`Dipendenti > ${bf.employees_min}`)
+  if (bf?.employees_max) parts.push(`Dipendenti < ${bf.employees_max}`)
+  if (bf?.founded_after) parts.push(`Fondata dopo ${bf.founded_after.slice(0, 4)}`)
+  if (bf?.founded_before) parts.push(`Fondata prima ${bf.founded_before.slice(0, 4)}`)
+
   return parts.length ? parts.join(' · ') : null
 }
 
@@ -47,9 +223,19 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
   if (!q) return { ...EMPTY_SIGNAL_INTENT }
 
   const required_signals: MiraxSignalRequirement[] = []
+  const excluded_signals: MiraxSignalRequirement[] = []
   for (const entry of NL_SIGNAL_PATTERNS) {
-    if (entry.patterns.some((p) => p.test(q))) {
-      required_signals.push(entry.requirement)
+    for (const pattern of entry.patterns) {
+      const m = q.match(pattern)
+      if (!m) continue
+      const matchStart = m.index ?? 0
+      const context = q.slice(Math.max(0, matchStart - 40), matchStart).toLowerCase()
+      const negated = /\b(non|senza|manca|nessun|no)\b/.test(context)
+      if (negated) {
+        excluded_signals.push(entry.requirement)
+      } else {
+        required_signals.push(entry.requirement)
+      }
     }
   }
 
@@ -57,7 +243,10 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
   for (const entry of HIRING_ROLE_PATTERNS) {
     if (entry.patterns.some((p) => p.test(q))) hiring_roles.push(entry.role)
   }
-  if (hiring_roles.length && !required_signals.includes('hiring')) {
+  // Freelancer / "chi ha bisogno di me" → cerca aziende che assumono quel ruolo
+  const FREELANCER_NEED =
+    /\b(sono\s+(?:un|una)\b|potrebbero\s+aver\s+bisogno|che\s+potrebbero\s+aver\s+bisogno|freelanc\w*|libero\s+profession\w*)\b/i
+  if (hiring_roles.length && FREELANCER_NEED.test(q) && !required_signals.includes('hiring')) {
     required_signals.push('hiring')
   }
 
@@ -68,9 +257,25 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
 
   let category: string | null = null
   let location: string | null = null
-  const locMatch = q.match(/\b(?:a|ad|in)\s+([A-ZÀ-ÿ][a-zà-ÿ]+(?:\s+[A-ZÀ-ÿ][a-zà-ÿ]+)?)\b/)
-  if (locMatch) location = locMatch[1]
+  const stopWords = 'che|con|per|da|di|a|ad|in|su|e|o'
+  const nonGeoWords =
+    /^(marketing|software|digitale|crescita|espansione|vendite|cloud|crm|seo|ads|pubblicit\w*)$/i
+  const locMatch = q.match(
+    new RegExp(`\\b(?:a|ad|in)\\s+([A-Za-zÀ-ÿ]+)(?:\\s+(?!${stopWords}\\b)[A-Za-zÀ-ÿ]+)?\\b`, 'i'),
+  )
+  if (locMatch) {
+    const candidate = locMatch[1].trim()
+    const investInMarketing =
+      /\binvest\w*\s+in\s+marketing\b/i.test(q) && candidate.toLowerCase() === 'marketing'
+    if (!investInMarketing && !nonGeoWords.test(candidate)) {
+      location = candidate
+    }
+  }
+  const buyerMarketingSpend = isBuyerMarketingInvestmentQuery(q)
   const catPatterns: Array<[RegExp, string]> = [
+    [/\bagenzie?\s+(di\s+)?marketing\b/i, 'agenzie marketing'],
+    ...(buyerMarketingSpend ? [] : [[/\bagenzie?\b.*\bmarketing\b/i, 'agenzie marketing'] as [RegExp, string]]),
+    [/\bstartup\b/i, 'startup'],
     [/\bimprese?\s+edil\w*\b/i, 'imprese edili'],
     [/\bsoftware\s+house\b/i, 'software house'],
     [/\bweb\s+agenc\w*\b/i, 'web agency'],
@@ -84,11 +289,8 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
   }
 
   if (sector_keywords.length && !required_signals.includes('sector_investment')) {
-    const investIntent = /\b(invest|investono|investimento|puntano\s+su|fotovoltaic|rinnovabil|impianti\s+solari)\b/i.test(q)
-    const highIntentKw = sector_keywords.some((k) =>
-      ['fotovoltaico', 'software', 'logistica'].includes(k),
-    )
-    if (investIntent || highIntentKw) {
+    const investIntent = /\b(invest|investono|investimento|investe\s+in|puntano\s+su|puntare\s+su)\b/i.test(q)
+    if (investIntent) {
       required_signals.push('sector_investment')
     }
   }
@@ -122,6 +324,10 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
     time_window_days = 30
   }
 
+  const technical_filters = extractTechnicalFilters(q)
+  const social_filters = extractSocialFilters(q)
+  const business_filters = extractBusinessFilters(q)
+
   const spec: SignalIntentSpec = {
     required_signals: unique(required_signals),
     hiring_roles: unique(hiring_roles),
@@ -132,6 +338,9 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
     intent_summary: null,
     category,
     location,
+    technical_filters,
+    social_filters,
+    business_filters,
   }
   spec.intent_summary = buildSummary(spec)
   return spec
@@ -146,6 +355,9 @@ export function mergeSignalIntent(a: SignalIntentSpec, b: SignalIntentSpec): Sig
     require_crm_change: a.require_crm_change || b.require_crm_change,
     time_window_days: a.time_window_days ?? b.time_window_days,
     intent_summary: null,
+    technical_filters: { ...(a.technical_filters || {}), ...(b.technical_filters || {}) },
+    social_filters: { ...(a.social_filters || {}), ...(b.social_filters || {}) },
+    business_filters: { ...(a.business_filters || {}), ...(b.business_filters || {}) },
   }
   merged.intent_summary = buildSummary(merged) || a.intent_summary || b.intent_summary
   return merged

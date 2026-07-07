@@ -3,9 +3,10 @@
  * Get entity detail with latest observations and relationships summary.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceRoleClient } from '@/utils/supabase/server'
+import { createClient } from '@/utils/supabase/server'
 import { getEntityById, getTimeline, getRelatedEntities, getEvents } from '@/lib/universe'
 import { requireUniverseAuth } from '@/lib/universe/require-auth'
+import { universeClientError } from '@/lib/universe/errors'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireUniverseAuth()
@@ -15,7 +16,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   try {
     const { id } = await params
-    const sb = createServiceRoleClient()
+    const sb = await createClient()
 
     const entity = await getEntityById(sb, id)
     if (!entity) {
@@ -27,8 +28,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const events = await getEvents(sb, { entity_id: id, limit: 50 })
 
     return NextResponse.json({ entity, timeline, related, events })
-  } catch (e: any) {
-    console.error('[universe/entities/:id] error:', e)
-    return NextResponse.json({ error: e.message || 'Errore lettura entità' }, { status: 500 })
+  } catch (e: unknown) {
+    const { message, status } = universeClientError(e, 'entities/:id')
+    return NextResponse.json({ error: message }, { status })
   }
 }

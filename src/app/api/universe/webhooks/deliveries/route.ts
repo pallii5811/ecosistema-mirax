@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { requireUniverseAuth } from '@/lib/universe/require-auth'
 import { listWebhookDeliveries } from '@/lib/universe/webhooks'
+import { universeClientError } from '@/lib/universe/errors'
 
 export async function GET(req: NextRequest) {
   const auth = await requireUniverseAuth()
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
     const deliveries = await listWebhookDeliveries(supabase, user.id, limit)
     return NextResponse.json({ ok: true, deliveries })
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : 'Errore deliveries'
-    return NextResponse.json({ error: message }, { status: 500 })
+    const { message, status } = universeClientError(e, 'webhooks/deliveries')
+    return NextResponse.json({ error: message }, { status })
   }
 }

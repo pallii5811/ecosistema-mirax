@@ -26,3 +26,17 @@ export {
 export { inferMapsCategoryFromIntent, inferSearchKeywordsFromIntent, queryNamesExplicitCategory, hiringStatusForLead } from '@/lib/signal-intent/infer-maps-category'
 export { hiringCellForLead, indeedSearchUrl, type HiringCellData } from '@/lib/signal-intent/hiring-cell'
 export { intentCellForLead, showIntentDataColumn, intentColumnTitle, type IntentCellData } from '@/lib/signal-intent/intent-cell'
+export {
+  inferSellerBuyerProfile,
+  enrichCommercialIntentFromSellerQuery,
+  type SellerBuyerProfile,
+} from '@/lib/signal-intent/seller-buyer-inference'
+export {
+  shouldShowLeadForSignalIntent,
+  countLeadsMatchingSignalIntent,
+  isSignalFocusedIntent,
+  isHiringFocusedIntent,
+  signalFilterButtonLabel,
+  resultsSummaryForIntent,
+  type LeadVisibilityOpts,
+} from '@/lib/signal-intent/lead-visibility'

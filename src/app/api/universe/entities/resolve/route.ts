@@ -3,7 +3,7 @@
  * Risolve un lead MIRAX (dominio) → entità nel grafo.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceRoleClient } from '@/utils/supabase/server'
+import { createClient } from '@/utils/supabase/server'
 import {
   normalizeDomain,
   getEntityByCanonicalId,
@@ -13,6 +13,7 @@ import {
   getEvents,
 } from '@/lib/universe'
 import { requireUniverseAuth } from '@/lib/universe/require-auth'
+import { universeClientError } from '@/lib/universe/errors'
 
 export async function GET(req: NextRequest) {
   const auth = await requireUniverseAuth()
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'domain o website richiesto' }, { status: 400 })
     }
 
-    const sb = createServiceRoleClient()
+    const sb = await createClient()
     let entity = await getEntityByCanonicalId(sb, domain, 'company')
     if (!entity) entity = await getEntityByAlias(sb, 'domain', domain)
 
@@ -53,8 +54,7 @@ export async function GET(req: NextRequest) {
       events: events.slice(0, 12),
     })
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : 'Errore resolve entità'
-    console.error('[universe/entities/resolve] error:', message)
-    return NextResponse.json({ error: message }, { status: 500 })
+    const { message, status } = universeClientError(e, 'entities/resolve')
+    return NextResponse.json({ error: message }, { status })
   }
 }

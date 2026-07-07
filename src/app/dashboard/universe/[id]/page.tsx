@@ -17,6 +17,13 @@ import { formatObservationValue, labelObservation } from '@/lib/universe/labels'
 
 type Tab = 'twin' | 'timeline' | 'relations' | 'events'
 
+const TAB_IDS: Record<Tab, string> = {
+  twin: 'panel-twin',
+  timeline: 'panel-timeline',
+  relations: 'panel-relations',
+  events: 'panel-events',
+}
+
 export default function UniverseEntityPage() {
   const params = useParams<{ id: string }>()
   const id = params?.id ?? ''
@@ -116,13 +123,27 @@ export default function UniverseEntityPage() {
             ) : null}
           </Card>
 
-          <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-1">
+          <div role="tablist" aria-label="Sezioni entità" className="flex flex-wrap gap-2 border-b border-slate-200 pb-1">
             {tabs.map((t) => (
               <button
                 key={t.id}
                 type="button"
+                role="tab"
+                aria-selected={tab === t.id}
+                aria-controls={TAB_IDS[t.id]}
+                id={`tab-${t.id}`}
                 onClick={() => setTab(t.id)}
-                className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
+                onKeyDown={(e) => {
+                  const order: Tab[] = ['twin', 'timeline', 'relations', 'events']
+                  const idx = order.indexOf(tab)
+                  if (e.key === 'ArrowRight') {
+                    setTab(order[(idx + 1) % order.length])
+                  } else if (e.key === 'ArrowLeft') {
+                    setTab(order[(idx - 1 + order.length) % order.length])
+                  }
+                }}
+                tabIndex={tab === t.id ? 0 : -1}
+                className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 ${
                   tab === t.id
                     ? 'border-b-2 border-violet-600 text-violet-700 bg-violet-50/50'
                     : 'text-slate-500 hover:text-slate-800'
@@ -137,10 +158,18 @@ export default function UniverseEntityPage() {
           </div>
 
           <Card className="p-5">
-            {tab === 'twin' ? <UniverseDigitalTwinPanel entityId={id} /> : null}
-            {tab === 'timeline' ? <UniverseTimeline points={data.timeline} /> : null}
-            {tab === 'relations' ? <UniverseRelationsList related={data.related} /> : null}
-            {tab === 'events' ? <UniverseEventsList events={data.events ?? []} /> : null}
+            <div
+              id={TAB_IDS[tab]}
+              role="tabpanel"
+              aria-labelledby={`tab-${tab}`}
+              className="outline-none"
+              tabIndex={0}
+            >
+              {tab === 'twin' ? <UniverseDigitalTwinPanel entityId={id} /> : null}
+              {tab === 'timeline' ? <UniverseTimeline points={data.timeline} /> : null}
+              {tab === 'relations' ? <UniverseRelationsList related={data.related} /> : null}
+              {tab === 'events' ? <UniverseEventsList events={data.events ?? []} /> : null}
+            </div>
           </Card>
         </>
       ) : null}

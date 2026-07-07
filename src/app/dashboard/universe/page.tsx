@@ -3,14 +3,13 @@
 import { Suspense, useCallback, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { Activity, Network, Search, Sparkles } from 'lucide-react'
+import { Network, Search, Sparkles, Activity } from 'lucide-react'
 import { UniverseExplorerPanel } from '@/components/universe/UniverseExplorerPanel'
+import { UniverseGraphCanvas } from '@/components/universe/UniverseGraphCanvas'
+import { UniverseGraphStats } from '@/components/universe/UniverseGraphStats'
 import { UniverseAnalyticsPanel } from '@/components/universe/UniverseAnalyticsPanel'
 import { UniverseLiveEventsFeed } from '@/components/universe/UniverseLiveEventsFeed'
 import { UniverseAlertsPanel } from '@/components/universe/UniverseAlertsPanel'
-import { UniverseWebhookDeliveriesPanel } from '@/components/universe/UniverseWebhookDeliveriesPanel'
-import { UniverseGraphCanvas } from '@/components/universe/UniverseGraphCanvas'
-import { UniverseGraphStats } from '@/components/universe/UniverseGraphStats'
 import { cn } from '@/lib/utils'
 
 type Tab = 'graph' | 'explore' | 'analytics'
@@ -21,8 +20,7 @@ function UniversePageInner() {
   const urlName = searchParams.get('name')?.trim() ?? searchParams.get('q')?.trim() ?? ''
   const urlEntity = searchParams.get('entity')?.trim() ?? searchParams.get('entity_id')?.trim() ?? ''
   const urlTab = searchParams.get('tab')
-  const initialTab: Tab =
-    urlTab === 'explore' ? 'explore' : urlTab === 'analytics' ? 'analytics' : 'graph'
+  const initialTab: Tab = urlTab === 'explore' ? 'explore' : urlTab === 'analytics' ? 'analytics' : 'graph'
   const [tab, setTab] = useState<Tab>(initialTab)
   const [cityFilter, setCityFilter] = useState(urlCity)
   const [nameFilter, setNameFilter] = useState(urlName)
@@ -58,8 +56,7 @@ function UniversePageInner() {
             Knowledge Graph
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-slate-600">
-            Visualizzazione del grafo MIRAX — aziende, tecnologie, assunzioni e relazioni già arricchite.
-            Per trovare nuove aziende usa la ricerca principale con Discovery live.
+            Scopri connessioni tra aziende, tecnologie, assunzioni e opportunità già raccolte da MIRAX.
           </p>
         </div>
         <Link
@@ -155,21 +152,10 @@ function UniversePageInner() {
       ) : null}
       {tab === 'explore' ? <UniverseExplorerPanel /> : null}
       {tab === 'analytics' ? (
-        <div className="grid gap-6 lg:grid-cols-5">
-          <div className="lg:col-span-3 space-y-4">
-            <UniverseAnalyticsPanel />
-          </div>
-          <div className="lg:col-span-2 space-y-4">
-            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <UniverseAlertsPanel />
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <UniverseWebhookDeliveriesPanel />
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <UniverseLiveEventsFeed />
-            </div>
-          </div>
+        <div className="space-y-6">
+          <UniverseLiveEventsFeed />
+          <UniverseAnalyticsPanel />
+          <UniverseAlertsPanel />
         </div>
       ) : null}
     </div>

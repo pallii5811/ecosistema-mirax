@@ -3,9 +3,10 @@
  * Fase 7 — Digital Twin snapshot (grafo + contesto utente).
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient, createServiceRoleClient } from '@/utils/supabase/server'
+import { createClient } from '@/utils/supabase/server'
 import { buildDigitalTwin } from '@/lib/universe/digital-twin'
 import { requireUniverseAuth } from '@/lib/universe/require-auth'
+import { universeClientError } from '@/lib/universe/errors'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireUniverseAuth()
@@ -20,8 +21,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       data: { user },
     } = await supabase.auth.getUser()
 
-    const sb = createServiceRoleClient()
-    const twin = await buildDigitalTwin(sb, id, { userId: user?.id })
+    const twin = await buildDigitalTwin(supabase, id, { userId: user?.id })
 
     if (!twin) {
       return NextResponse.json({ error: 'Entità non trovata' }, { status: 404 })
@@ -29,8 +29,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     return NextResponse.json({ ok: true, twin })
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : 'Errore Digital Twin'
-    console.error('[universe/entities/:id/twin]', message)
-    return NextResponse.json({ error: message }, { status: 500 })
+    const { message, status } = universeClientError(e, 'entities/:id/twin')
+    return NextResponse.json({ error: message }, { status })
   }
 }

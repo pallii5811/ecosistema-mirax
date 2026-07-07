@@ -1,4 +1,5 @@
 import type { SignalIntentSpec } from '@/lib/signal-intent/types'
+import { hiringMatchTextFromLead, textMatchesHiringRoles } from '@/lib/signal-intent/hiring-roles'
 
 export type HiringCellData = {
   status: 'confirmed' | 'pending' | 'none' | 'idle'
@@ -39,8 +40,9 @@ function rolesFromIntent(intent: SignalIntentSpec | null | undefined): string[] 
 
 function titleMatchesRoles(titles: string[], roles: string[]): boolean {
   if (!roles.length) return titles.length > 0
-  const hay = titles.join(' ').toLowerCase()
-  return roles.some((r) => hay.includes(r) || (r === 'programmatore' && /\b(dev|developer|python|software|full[\s-]?stack)\b/i.test(hay)))
+  const hay = titles.length ? titles.join(' ') : ''
+  if (hay.trim()) return textMatchesHiringRoles(hay, roles)
+  return false
 }
 
 /** Dato hiring per colonna dedicata — separato da audit sito (Pixel/SEO). */
@@ -53,7 +55,9 @@ export function hiringCellForLead(
 
   const titles = jobTitlesFromLead(lead)
   const roles = rolesFromIntent(intent)
-  const roleMatch = titleMatchesRoles(titles, roles)
+  const roleMatch =
+    titleMatchesRoles(titles, roles) ||
+    (roles.length > 0 && textMatchesHiringRoles(hiringMatchTextFromLead(lead), roles))
   const externalDone = Boolean(lead.business_events_external_at)
   const signals = lead.business_signals
   const hasHiringSignal =
@@ -90,7 +94,7 @@ export function hiringCellForLead(
 
   return {
     status: 'none',
-    label: 'Nessuna offerta Python',
+    label: 'Nessuna offerta rilevata',
     className: 'bg-zinc-100 text-zinc-600 border-zinc-300',
     jobTitles: [],
     roleMatch: false,

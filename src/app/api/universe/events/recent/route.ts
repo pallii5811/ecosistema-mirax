@@ -3,9 +3,10 @@
  * Fase 8 — feed eventi recenti con nomi entità (paginato).
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceRoleClient } from '@/utils/supabase/server'
+import { createClient } from '@/utils/supabase/server'
 import { requireUniverseAuth } from '@/lib/universe/require-auth'
 import { getEvents } from '@/lib/universe/event-repository'
+import { universeClientError } from '@/lib/universe/errors'
 
 export async function GET(req: NextRequest) {
   const auth = await requireUniverseAuth()
@@ -18,7 +19,7 @@ export async function GET(req: NextRequest) {
     const offset = Math.max(0, Number(req.nextUrl.searchParams.get('offset')) || 0)
     const entityId = req.nextUrl.searchParams.get('entity_id')?.trim() || undefined
 
-    const sb = createServiceRoleClient()
+    const sb = await createClient()
     const events = await getEvents(sb, { entity_id: entityId, limit, offset })
 
     const entityIds = [
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
       limit,
     })
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : 'Errore eventi'
-    return NextResponse.json({ error: message }, { status: 500 })
+    const { message, status } = universeClientError(e, 'events/recent')
+    return NextResponse.json({ error: message }, { status })
   }
 }

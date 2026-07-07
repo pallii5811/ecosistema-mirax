@@ -2,7 +2,14 @@
  * Payload standard per job searches (worker legge `zone` come cap max lead).
  */
 
-export const MAX_LEADS_PER_SEARCH = 500
+export const MAX_LEADS_PER_SEARCH = 10000
+
+export const AGENTIC_NICHE_USER_MESSAGE =
+  "Ricerca di nicchia rilevata: MIRAX attiva l'Agente AI per scoprire lead B2B sul web in tempo reale."
+
+export function buildAgenticExhaustionMessage(found: number, requested: number): string {
+  return `Ricerca esaurita: trovati ${found} lead su ${requested} richiesti. Il web non offre altri risultati validi per questa nicchia.`
+}
 
 export type PendingSearchInsert = {
   category: string
@@ -12,6 +19,7 @@ export type PendingSearchInsert = {
   created_at: string
   user_id?: string
   zone?: string
+  intent?: Record<string, unknown> | null
 }
 
 export function encodeMaxLeadsZone(maxLeads: unknown): string | undefined {
@@ -32,6 +40,7 @@ export function buildPendingSearchInsert(opts: {
   location: string
   userId?: string | null
   maxLeads?: number | null
+  intent?: Record<string, unknown> | null
 }): PendingSearchInsert {
   const row: PendingSearchInsert = {
     category: opts.category.trim(),
@@ -43,5 +52,6 @@ export function buildPendingSearchInsert(opts: {
   if (opts.userId) row.user_id = opts.userId
   const zone = encodeMaxLeadsZone(opts.maxLeads)
   if (zone) row.zone = zone
+  if (opts.intent) row.intent = opts.intent
   return row
 }

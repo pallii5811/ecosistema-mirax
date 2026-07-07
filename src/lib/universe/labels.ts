@@ -10,6 +10,9 @@ export const ENTITY_TYPE_LABELS: Record<EntityType, string> = {
   document: 'Documento',
   product: 'Prodotto',
   location: 'Località',
+  tender: 'Gara',
+  investor: 'Investitore',
+  product_category: 'Categoria prodotto',
 }
 
 export const RELATIONSHIP_TYPE_LABELS: Record<RelationshipType, string> = {
@@ -23,6 +26,18 @@ export const RELATIONSHIP_TYPE_LABELS: Record<RelationshipType, string> = {
   located_in: 'Situato in',
   related_to: 'Correlato a',
   mentioned_in: 'Menzionato in',
+  supplies: 'Fornisce a',
+  supplied_by: 'Fornito da',
+  sells_to: 'Vende a',
+  buys_from: 'Compra da',
+  partner_of: 'Partner di',
+  invested_in: 'Ha investito in',
+  received_investment_from: 'Ha ricevuto investimento da',
+  customer_of: 'Cliente di',
+  has_customer: 'Ha cliente',
+  awarded_to: 'Aggiudicato a',
+  awarded_by: 'Aggiudicato da',
+  competed_for: 'Ha gareggiato per',
 }
 
 export const EVENT_TYPE_LABELS: Record<UniverseEventType, string> = {
@@ -32,11 +47,20 @@ export const EVENT_TYPE_LABELS: Record<UniverseEventType, string> = {
   new_hiring: 'Nuova assunzione',
   new_director: 'Nuovo amministratore',
   crm_installed: 'CRM rilevato',
+  crm_change: 'Cambio CRM',
+  ads_started: 'Annunci attivati',
   tender_won: 'Gara vinta',
   funding_received: 'Finanziamento',
   registry_change: 'Variazione registro',
+  sector_investment: 'Investimento settore',
   revenue_changed: 'Fatturato cambiato',
   employees_changed: 'Dipendenti cambiati',
+  supplier_sought: 'Cerca fornitore',
+  expansion_started: 'Espansione avviata',
+  new_product_launched: 'Nuovo prodotto lanciato',
+  market_entered: 'Nuovo mercato',
+  executive_change: 'Cambio dirigenza',
+  partnership_announced: 'Partnership annunciata',
 }
 
 export const OBSERVATION_LABELS: Record<string, string> = {
@@ -53,6 +77,18 @@ export const OBSERVATION_LABELS: Record<string, string> = {
   revenue: 'Fatturato',
   has_spf: 'SPF email',
   has_dmarc: 'DMARC',
+  has_instagram: 'Instagram',
+  has_facebook: 'Facebook',
+  has_linkedin: 'LinkedIn',
+  has_chatbot: 'Chatbot',
+  has_booking: 'Booking',
+  crm_stack: 'Stack CRM',
+  meta_ads_running: 'Meta Ads attivi',
+  google_ads_running: 'Google Ads attivi',
+  last_audited_at: 'Ultimo audit',
+  founded_at: 'Data costituzione',
+  investing_marketing: 'Investe in marketing',
+  social_followers_low: 'Social follower bassi',
 }
 
 export function labelEntityType(type: EntityType): string {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Database, Network } from 'lucide-react'
+import { Network } from 'lucide-react'
 
 type Stats = {
   companies: number
@@ -51,13 +51,7 @@ export function UniverseGraphStats() {
       </span>
       {empty ? (
         <span className="text-xs text-amber-800">
-          Grafo vuoto — attiva <code className="rounded bg-white/80 px-1">UNIVERSE_ENABLED=1</code> e lancia una discovery live
-        </span>
-      ) : null}
-      {!stats.universe_enabled ? (
-        <span className="inline-flex items-center gap-1 text-xs text-slate-600">
-          <Database className="h-3 w-3" />
-          Ingest sidecar OFF
+          Il grafo si arricchisce con ogni ricerca. Inizia scoprendo aziende nella dashboard.
         </span>
       ) : null}
     </div>

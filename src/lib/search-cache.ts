@@ -6,10 +6,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   buildPendingSearchInsert,
+  clampSearchMaxLeads,
   encodeMaxLeadsZone,
   MAX_LEADS_PER_SEARCH,
 } from './search-job-payload.ts'
 import { hasLeadContact } from './search-contact-quality.ts'
+import { isCacheRelevantEnough } from './lead-relevance.ts'
 
 export type SearchCacheRow = {
   id: string
@@ -195,11 +197,15 @@ export async function requestIncrementalScrape(
     maxLeads: number
     userId?: string | null
     categoryVariants?: string[]
+    intent?: Record<string, unknown> | null
+    originalQuery?: string | null
   },
 ): Promise<IncrementalScrapeResult> {
   const category = formatCanonicalLabel(opts.category)
   const location = formatCanonicalLabel(opts.location)
   const maxLeads = Math.min(MAX_LEADS_PER_SEARCH, Math.max(10, Math.round(opts.maxLeads || 10)))
+  const originalQuery =
+    String(opts.originalQuery ?? opts.intent?.query ?? '').trim() || null
 
   const cache = await loadMergedSearchCache(supabase, {
     category,
@@ -209,23 +215,33 @@ export async function requestIncrementalScrape(
   })
 
   const zone = encodeMaxLeadsZone(maxLeads)
+  const cacheTrusted =
+    cache.leads.length === 0 ||
+    !originalQuery ||
+    isCacheRelevantEnough(cache.leads, originalQuery)
 
-  if (cache.canonicalJobId) {
+  if (cache.canonicalJobId && !cacheTrusted) {
+    const resetPayload: Record<string, unknown> = {
+      status: 'pending',
+      category,
+      location,
+      results: [],
+    }
+    if (zone) resetPayload.zone = zone
+    if (opts.intent) resetPayload.intent = opts.intent
+    await supabase.from('searches').update(resetPayload).eq('id', cache.canonicalJobId)
+    return {
+      jobId: cache.canonicalJobId,
+      reused: false,
+      existingRaw: 0,
+      existingWithContact: 0,
+    }
+  }
+
+  if (cache.canonicalJobId && cacheTrusted) {
     const canonical = cache.rows.find((r) => r.id === cache.canonicalJobId)
     const status = String(canonical?.status ?? '').toLowerCase()
     const isActive = status === 'processing' || status === 'pending' || status === 'pending_user'
-
-    if (isActive) {
-      if (zone) {
-        await supabase.from('searches').update({ zone }).eq('id', cache.canonicalJobId)
-      }
-      return {
-        jobId: cache.canonicalJobId,
-        reused: true,
-        existingRaw: cache.rawTotal,
-        existingWithContact: cache.withContact,
-      }
-    }
 
     const updatePayload: Record<string, unknown> = {
       status: 'pending',
@@ -233,6 +249,17 @@ export async function requestIncrementalScrape(
       location,
     }
     if (zone) updatePayload.zone = zone
+    if (opts.intent) updatePayload.intent = opts.intent
+
+    if (isActive) {
+      await supabase.from('searches').update(updatePayload).eq('id', cache.canonicalJobId)
+      return {
+        jobId: cache.canonicalJobId,
+        reused: true,
+        existingRaw: cache.rawTotal,
+        existingWithContact: cache.withContact,
+      }
+    }
 
     await supabase.from('searches').update(updatePayload).eq('id', cache.canonicalJobId)
 
@@ -252,6 +279,7 @@ export async function requestIncrementalScrape(
         category,
         location,
         maxLeads,
+        intent: opts.intent,
       }),
     )
     .select('id')
@@ -302,4 +330,65 @@ export async function requestIncrementalScrape(
   }
 
   throw new Error(insertError?.message || 'Impossibile avviare scrape')
+}
+
+export type AgenticWorkerJobResult = {
+  jobId: string
+  searchId: string
+  reused: boolean
+}
+
+/**
+ * Crea job worker in modalità agentic-only (no Maps).
+ * Il worker Python esegue WebResearcher + DataExtractor con streaming incrementale.
+ */
+export async function requestAgenticWorkerJob(
+  supabase: SupabaseClient,
+  opts: {
+    query: string
+    maxLeads: number
+    userId?: string | null
+    location?: string | null
+    sector?: string | null
+    intent?: Record<string, unknown> | null
+    plan?: Record<string, unknown> | null
+  },
+): Promise<AgenticWorkerJobResult> {
+  const query = String(opts.query || '').trim()
+  const location = formatCanonicalLabel(opts.location || 'Italia')
+  const sector = formatCanonicalLabel(opts.sector || 'Agentic AI')
+  const maxLeads = clampSearchMaxLeads(opts.maxLeads ?? 50)
+
+  const intent: Record<string, unknown> = {
+    ...(opts.intent ?? {}),
+    search_mode: 'agentic_only',
+    search_strategy: 'organic_web_search',
+    original_query: query,
+    query,
+    ...(opts.plan && typeof opts.plan === 'object' ? { uqe_plan: opts.plan } : {}),
+  }
+
+  const { data: insertData, error: insertError } = await supabase
+    .from('searches')
+    .insert(
+      buildPendingSearchInsert({
+        userId: opts.userId,
+        category: sector,
+        location,
+        maxLeads,
+        intent,
+      }),
+    )
+    .select('id')
+    .single()
+
+  if (!insertError && insertData?.id) {
+    return {
+      jobId: insertData.id as string,
+      searchId: insertData.id as string,
+      reused: false,
+    }
+  }
+
+  throw new Error(insertError?.message || 'Impossibile avviare job agentic')
 }

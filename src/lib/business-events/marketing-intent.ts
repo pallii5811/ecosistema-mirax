@@ -82,8 +82,6 @@ export function detectMarketingIntentSignals(lead: Record<string, unknown>): Mir
 
   const activeMetaAds = readNumber(tr, ['active_meta_ads', 'meta_ads_count']) ?? readNumber(lead, ['active_meta_ads'])
   const metaVerified = readBoolFromLead(lead, ['meta_ads_verified']) === true || tr.meta_ads_verified === true
-  const hasGoogleAds =
-    readBoolFromLead(lead, ['google_ads', 'has_google_ads']) === true || tr.has_google_ads === true
 
   if (metaVerified && activeMetaAds !== null && activeMetaAds > 0) {
     signals.push({
@@ -100,25 +98,6 @@ export function detectMarketingIntentSignals(lead: Record<string, unknown>): Mir
       serviceToSell: 'Gestione campagne Meta, creatività e ottimizzazione ROAS',
       openingLine: `${name} ha ${activeMetaAds} inserzion${activeMetaAds === 1 ? 'e' : 'i'} attive su Meta: posso analizzare dove migliorare resa e costo per contatto.`,
       nextBestAction: 'Mini-audit campagne con prova Ad Library.',
-      detectedAt: new Date().toISOString(),
-    })
-  }
-
-  if (hasGoogleAds) {
-    signals.push({
-      id: 'google_ads_started',
-      kind: 'business',
-      signalType: 'google_ads_started',
-      title: 'Google Ads rilevato — budget search/display attivo',
-      severity: 'high',
-      confidence: 80,
-      reason: 'Tag o script Google Ads presente sul sito.',
-      evidence: [
-        { label: 'Google Ads', value: 'tag rilevato sul sito', source: 'website_audit' },
-      ],
-      serviceToSell: 'Audit Google Ads, tracking conversioni e ottimizzazione keyword',
-      openingLine: `${name} investe già in Google Ads: possiamo verificare se il tracking e le landing convertono al massimo.`,
-      nextBestAction: 'Proponi audit tracking + landing.',
       detectedAt: new Date().toISOString(),
     })
   }

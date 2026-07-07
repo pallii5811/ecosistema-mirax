@@ -222,8 +222,15 @@ export function analyzeBuyingSignals(input: unknown, audit?: BuyingSignalAudit |
   const slowRealSite = (perfScore !== null && perfScore < 50) || (lcpMs !== null && lcpMs > 4000)
 
   // Inserzioni Meta ATTIVE verificate via API ufficiale: prova certa di spesa pubblicitaria in corso.
-  const metaAdsVerified = audit?.metaAdsVerified === true
-  const activeMetaAds = typeof audit?.activeMetaAds === 'number' ? audit.activeMetaAds : null
+  const metaAdsVerified =
+    audit?.metaAdsVerified === true ||
+    lead.meta_ads_verified === true ||
+    technicalReport.meta_ads_verified === true
+  const activeMetaAds =
+    typeof audit?.activeMetaAds === 'number'
+      ? audit.activeMetaAds
+      : readNumber(lead, ['active_meta_ads', 'meta_ads_count']) ??
+        readNumber(technicalReport, ['active_meta_ads', 'meta_ads_count'])
   const isAdvertisingNow = metaAdsVerified && activeMetaAds !== null && activeMetaAds > 0
   // Funnel rotto = il traffico (pagato) non si trasforma in contatti misurabili.
   const brokenFunnel = noOnSiteCapture || slowRealSite || noTrackingStack

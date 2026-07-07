@@ -90,3 +90,39 @@ export function buildCompanyCanonicalId(
 ): string | null {
   return normalizeDomain(domain) || normalizeVat(vat) || normalizePhone(phone) || null
 }
+
+/**
+ * Stable, deterministic string hash (djb2 variant).
+ * Used for idempotency keys where cryptographic strength is unnecessary.
+ */
+export function stableHash(input: string): string {
+  let hash = 5381
+  for (let i = 0; i < input.length; i++) {
+    hash = ((hash << 5) + hash + input.charCodeAt(i)) >>> 0
+  }
+  return hash.toString(36).padStart(7, '0')
+}
+
+/**
+ * Deterministic JSON serialization compatible with Python's
+ * `json.dumps(..., sort_keys=True, separators=(',', ':'))`.
+ * Produces compact output (no spaces) with recursively sorted object keys.
+ */
+export function canonicalJson(value: unknown): string {
+  if (value === null) return 'null'
+  if (value === undefined) return 'null'
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) {
+    return '[' + value.map(canonicalJson).join(',') + ']'
+  }
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    const pairs = Object.keys(obj)
+      .sort()
+      .map((k) => JSON.stringify(k) + ':' + canonicalJson(obj[k]))
+    return '{' + pairs.join(',') + '}'
+  }
+  return 'null'
+}
+

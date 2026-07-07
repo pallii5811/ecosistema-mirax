@@ -7,6 +7,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { UniverseEvent, UniverseEventType } from './types.ts'
 import { wrapSupabaseError } from './errors.ts'
+import { stablePayloadHash } from './hash.server.ts'
 
 export interface CreateEventInput {
   entity_id?: string | null
@@ -16,18 +17,41 @@ export interface CreateEventInput {
   source: string
 }
 
+function eventDedupKey(input: {
+  entity_id: string | null
+  event_type: string
+  source: string
+  occurred_at: string
+  payload: Record<string, unknown>
+}): string {
+  const day = input.occurred_at.slice(0, 10)
+  const payloadHash = stablePayloadHash(input.payload)
+  return `${input.entity_id ?? 'none'}:${input.event_type}:${input.source}:${day}:${payloadHash}`
+}
+
 export async function appendEvent(sb: SupabaseClient, input: CreateEventInput): Promise<UniverseEvent> {
+  const occurred_at = input.occurred_at ?? new Date().toISOString()
   const { data, error } = await sb
     .from('universe_events')
-    .insert({
-      entity_id: input.entity_id ?? null,
-      event_type: input.event_type,
-      payload: input.payload,
-      occurred_at: input.occurred_at ?? new Date().toISOString(),
-      source: input.source,
-      processed: false,
-      error_count: 0,
-    })
+    .upsert(
+      {
+        entity_id: input.entity_id ?? null,
+        event_type: input.event_type,
+        payload: input.payload,
+        occurred_at,
+        source: input.source,
+        processed: false,
+        error_count: 0,
+        dedup_key: eventDedupKey({
+          entity_id: input.entity_id ?? null,
+          event_type: input.event_type,
+          source: input.source,
+          occurred_at,
+          payload: input.payload,
+        }),
+      },
+      { onConflict: 'dedup_key' }
+    )
     .select()
     .single()
 
@@ -39,19 +63,36 @@ export async function appendEvents(sb: SupabaseClient, inputs: CreateEventInput[
   if (inputs.length === 0) return []
 
   const now = new Date().toISOString()
-  const rows = inputs.map((input) => ({
-    entity_id: input.entity_id ?? null,
-    event_type: input.event_type,
-    payload: input.payload,
-    occurred_at: input.occurred_at ?? now,
-    source: input.source,
-    processed: false,
-    error_count: 0,
-  }))
+  const rows = inputs.map((input) => {
+    const occurred_at = input.occurred_at ?? now
+    return {
+      entity_id: input.entity_id ?? null,
+      event_type: input.event_type,
+      payload: input.payload,
+      occurred_at,
+      source: input.source,
+      processed: false,
+      error_count: 0,
+      dedup_key: eventDedupKey({
+        entity_id: input.entity_id ?? null,
+        event_type: input.event_type,
+        source: input.source,
+        occurred_at,
+        payload: input.payload,
+      }),
+    }
+  })
 
-  const { data, error } = await sb.from('universe_events').insert(rows).select()
+  const { data, error } = await sb.from('universe_events').upsert(rows, { onConflict: 'dedup_key' }).select()
   if (error) throw wrapSupabaseError(error)
   return (data as UniverseEvent[]) ?? []
+}
+
+export async function getEventById(sb: SupabaseClient, eventId: string): Promise<UniverseEvent | null> {
+  const { data, error } = await sb.from('universe_events').select('*').eq('id', eventId).single()
+  if (error?.code === 'PGRST116') return null
+  if (error) throw wrapSupabaseError(error)
+  return (data as UniverseEvent) ?? null
 }
 
 export async function getEvents(

@@ -40,7 +40,15 @@ export function BusinessSignalBadge({ signals, compact = false }: Props) {
     >
       <Icon className="h-2.5 w-2.5" />
       {compact
-        ? (top.signalType === 'site_stale' ? 'Datato' : top.signalType === 'meta_ads_started' ? 'Meta' : 'Biz')
+        ? top.signalType === 'hiring'
+          ? 'Hiring'
+          : top.signalType === 'site_stale'
+            ? 'Datato'
+            : top.signalType === 'meta_ads_started'
+              ? 'Meta'
+              : top.signalType === 'tender_won'
+                ? 'Gara'
+                : 'Biz'
         : signals.length > 1
           ? `${signals.length} segnali biz`
           : top.title.length > 28
