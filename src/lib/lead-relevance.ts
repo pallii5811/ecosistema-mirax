@@ -3,6 +3,11 @@
  * Gate deterministico (sync, zero API) + filtro AI opzionale (server-side).
  */
 
+import {
+  filterOutMarketingAgencies,
+  isBuyerMarketingInvestmentQuery,
+} from '@/lib/signal-intent/marketing-investment'
+
 export type LeadLike = Record<string, unknown>
 
 const CATEGORY_PATTERNS: Array<[RegExp, string]> = [
@@ -11,7 +16,6 @@ const CATEGORY_PATTERNS: Array<[RegExp, string]> = [
   [/\bhotel\b/i, 'hotel'],
   [/\bagenzie?\s+(di\s+)?marketing\b/i, 'marketing'],
   [/\bagenzie?\b.*\bmarketing\b/i, 'marketing'],
-  [/\binvest\w*\s+in\s+marketing\b/i, 'marketing'],
   [/\bstartup\b|\bscaleup\b/i, 'startup'],
   [/\bagenzie?\s+immobiliar\w*\b/i, 'immobiliare'],
   [/\b(imprese?\s+edil\w*|edil\w*|costruzion\w*)\b/i, 'edilizia'],
@@ -120,6 +124,7 @@ function leadText(lead: LeadLike): string {
 export function inferQueryCategoryKey(query: string): string | null {
   const q = (query || '').trim()
   if (!q) return null
+  if (isBuyerMarketingInvestmentQuery(q)) return null
   for (const [re, key] of CATEGORY_PATTERNS) {
     if (re.test(q)) return key
   }
@@ -128,13 +133,14 @@ export function inferQueryCategoryKey(query: string): string | null {
 
 /** Esclude lead chiaramente fuori categoria rispetto alla query. */
 export function filterLeadsDeterministic(leads: LeadLike[], query: string): LeadLike[] {
+  let filtered = filterOutMarketingAgencies(leads, query)
   const categoryKey = inferQueryCategoryKey(query)
-  if (!categoryKey) return leads
+  if (!categoryKey) return filtered
 
   const conflicts = CONFLICT_KEYWORDS[categoryKey] ?? []
   const positives = POSITIVE_KEYWORDS[categoryKey] ?? []
 
-  return leads.filter((lead) => {
+  return filtered.filter((lead) => {
     const text = leadText(lead)
     const cat = String(lead.categoria ?? lead.category ?? '').toLowerCase()
 

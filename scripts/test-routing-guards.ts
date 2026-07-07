@@ -23,6 +23,8 @@ const cases = [
     query: 'aziende che stanno investendo in marketing',
     expectStrategy: 'hybrid' as const,
     notStrategy: 'organic_web_search' as const,
+    expectSector: 'Negozi',
+    expectSignals: ['investing_marketing'],
     label: 'buyer signal marketing',
   },
   {
@@ -45,7 +47,12 @@ for (const c of cases) {
   const strategy = guarded.search_strategy
   const ok =
     strategy === c.expectStrategy &&
-    (!c.notStrategy || strategy !== c.notStrategy)
+    (!c.notStrategy || strategy !== c.notStrategy) &&
+    (!('expectSector' in c) || guarded.sector === (c as { expectSector?: string }).expectSector) &&
+    (!('expectSignals' in c) ||
+      (c as { expectSignals?: string[] }).expectSignals?.every((s) =>
+        guarded.required_signals.includes(s),
+      ))
 
   if (!ok) {
     failed++
@@ -70,4 +77,38 @@ if (failed > 0) {
   console.error(`\n${failed} test(s) failed`)
   process.exit(1)
 }
-console.log(`\nAll ${cases.length + 1} routing checks passed.`)
+
+// Simula risposta GPT errata (sector=marketing, segnali sbagliati)
+const gptWrong = applyRoutingGuards(
+  {
+    original_query: 'aziende che stanno investendo in marketing',
+    search_strategy: 'hybrid',
+    sector: 'marketing',
+    location: '',
+    required_signals: ['funding_received', 'expansion'],
+    technical_filters: {},
+    extraction_schema: ['email'],
+    confidence: 0.9,
+    intent_summary: 'test',
+    parse_source: 'llm',
+    user_message: null,
+    reasoning: null,
+  },
+  'aziende che stanno investendo in marketing',
+)
+if (
+  gptWrong.sector !== 'Negozi' ||
+  !gptWrong.required_signals.includes('investing_marketing') ||
+  gptWrong.required_signals.includes('funding_received')
+) {
+  failed++
+  console.error('FAIL GPT override for buyer marketing', gptWrong)
+} else {
+  console.log('OK   GPT override buyer marketing → Negozi + investing_marketing')
+}
+
+if (failed > 0) {
+  console.error(`\n${failed} test(s) failed`)
+  process.exit(1)
+}
+console.log(`\nAll ${cases.length + 2} routing checks passed.`)

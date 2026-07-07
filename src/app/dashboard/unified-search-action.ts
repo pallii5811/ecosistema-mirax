@@ -17,6 +17,7 @@ import {
 } from '@/lib/signal-intent/seller-buyer-inference'
 import type { MiraxQueryPlan } from '@/types/uqe'
 import {
+  buyerMarketingMapsSector,
   isBuyerMarketingInvestmentQuery,
   isSellerMarketingAgencySector,
 } from '@/lib/signal-intent/marketing-investment'
@@ -85,7 +86,7 @@ function inferMapsCategoryFromPlan(plan: MiraxQueryPlan, query: string, intent: 
     if (plan.sector?.trim() && !isSellerMarketingAgencySector(plan.sector)) {
       return plan.sector.trim()
     }
-    return 'aziende in crescita'
+    return buyerMarketingMapsSector()
   }
   if (plan.sector?.trim()) return plan.sector.trim()
   const q = query.toLowerCase()

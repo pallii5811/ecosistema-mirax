@@ -17,7 +17,53 @@ export function isBuyerMarketingInvestmentQuery(query: string): boolean {
 
 export function isSellerMarketingAgencySector(sector: string): boolean {
   const s = sector.trim().toLowerCase()
-  return /agenzie?\s+(di\s+)?marketing|marketing\s+agenz|web\s+agenc|digital\s+market/i.test(s)
+  if (!s) return false
+  if (s === 'marketing' || s === 'comunicazione' || s === 'pubblicità' || s === 'pubblicita') return true
+  return /agenzie?\s+(di\s+)?marketing|marketing\s+agenz|web\s+agenc|digital\s+market|agenzia\s+marketing/i.test(s)
+}
+
+/** Categoria Maps per buyer "investono in marketing" — mai settore marketing/agenzie. */
+export function buyerMarketingMapsSector(): string {
+  return 'Negozi'
+}
+
+export function isMarketingAgencyLead(lead: Record<string, unknown>): boolean {
+  const text = [
+    lead.azienda,
+    lead.nome,
+    lead.name,
+    lead.business_name,
+    lead.categoria,
+    lead.category,
+    lead.sito,
+    lead.website,
+  ]
+    .map((x) => String(x ?? '').toLowerCase())
+    .join(' ')
+  const cat = String(lead.categoria ?? lead.category ?? '').toLowerCase()
+  if (/agenz/i.test(cat) && /marketing|comunicaz|pubblicit|digital/i.test(cat)) return true
+  if (cat === 'marketing' || cat === 'agenzie di marketing' || cat === 'agenzie marketing') return true
+  const agencyPatterns = [
+    /\bagenzia\b.*\b(marketing|comunicaz|digital|web)\b/,
+    /\b(marketing|comunicaz|digital)\b.*\bagenzia\b/,
+    /\bdigital\s+marketing\b/,
+    /\bweb\s+agenc/,
+    /\bagency\b/,
+    /\bseo\s+agency\b/,
+    /\bsocial\s+media\s+agency\b/,
+    /\bmarketing\s+italia\b/,
+    /\bpasso\s+al\s+marketing\b/,
+    /\bmedia\s*marketing\b/,
+  ]
+  return agencyPatterns.some((p) => p.test(text))
+}
+
+export function filterOutMarketingAgencies<T>(leads: T[], query: string): T[] {
+  if (!isBuyerMarketingInvestmentQuery(query)) return leads
+  return leads.filter((lead) => {
+    if (!lead || typeof lead !== 'object') return false
+    return !isMarketingAgencyLead(lead as Record<string, unknown>)
+  })
 }
 
 /** Budget ads verificato dalla Meta Ad Library API — unico proxy onesto di "sta investendo". */

@@ -13,6 +13,7 @@ import {
 } from '@/types/uqe'
 import { parseSignalIntentHeuristic } from '@/lib/signal-intent/parse-heuristic'
 import {
+  buyerMarketingMapsSector,
   isBuyerMarketingInvestmentQuery,
   isSellerMarketingAgencySector,
 } from '@/lib/signal-intent/marketing-investment'
@@ -227,6 +228,22 @@ export function applyRoutingGuards(plan: MiraxQueryPlan, query: string): MiraxQu
   const q = query.trim()
   if (!q) return plan
 
+  // GPT spesso risponde sector=marketing + funding/expansion — correggiamo sempre per buyer query.
+  if (isBuyerMarketingInvestmentQuery(q)) {
+    const signals = new Set(plan.required_signals)
+    signals.add('investing_marketing')
+    signals.delete('funding_received')
+    signals.delete('expansion')
+    return {
+      ...plan,
+      search_strategy: 'hybrid',
+      sector: buyerMarketingMapsSector(),
+      location: plan.location?.trim() || 'Italia',
+      required_signals: normalizeSignals([...signals]),
+      reasoning: `${plan.reasoning || ''} [routing_guard: buyer_investing_marketing]`.trim(),
+    }
+  }
+
   let strategy = plan.search_strategy
   const hasTech = plan.technical_filters && Object.keys(plan.technical_filters).length > 0
   const hasSector = Boolean(plan.sector?.trim() && plan.sector.trim().length >= 4)
@@ -248,21 +265,7 @@ export function applyRoutingGuards(plan: MiraxQueryPlan, query: string): MiraxQu
     strategy = 'hybrid'
   }
 
-  if (strategy === plan.search_strategy) {
-    if (
-      plan.required_signals.includes('investing_marketing') &&
-      isBuyerMarketingInvestmentQuery(q) &&
-      (isSellerMarketingAgencySector(plan.sector || '') || !plan.sector.trim())
-    ) {
-      return {
-        ...plan,
-        sector: 'aziende in crescita',
-        search_strategy: 'hybrid',
-        location: plan.location?.trim() || 'Italia',
-      }
-    }
-    return plan
-  }
+  if (strategy === plan.search_strategy) return plan
   return {
     ...plan,
     search_strategy: strategy,
@@ -395,7 +398,7 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
     isBuyerMarketingInvestmentQuery(query) &&
     (isSellerMarketingAgencySector(sector) || !sector)
   ) {
-    sector = 'aziende in crescita'
+    sector = buyerMarketingMapsSector()
   }
 
   const search_strategy = inferStrategyFromQuery(query, sector, location, required_signals)

@@ -240,7 +240,9 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
   }
 
   const hiring_roles: string[] = []
+  const buyerMarketingSpend = isBuyerMarketingInvestmentQuery(q)
   for (const entry of HIRING_ROLE_PATTERNS) {
+    if (buyerMarketingSpend && entry.role === 'marketing') continue
     if (entry.patterns.some((p) => p.test(q))) hiring_roles.push(entry.role)
   }
   // Freelancer / "chi ha bisogno di me" → cerca aziende che assumono quel ruolo
@@ -271,7 +273,6 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
       location = candidate
     }
   }
-  const buyerMarketingSpend = isBuyerMarketingInvestmentQuery(q)
   const catPatterns: Array<[RegExp, string]> = [
     [/\bagenzie?\s+(di\s+)?marketing\b/i, 'agenzie marketing'],
     ...(buyerMarketingSpend ? [] : [[/\bagenzie?\b.*\bmarketing\b/i, 'agenzie marketing'] as [RegExp, string]]),
