@@ -10,3 +10,5 @@ requests==2.32.3
 fpdf2==2.7.9
 python-whois==0.9.5
 supabase==2.18.0
+neo4j>=5.26.0,<6.0.0
+pytest==8.3.2
