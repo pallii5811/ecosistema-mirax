@@ -9,6 +9,8 @@ import argparse
 import random
 import logging
 import concurrent.futures
+import socket
+import threading
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import parse_qs, quote, unquote, urlparse, urljoin
@@ -31,6 +33,19 @@ _REPO_ROOT = os.path.abspath(os.path.join(_BACKEND_DIR, ".."))
 for _p in (_REPO_ROOT, _BACKEND_DIR):
     if _p and _p not in sys.path:
         sys.path.insert(0, _p)
+
+from job_leases import build_claim_payload, is_processing_job_stale
+
+
+def _runtime_release_id() -> str:
+    configured = str(os.getenv("MIRAX_RELEASE_ID") or "").strip()
+    if configured:
+        return configured[:80]
+    try:
+        with open(os.path.join(_BACKEND_DIR, ".release-id"), "r", encoding="utf-8") as handle:
+            return handle.read(80).strip() or "development"
+    except OSError:
+        return "development"
 
 try:
     from business_events_enrich import detect_crm_from_html
@@ -224,6 +239,8 @@ def _extract_first_social_link(html: Optional[str], kind: str) -> Optional[str]:
         pat = re.compile(r"https?://(?:www\.)?instagram\.com/[^\s'\"<>]+", re.IGNORECASE)
     elif kind == "facebook":
         pat = re.compile(r"https?://(?:www\.)?(?:facebook\.com|fb\.me)/[^\s'\"<>]+", re.IGNORECASE)
+    elif kind == "linkedin":
+        pat = re.compile(r"https?://(?:[a-z]{2,3}\.)?linkedin\.com/(?:company|in)/[^\s'\"<>]+", re.IGNORECASE)
     else:
         return None
 
@@ -378,8 +395,10 @@ async def process_single_url(url: str) -> Dict[str, Any]:
 
             instagram = _extract_first_social_link(html, "instagram")
             facebook = _extract_first_social_link(html, "facebook")
+            linkedin = _extract_first_social_link(html, "linkedin")
             result["instagram"] = instagram
             result["facebook"] = facebook
+            result["linkedin"] = linkedin
             result["instagram_missing"] = not bool(instagram)
             
             # SSL
@@ -423,7 +442,7 @@ async def process_single_url(url: str) -> Dict[str, Any]:
 if app is not None:
     @app.get("/health")
     async def health() -> Dict[str, str]:
-        return {"status": "ok", "service": "mirax-worker-api"}
+        return {"status": "ok", "service": "mirax-worker-api", "release_id": _runtime_release_id()}
 
     @app.get("/api/v1/health")
     async def health_v1() -> Dict[str, Any]:
@@ -431,9 +450,19 @@ if app is not None:
         try:
             from resilience import get_resilience_status
 
-            return {"status": "ok", "service": "mirax-worker-api", **get_resilience_status()}
+            return {
+                "status": "ok",
+                "service": "mirax-worker-api",
+                "release_id": _runtime_release_id(),
+                **get_resilience_status(),
+            }
         except Exception as e:
-            return {"status": "degraded", "service": "mirax-worker-api", "error": str(e)}
+            return {
+                "status": "degraded",
+                "service": "mirax-worker-api",
+                "release_id": _runtime_release_id(),
+                "error": str(e),
+            }
 
     class _AuditUrlRequest(BaseModel):
         url: str
@@ -1098,6 +1127,7 @@ def _format_results(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
                 "instagram": r.get("instagram"),
                 "facebook": r.get("facebook"),
+                "linkedin": r.get("linkedin"),
                 "meta_ads_library": r.get("meta_ads_library"),
                 "decision_maker": r.get("decision_maker") or "N/D",
                 "meta_pixel": bool(r.get("meta_pixel")),
@@ -1175,6 +1205,33 @@ def _sync_neo4j_leads_safe(results: Any) -> None:
             )
     except Exception as exc:
         print(f"[worker_supabase] neo4j sync skipped: {exc}", flush=True)
+
+
+def _sync_neo4j_universe_safe(supabase: Any, results: Any) -> None:
+    """Mirror rich Universe edges to Neo4j after authoritative Postgres ingest."""
+    if supabase is None or not isinstance(results, list) or not results:
+        return
+    entity_ids = sorted(
+        {
+            str(item.get("universe_entity_id"))
+            for item in results
+            if isinstance(item, dict) and item.get("universe_entity_id")
+        }
+    )
+    if not entity_ids:
+        return
+    try:
+        from universe_neo4j_sync import sync_universe_graph_to_neo4j
+
+        stats = sync_universe_graph_to_neo4j(supabase, entity_ids)
+        if stats["nodes"] or stats["relationships"] or stats["errors"]:
+            print(
+                f"[worker_supabase] neo4j universe mirror: {stats['nodes']} nodes, "
+                f"{stats['relationships']} rel, {stats['errors']} err",
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"[worker_supabase] neo4j universe mirror skipped: {exc}", flush=True)
 
 
 def _lead_has_agentic_value(lead: Dict[str, Any]) -> bool:
@@ -1301,7 +1358,6 @@ def _agentic_stream_one_lead(
     Scarta solo se dominio assente o sito non apribile.
     """
     from agents.agentic_gap_fill import extracted_to_lead_stub, lead_dedupe_key, prepare_agentic_extracted_item
-    from search_leads_sync import build_dedupe_key
 
     prepared = prepare_agentic_extracted_item(item, location=location)
     if not prepared:
@@ -1317,21 +1373,23 @@ def _agentic_stream_one_lead(
         str(stub.get("sito") or stub.get("website") or ""),
         str(stub.get("azienda") or ""),
     )
-    if not key or key in seen:
+    if not key:
+        return False
+    if key in seen:
+        accumulated[:] = _merge_formatted_results(accumulated, [stub])
+        if publish_cb:
+            try:
+                publish_cb(list(accumulated), status="running")
+            except TypeError:
+                publish_cb(list(accumulated))
         return False
 
     site = str(stub.get("sito") or stub.get("website") or "").strip()
     if not site:
         return False
 
-    url = site if site.startswith("http") else f"https://{site}"
-    try:
-        from agents.agentic_gap_fill import is_valid_b2b_lead
-
-        if not is_valid_b2b_lead(str(item.get("name") or stub.get("nome") or ""), url):
-            return False
-    except Exception as exc:
-        print(f"[worker_supabase] agentic iron dome skipped: {exc}", flush=True)
+    verification = prepared.get("domain_verification")
+    if not isinstance(verification, dict) or verification.get("status") not in {"verified", "probable"}:
         return False
 
     pending = _agentic_make_pending_stub(stub)
@@ -1351,53 +1409,11 @@ def _agentic_stream_one_lead(
         except TypeError:
             publish_cb(list(accumulated))
 
-    dedupe_key = build_dedupe_key(pending, position)
     _upsert_single_search_lead_safe(supabase, search_id, user_id, pending, position)
 
-    audit: Optional[Dict[str, Any]] = None
-    try:
-        audit = _run_coro_blocking(asyncio.wait_for(process_single_url(url), timeout=55.0))
-    except Exception as exc:
-        print(f"[worker_supabase] agentic audit failed {url[:80]}: {exc}", flush=True)
-
-    if not _agentic_audit_site_reachable(audit if isinstance(audit, dict) else None):
-        accumulated.pop()
-        seen.discard(key)
-        _delete_search_lead_safe(supabase, search_id, dedupe_key)
-        if publish_cb:
-            try:
-                publish_cb(list(accumulated), status="running")
-            except TypeError:
-                publish_cb(list(accumulated))
-        print(
-            f"[worker_supabase] agentic removed (site unreachable): "
-            f"{str(stub.get('azienda') or '')[:50]}",
-            flush=True,
-        )
-        return False
-
-    enriched = _apply_audit_url_payload_to_lead(pending, audit if isinstance(audit, dict) else {})
-    if isinstance(audit, dict) and audit.get("nome") and str(enriched.get("azienda") or "").strip() in {"", "N/A"}:
-        enriched["azienda"] = audit.get("nome")
-        enriched["nome"] = audit.get("nome")
-    enriched = _agentic_apply_contact_fallback(enriched)
-    tr = dict(enriched.get("technical_report") or {})
-    tr["source"] = "agentic_web_search"
-    tr["audit_status"] = "complete"
-    enriched["technical_report"] = tr
-    enriched["source"] = "agentic_web_search"
-    try:
-        enriched["opportunity_score"] = _calc_opportunity_score(enriched)
-    except Exception:
-        enriched["opportunity_score"] = 0
-
-    accumulated[position] = enriched
-    if publish_cb:
-        try:
-            publish_cb(list(accumulated), status="running")
-        except TypeError:
-            publish_cb(list(accumulated))
-    _upsert_single_search_lead_safe(supabase, search_id, user_id, enriched, position)
+    # Discovery must not wait up to 55 seconds per lead.  The completion pass
+    # audits pending leads concurrently and keeps failures retryable instead of
+    # deleting evidence-backed companies because of a transient timeout.
     return True
 
 
@@ -1476,7 +1492,7 @@ def _agentic_gap_fill_safe(
         from agents.agentic_gap_fill import (
             AGENTIC_TIMEOUT_SEC,
             STREAM_BATCH_SIZE,
-            build_agentic_exhaustion_message,
+            build_agentic_completion_message,
             build_mirax_query_plan_from_job,
             existing_dedupe_keys,
             run_agentic_discovery_streaming,
@@ -1492,14 +1508,35 @@ def _agentic_gap_fill_safe(
         seen = existing_dedupe_keys(accumulated)
         total_new = 0
         discovery_stats: Dict[str, Any] = {}
+        intent_state: Dict[str, Any] = intent if isinstance(intent, dict) else {}
+
+        def _on_checkpoint(checkpoint_data: Dict[str, Any]) -> None:
+            intent_state["agentic_checkpoint"] = checkpoint_data
+            if supabase is not None and search_id:
+                supabase.table("searches").update({"intent": intent_state}).eq("id", search_id).execute()
 
         def _on_batch(raw_batch: List[Dict[str, Any]]) -> None:
             nonlocal accumulated, total_new
             if not raw_batch:
                 return
             still_need = max(0, remaining_target - total_new)
+            contextual_batch = [
+                {
+                    **item,
+                    "_required_signals": plan.get("required_signals") or [],
+                    "_signal_match_mode": (
+                        (plan.get("ranking_policy") or {}).get("signal_match_mode", "all")
+                        if isinstance(plan.get("ranking_policy"), dict)
+                        else "all"
+                    ),
+                    "_ranking_policy": plan.get("ranking_policy") or {},
+                    "_commercial_hypothesis": plan.get("commercial_hypothesis") or {},
+                }
+                for item in raw_batch
+                if isinstance(item, dict)
+            ]
             stubs = _agentic_raw_to_stubs(
-                raw_batch,
+                contextual_batch,
                 formatted=accumulated,
                 seen=seen,
                 category=category,
@@ -1531,17 +1568,29 @@ def _agentic_gap_fill_safe(
             existing_keys=seen,
             batch_size=STREAM_BATCH_SIZE,
             stats_out=discovery_stats,
+            checkpoint=intent_state.get("agentic_checkpoint"),
+            on_checkpoint=_on_checkpoint,
         )
         if timeout_sec > 0:
             asyncio.run(asyncio.wait_for(_coro, timeout=timeout_sec))
         else:
             asyncio.run(_coro)
+        intent_state["agentic_stats"] = discovery_stats
+        if supabase is not None and search_id:
+            try:
+                supabase.table("searches").update({"intent": intent_state}).eq("id", search_id).execute()
+            except Exception as stats_error:
+                print(f"[worker_supabase] agentic stats save skipped: {stats_error}", flush=True)
 
         exhaustion_msg: Optional[str] = None
-        if discovery_stats.get("exhausted"):
+        if len(accumulated) < int(job_max or len(accumulated)):
             found_total = len(accumulated)
-            exhaustion_msg = build_agentic_exhaustion_message(found_total, int(job_max or found_total))
-            print(f"[worker_supabase] Agentic exhaustion: {exhaustion_msg}", flush=True)
+            exhaustion_msg = build_agentic_completion_message(
+                found_total,
+                int(job_max or found_total),
+                str(discovery_stats.get("stop_reason") or "page_budget"),
+            )
+            print(f"[worker_supabase] Agentic completion: {exhaustion_msg}", flush=True)
 
         if total_new == 0:
             print("[worker_supabase] Agentic gap-fill: nessun lead estratto", flush=True)
@@ -1555,7 +1604,19 @@ def _agentic_gap_fill_safe(
     except asyncio.TimeoutError:
         print("[worker_supabase] Agentic gap-fill timeout — salvo lead parziali", flush=True)
         found_total = len(accumulated)
-        msg = build_agentic_exhaustion_message(found_total, int(job_max or found_total))
+        discovery_stats.update(
+            {"found": found_total, "target": int(job_max or found_total), "stop_reason": "time_budget"}
+        )
+        intent_state["agentic_stats"] = discovery_stats
+        checkpoint_state = intent_state.get("agentic_checkpoint")
+        if isinstance(checkpoint_state, dict):
+            checkpoint_state["stop_reason"] = "time_budget"
+        if supabase is not None and search_id:
+            try:
+                supabase.table("searches").update({"intent": intent_state}).eq("id", search_id).execute()
+            except Exception as stats_error:
+                print(f"[worker_supabase] timeout stats save skipped: {stats_error}", flush=True)
+        msg = build_agentic_completion_message(found_total, int(job_max or found_total), "time_budget")
         return accumulated, msg
     except Exception as exc:
         print(f"[worker_supabase] Agentic gap-fill skipped: {exc}", flush=True)
@@ -1632,6 +1693,8 @@ def _apply_audit_url_payload_to_lead(lead: Dict[str, Any], audit: Dict[str, Any]
         updated["instagram"] = audit.get("instagram")
     if audit.get("facebook") and not lead.get("facebook"):
         updated["facebook"] = audit.get("facebook")
+    if audit.get("linkedin") and not lead.get("linkedin"):
+        updated["linkedin"] = audit.get("linkedin")
     ig_missing = audit.get("instagram_missing")
     if ig_missing is None and audit.get("audit") and isinstance(audit.get("audit"), dict):
         ig_missing = audit["audit"].get("missing_instagram")
@@ -1643,6 +1706,20 @@ def _apply_audit_url_payload_to_lead(lead: Dict[str, Any], audit: Dict[str, Any]
     updated["freshness_score"] = 100
     updated["lead_object_version"] = 2
     updated["audit_version"] = 2
+    if updated.get("hotness_score") is not None:
+        try:
+            contact_bonus = 0
+            if _is_real_business_email(str(updated.get("email") or "")):
+                contact_bonus += 3
+            if len(re.sub(r"\D+", "", str(updated.get("telefono") or ""))) >= 8:
+                contact_bonus += 3
+            if updated.get("linkedin") or updated.get("instagram") or updated.get("facebook"):
+                contact_bonus += 1
+            hotness = min(100, int(updated.get("hotness_score") or 0) + contact_bonus)
+            updated["hotness_score"] = hotness
+            updated["lead_temperature"] = "hot" if hotness >= 80 else "warm" if hotness >= 65 else "contextual"
+        except (TypeError, ValueError):
+            pass
     try:
         updated["opportunity_score"] = _calc_opportunity_score(updated)
     except Exception:
@@ -1656,7 +1733,11 @@ async def _finish_pending_audits(formatted: List[Dict[str, Any]], publish_cb=Non
     if not pending_idxs:
         return out
     print(f"[worker_supabase] Completion pass: {len(pending_idxs)} lead con audit pending", flush=True)
-    sem = asyncio.Semaphore(3)
+    try:
+        audit_workers = max(1, min(16, int(os.getenv("AGENTIC_AUDIT_WORKERS", "8") or "8")))
+    except ValueError:
+        audit_workers = 8
+    sem = asyncio.Semaphore(audit_workers)
 
     async def _audit_one(i: int) -> None:
         async with sem:
@@ -1682,7 +1763,11 @@ async def _finish_pending_audits(formatted: List[Dict[str, Any]], publish_cb=Non
             try:
                 audit = await asyncio.wait_for(process_single_url(url), timeout=45.0)
                 if isinstance(audit, dict):
-                    out[i] = _apply_audit_url_payload_to_lead(lead, audit)
+                    updated = _apply_audit_url_payload_to_lead(lead, audit)
+                    report = dict(updated.get("technical_report") or {})
+                    report["audit_status"] = "complete"
+                    updated["technical_report"] = report
+                    out[i] = _agentic_apply_contact_fallback(updated)
                     if publish_cb:
                         try:
                             publish_cb(out)
@@ -1690,6 +1775,17 @@ async def _finish_pending_audits(formatted: List[Dict[str, Any]], publish_cb=Non
                             pass
             except Exception as e:
                 print(f"[worker_supabase] completion-pass audit failed {url}: {e}", flush=True)
+                failed = dict(lead)
+                report = dict(failed.get("technical_report") or {})
+                report["audit_status"] = "retryable_error"
+                report["audit_error"] = str(e)[:200]
+                failed["technical_report"] = report
+                out[i] = failed
+                if publish_cb:
+                    try:
+                        publish_cb(out)
+                    except Exception:
+                        pass
 
     await asyncio.gather(*[_audit_one(i) for i in pending_idxs])
     return out
@@ -2311,6 +2407,83 @@ def _merge_lead_pair(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict
         merged["tech_stack"] = loser.get("tech_stack")
         if isinstance(loser.get("technical_report"), dict):
             merged["technical_report"] = loser.get("technical_report")
+
+    def _merge_records(field: str, key_fields: tuple[str, ...]) -> None:
+        records: List[Dict[str, Any]] = []
+        seen_records: Set[str] = set()
+        for source in (existing, incoming):
+            values = source.get(field)
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                if not isinstance(value, dict):
+                    continue
+                key = "|".join(str(value.get(name) or "").strip().lower() for name in key_fields)
+                if not key.strip("|") or key in seen_records:
+                    continue
+                seen_records.add(key)
+                records.append(dict(value))
+        if records:
+            merged[field] = records
+
+    _merge_records("agentic_evidence_records", ("source_url", "claim"))
+    _merge_records("business_hiring_jobs", ("title", "url", "source"))
+
+    signals_by_type: Dict[str, Dict[str, Any]] = {}
+    for source in (existing, incoming):
+        for signal in source.get("business_signals") or []:
+            if not isinstance(signal, dict):
+                continue
+            signal_type = str(signal.get("type") or "").strip()
+            if not signal_type:
+                continue
+            previous = signals_by_type.get(signal_type, {})
+            combined = {**previous, **signal}
+            evidence: List[Any] = []
+            for candidate in (previous.get("evidence"), signal.get("evidence")):
+                if isinstance(candidate, list):
+                    evidence.extend(candidate)
+                elif candidate:
+                    evidence.append(candidate)
+            if evidence:
+                unique_evidence: List[Any] = []
+                seen_evidence: Set[str] = set()
+                for item in evidence:
+                    try:
+                        evidence_key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+                    except (TypeError, ValueError):
+                        evidence_key = str(item)
+                    if evidence_key in seen_evidence:
+                        continue
+                    seen_evidence.add(evidence_key)
+                    unique_evidence.append(item)
+                combined["evidence"] = unique_evidence
+            signals_by_type[signal_type] = combined
+    if signals_by_type:
+        merged["business_signals"] = list(signals_by_type.values())
+
+    matched = {
+        str(value).strip().lower()
+        for source in (existing, incoming)
+        for value in (source.get("matched_signals") or [])
+        if str(value).strip()
+    }
+    required = {
+        str(value).strip().lower()
+        for source in (existing, incoming)
+        for value in (source.get("required_signals") or [])
+        if str(value).strip()
+    }
+    if matched:
+        merged["matched_signals"] = sorted(matched)
+    if required:
+        merged["required_signals"] = sorted(required)
+        coverage = len(required.intersection(matched)) / len(required)
+        if coverage >= 1:
+            merged["query_match_status"] = "verified"
+            merged["query_match_score"] = max(int(merged.get("query_match_score") or 0), 85)
+        elif coverage > 0:
+            merged["query_match_status"] = "partial"
     return merged
 
 
@@ -2346,6 +2519,32 @@ def _merge_formatted_results(primary: List[Dict[str, Any]], extra: List[Dict[str
             continue
         by_key[k] = _merge_lead_pair(by_key[k], item)
     return [by_key[k] for k in order if k in by_key]
+
+
+def _cap_search_results(
+    results: Any,
+    max_results: int,
+    *,
+    prioritize_hot: bool = False,
+) -> List[Dict[str, Any]]:
+    """Return a deduplicated result set that never exceeds the user contract."""
+    try:
+        cap = max(1, int(max_results))
+    except (TypeError, ValueError):
+        cap = 1
+    valid = [item for item in (results or []) if isinstance(item, dict)]
+    merged = _merge_formatted_results([], valid)
+    if prioritize_hot:
+        merged.sort(
+            key=lambda item: (
+                float(item.get("hotness_score") or 0),
+                float(item.get("query_match_score") or 0),
+                float(item.get("opportunity_score") or 0),
+                bool(item.get("email") or item.get("telefono") or item.get("phone")),
+            ),
+            reverse=True,
+        )
+    return merged[:cap]
 
 
 def _build_meta_ads_library_url(facebook_url: Optional[str], website_url: Optional[str]) -> Optional[str]:
@@ -3293,16 +3492,53 @@ def main() -> None:
     print(f"[worker_supabase] Supabase project: {_project_ref}")
     print("[worker_supabase] Polling tabella: searches (status=pending) ogni 4 secondi")
 
+    # A real lease prevents a legitimate long-running search from being reclaimed
+    # by another worker merely because its creation timestamp is old.
+    _worker_id = str(os.getenv("MIRAX_WORKER_ID") or f"{socket.gethostname()}:{os.getpid()}").strip()
+    try:
+        _lease_minutes = min(120, max(10, int(os.getenv("MIRAX_WORKER_LEASE_MINUTES", "30") or "30")))
+    except Exception:
+        _lease_minutes = 30
+
+    def _lease_timestamp() -> str:
+        return (datetime.now(timezone.utc) + timedelta(minutes=_lease_minutes)).isoformat()
+
+    try:
+        supabase.table("searches").select("worker_id,heartbeat_at,lease_expires_at,attempt_count,progress").limit(1).execute()
+        _lease_supported = True
+        print(f"[worker_supabase] Job lease attiva: worker={_worker_id} ttl={_lease_minutes}m", flush=True)
+    except Exception as e:
+        _lease_supported = False
+        print(f"[worker_supabase] Job lease non migrata; fallback recovery 12h: {e}", flush=True)
+
     # Recovery: reset stale processing jobs to pending so they are not lost after a crash/restart.
     def _recover_stale_processing() -> None:
         try:
-            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
-            stale = supabase.table("searches").select("id").eq("status", "processing").lt("created_at", cutoff).execute().data or []
+            now = datetime.now(timezone.utc)
+            fields = "id,created_at,heartbeat_at,lease_expires_at" if _lease_supported else "id,created_at"
+            processing = (
+                supabase.table("searches")
+                .select(fields)
+                .eq("status", "processing")
+                .order("created_at")
+                .limit(500)
+                .execute()
+                .data
+                or []
+            )
+            stale = []
+            for row in processing:
+                lease_row = row if _lease_supported else {"created_at": row.get("created_at")}
+                if is_processing_job_stale(lease_row, now=now):
+                    stale.append(row)
             if stale:
                 print(f"[worker_supabase] Recovery: resetting {len(stale)} stale processing jobs to pending", flush=True)
                 for row in stale:
                     try:
-                        supabase.table("searches").update({"status": "pending"}).eq("id", row["id"]).execute()
+                        payload: Dict[str, Any] = {"status": "pending"}
+                        if _lease_supported:
+                            payload.update({"worker_id": None, "heartbeat_at": None, "lease_expires_at": None})
+                        supabase.table("searches").update(payload).eq("id", row["id"]).eq("status", "processing").execute()
                     except Exception:
                         pass
         except Exception as e:
@@ -3435,13 +3671,17 @@ def main() -> None:
                 os.environ["DEMO_MAX_RESULTS"] = "50"
 
             # Atomic claim: only one worker should be able to update pending -> processing.
+            claim_payload: Dict[str, Any] = {"status": "processing"}
+            if _lease_supported:
+                claim_payload = build_claim_payload(
+                    worker_id=_worker_id,
+                    target=job_max,
+                    attempt_count=int(job.get("attempt_count") or 0),
+                    lease_minutes=_lease_minutes,
+                )
             claim = (
                 supabase.table("searches")
-                .update(
-                    {
-                        "status": "processing",
-                    }
-                )
+                .update(claim_payload)
                 .eq("id", job_id)
                 .eq("status", expected_pending_status)
                 .execute()
@@ -3454,6 +3694,27 @@ def main() -> None:
                 continue
 
             print(f"[worker_supabase] Job {job_id} -> processing. Avvio scraper...")
+
+            # Independent heartbeat covers long source calls that do not emit a
+            # result batch before the lease deadline.
+            _heartbeat_stop = threading.Event()
+            if _lease_supported:
+                def _heartbeat_loop() -> None:
+                    interval = min(60, max(10, (_lease_minutes * 60) // 4))
+                    try:
+                        heartbeat_sb = _create_fresh_supabase_client()
+                    except Exception as heartbeat_error:
+                        print(f"[worker_supabase] heartbeat client unavailable: {heartbeat_error}", flush=True)
+                        return
+                    while not _heartbeat_stop.wait(interval):
+                        try:
+                            heartbeat_sb.table("searches").update(
+                                {"heartbeat_at": _utc_now_iso(), "lease_expires_at": _lease_timestamp()}
+                            ).eq("id", job_id).eq("status", "processing").eq("worker_id", _worker_id).execute()
+                        except Exception as heartbeat_error:
+                            print(f"[worker_supabase] heartbeat renewal skipped: {heartbeat_error}", flush=True)
+
+                threading.Thread(target=_heartbeat_loop, daemon=True, name=f"mirax-heartbeat-{job_id}").start()
 
             # Real-time result callback: push each result to DB as it's found
             _rt_results = []
@@ -3494,13 +3755,48 @@ def main() -> None:
                     if current and not filtered:
                         print(f"[worker_supabase] Safe publish preserved current results because filter returned empty: current={len(current)}", flush=True)
                         filtered = current
-                    merged = filtered
+                    uqe_ctx = intent.get("uqe_plan") if isinstance(intent, dict) and isinstance(intent.get("uqe_plan"), dict) else {}
+                    prioritize_hot = _is_agentic_only_job(intent) or bool(uqe_ctx.get("commercial_hypothesis"))
+                    merged = _cap_search_results(filtered, job_max, prioritize_hot=prioritize_hot)
                     with _rt_lock:
                         _rt_results.clear()
                         _rt_results.extend(merged)
                     payload = {"results": merged}
                     if status:
                         payload["status"] = status
+                    if _lease_supported:
+                        now_iso = _utc_now_iso()
+                        terminal = status in {"completed", "error", "cancelled"}
+                        requeued = status == "pending"
+                        runtime_stats = intent.get("agentic_stats") if isinstance(intent, dict) else None
+                        runtime_summary = {}
+                        if isinstance(runtime_stats, dict):
+                            extraction_stats = runtime_stats.get("extraction") or {}
+                            runtime_summary = {
+                                "pages_scraped": runtime_stats.get("pages_scraped"),
+                                "page_budget": runtime_stats.get("page_budget"),
+                                "rounds": runtime_stats.get("rounds"),
+                                "stop_reason": runtime_stats.get("stop_reason"),
+                                "unique_urls": runtime_stats.get("unique_urls"),
+                                "llm_requests": int(extraction_stats.get("openai_requests") or 0)
+                                + int(extraction_stats.get("anthropic_requests") or 0),
+                                "cache_hits": extraction_stats.get("cache_hits"),
+                                "estimated_llm_cost_usd": extraction_stats.get("estimated_llm_cost_usd"),
+                            }
+                        payload.update(
+                            {
+                                "worker_id": None if terminal or requeued else _worker_id,
+                                "heartbeat_at": None if terminal or requeued else now_iso,
+                                "lease_expires_at": None if terminal or requeued else _lease_timestamp(),
+                                "progress": {
+                                    "phase": status or "running",
+                                    "found": len(merged),
+                                    "target": job_max,
+                                    "updated_at": now_iso,
+                                    **runtime_summary,
+                                },
+                            }
+                        )
                     _job_uid = None
                     try:
                         _job_uid = str(job.get("user_id") or "").strip() or None
@@ -3704,6 +4000,10 @@ def main() -> None:
                     if _rt_results:
                         formatted = _merge_formatted_results(_rt_results, formatted)
 
+            # Google Maps can return a page-sized batch larger than requested.
+            # Apply the contract before any expensive audit/enrichment stage.
+            formatted = _cap_search_results(formatted, job_max, prioritize_hot=_agentic_only)
+
             try:
                 if formatted:
                     print(f"DEBUG DATA: {formatted[0]}")
@@ -3756,7 +4056,31 @@ def main() -> None:
                 print(f"[worker_supabase] agentic gap-fill outer skipped: {e}", flush=True)
                 agentic_exhaustion_msg = None
 
+            formatted = _cap_search_results(formatted, job_max, prioritize_hot=_agentic_only)
+
+            # Agentic discovery publishes immediately; audit/contact extraction
+            # then runs as a bounded concurrent completion stage.
+            try:
+                formatted = asyncio.run(
+                    _finish_pending_audits(
+                        formatted if isinstance(formatted, list) else [],
+                        publish_cb=lambda snap: _publish_job_results_safe(snap, status="running"),
+                    )
+                )
+            except Exception as e:
+                print(f"[worker_supabase] post-agentic audit pass skipped: {e}", flush=True)
+
             agentic_count = len(formatted) if isinstance(formatted, list) else 0
+            checkpoint_state = (
+                intent.get("agentic_checkpoint")
+                if isinstance(intent, dict) and isinstance(intent.get("agentic_checkpoint"), dict)
+                else {}
+            )
+            checkpoint_reason = str(checkpoint_state.get("stop_reason") or "")
+            agentic_resume_needed = (
+                agentic_count < job_max
+                and checkpoint_reason in {"page_budget", "time_budget", "round_complete"}
+            )
             # ponytail: Maps fallback disabilitato per agentic_only — evita lead Maps spuri (es. Evolve Media)
             _allow_maps_fallback = False
             if _allow_maps_fallback and _agentic_only and agentic_count < max(3, min(25, job_max // 15)):
@@ -3792,9 +4116,17 @@ def main() -> None:
                 except Exception as fb_e:
                     print(f"[worker_supabase] Maps fallback failed: {fb_e}", flush=True)
 
+            formatted = _cap_search_results(formatted, job_max, prioritize_hot=_agentic_only)
             pending_left = sum(1 for l in formatted if isinstance(l, dict) and _lead_has_pending_audit(l))
             # Maps scrape finished → mark completed so UI stops spinner; resume-audits finishes light audits.
-            final_status = "completed"
+            final_status = "pending" if agentic_resume_needed else "completed"
+            _heartbeat_stop.set()
+            if agentic_resume_needed:
+                print(
+                    f"[worker_supabase] Job {job_id}: auto-resume agentic "
+                    f"({agentic_count}/{job_max}, reason={checkpoint_reason})",
+                    flush=True,
+                )
             if pending_left > 0:
                 print(
                     f"[worker_supabase] Job {job_id}: {pending_left} audit leggeri pending — "
@@ -3833,13 +4165,12 @@ def main() -> None:
                         f"{_u_stats['ingested']} ok, {_u_stats['errors']} err",
                         flush=True,
                     )
+                _sync_neo4j_universe_safe(supabase, formatted)
             except Exception as _u_init_ex:
                 print(f"[worker_supabase] universe ingest skipped: {_u_init_ex}", flush=True)
 
             enrich_business = os.getenv("ENRICH_BUSINESS_EVENTS", "1").strip().lower() in {"1", "true", "yes"}
             if enrich_business and formatted:
-                import threading
-
                 _bg_formatted = [dict(x) if isinstance(x, dict) else x for x in formatted]
                 _bg_user = str(job.get("user_id") or "").strip() or None
 
@@ -3898,6 +4229,7 @@ def main() -> None:
                                     f"{_u_ext['ingested']} ok, {_u_ext['errors']} err",
                                     flush=True,
                                 )
+                            _sync_neo4j_universe_safe(sb_bg, _bg_formatted)
                         except Exception as _u_ext_ex:
                             print(f"[worker_supabase] universe post-external skipped: {_u_ext_ex}", flush=True)
                     except Exception as ex:
@@ -3919,6 +4251,12 @@ def main() -> None:
             err = str(e) or e.__class__.__name__
             print("[worker_supabase] ERROR:", err)
             print(traceback.format_exc())
+
+            try:
+                if "_heartbeat_stop" in locals() and _heartbeat_stop is not None:
+                    _heartbeat_stop.set()
+            except Exception:
+                pass
 
             # Best effort: if we have an id in scope, mark error
             try:
@@ -3943,17 +4281,49 @@ def main() -> None:
                             current_results,
                         )
                         _sync_neo4j_leads_safe(current_results)
-                        supabase.table("searches").update({"status": err_status, "results": current_results}).eq("id", locals()["job_id"]).execute()
+                        error_payload: Dict[str, Any] = {"status": err_status, "results": current_results}
+                        if _lease_supported:
+                            error_payload.update(
+                                {
+                                    "worker_id": None,
+                                    "heartbeat_at": None,
+                                    "lease_expires_at": None,
+                                    "progress": {
+                                        "phase": err_status,
+                                        "found": len(current_results),
+                                        "target": job_max if "job_max" in locals() else None,
+                                        "error": err,
+                                        "updated_at": _utc_now_iso(),
+                                    },
+                                }
+                            )
+                        supabase.table("searches").update(error_payload).eq("id", locals()["job_id"]).execute()
                     else:
+                        error_payload = {
+                            "status": "error",
+                            "results": {
+                                "error": err,
+                                "trace": traceback.format_exc(),
+                                "ts": _utc_now_iso(),
+                            },
+                        }
+                        if _lease_supported:
+                            error_payload.update(
+                                {
+                                    "worker_id": None,
+                                    "heartbeat_at": None,
+                                    "lease_expires_at": None,
+                                    "progress": {
+                                        "phase": "error",
+                                        "found": 0,
+                                        "target": job_max if "job_max" in locals() else None,
+                                        "error": err,
+                                        "updated_at": _utc_now_iso(),
+                                    },
+                                }
+                            )
                         supabase.table("searches").update(
-                            {
-                                "status": "error",
-                                "results": {
-                                    "error": err,
-                                    "trace": traceback.format_exc(),
-                                    "ts": _utc_now_iso(),
-                                },
-                            }
+                            error_payload
                         ).eq("id", locals()["job_id"]).execute()
             except Exception:
                 pass
