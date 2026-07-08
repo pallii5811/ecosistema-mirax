@@ -220,10 +220,24 @@ export function useSearchJob(
 
       if (update.user_message) completionMessageRef.current = update.user_message
 
+      const runtimeProgress = update.progress
+      if (runtimeProgress) {
+        const found = Math.max(parsed.length, Number(runtimeProgress.found) || 0)
+        const target = Math.max(
+          1,
+          Number(runtimeProgress.target) || clampSearchMaxLeads(maxLeads, creditsRef.current),
+        )
+        setStreamingProgress({ found, target })
+      }
+
       if (status === 'running' || status === 'processing') {
+        const pageCount = Number(runtimeProgress?.pages_scraped) || 0
+        const roundCount = Number(runtimeProgress?.rounds) || 0
         setLoadingMessage(
           agenticSearchRef.current
-            ? "L'Agente AI sta navigando il web…"
+            ? pageCount > 0
+              ? `Agente AI: ${pageCount} pagine analizzate${roundCount > 0 ? ` · round ${roundCount}` : ''}…`
+              : "L'Agente AI sta navigando il web…"
             : 'Scraping Maps e audit siti in tempo reale…',
         )
       }
@@ -272,7 +286,7 @@ export function useSearchJob(
         setStreamingProgress(null)
       }
     },
-    [applyStreamingUpdate, toastError, resultsCountRef, setError],
+    [applyStreamingUpdate, toastError, resultsCountRef, setError, maxLeads, creditsRef],
   )
 
   useSearchRealtime(pendingJobId, {

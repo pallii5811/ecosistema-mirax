@@ -99,7 +99,7 @@ function inferMapsCategoryFromPlan(plan: MiraxQueryPlan, query: string, intent: 
 }
 
 function resolveLocation(plan: MiraxQueryPlan, query: string, intent: CommercialIntent): string {
-  const bogus = /^(marketing|software|digitale|crescita|espansione)$/i
+  const bogus = /^(marketing|software|digitale|crescita|espansione|trovarmi|vendere|cui)$/i
   const fromPlan = plan.location?.trim()
   if (fromPlan && !bogus.test(fromPlan)) return fromPlan
   const fromIntent = intent.target_profile.locations?.[0]
@@ -114,7 +114,7 @@ function workerIntentPayload(intent: CommercialIntent, query: string, plan: Mira
   if (!roles.length && /\b(python|programmatore|developer|sviluppat\w*)\b/i.test(query)) {
     roles.push('programmatore')
   }
-  let signals = intent.signals.map((s) => ({ ...s, params: { ...(s.params ?? {}) } }))
+  const signals = intent.signals.map((s) => ({ ...s, params: { ...(s.params ?? {}) } }))
   if (roles.length) {
     const hiringIdx = signals.findIndex((s) => s.type === 'hiring')
     if (hiringIdx >= 0) {
@@ -140,6 +140,8 @@ function workerIntentPayload(intent: CommercialIntent, query: string, plan: Mira
     parse_source: intent.parse_source,
     search_strategy: plan.search_strategy,
     required_signals: plan.required_signals,
+    commercial_hypothesis: plan.commercial_hypothesis,
+    ranking_policy: plan.ranking_policy,
     uqe_plan: plan,
   }
 }
@@ -257,9 +259,14 @@ async function unifiedSearchActionCore(
         location,
         required_signals: plan.required_signals,
         technical_filters: plan.technical_filters,
-        extraction_schema: plan.extraction_schema,
-        intent_summary: plan.intent_summary,
-      },
+         extraction_schema: plan.extraction_schema,
+         intent_summary: plan.intent_summary,
+         research_questions: plan.research_questions,
+         source_plan: plan.source_plan,
+         evidence_policy: plan.evidence_policy,
+         commercial_hypothesis: plan.commercial_hypothesis,
+         ranking_policy: plan.ranking_policy,
+       },
     })
 
     return {

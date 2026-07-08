@@ -261,7 +261,7 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
   let location: string | null = null
   const stopWords = 'che|con|per|da|di|a|ad|in|su|e|o'
   const nonGeoWords =
-    /^(marketing|software|digitale|crescita|espansione|vendite|cloud|crm|seo|ads|pubblicit\w*)$/i
+    /^(marketing|software|digitale|crescita|espansione|vendite|cloud|crm|seo|ads|pubblicit\w*|assunzion\w*|hiring|personale)$/i
   const locMatch = q.match(
     new RegExp(`\\b(?:a|ad|in)\\s+([A-Za-zÀ-ÿ]+)(?:\\s+(?!${stopWords}\\b)[A-Za-zÀ-ÿ]+)?\\b`, 'i'),
   )
@@ -280,7 +280,7 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
     [/\bimprese?\s+edil\w*\b/i, 'imprese edili'],
     [/\bsoftware\s+house\b/i, 'software house'],
     [/\bweb\s+agenc\w*\b/i, 'web agency'],
-    [/\bristorant\w*\b/i, 'ristoranti'],
+    [/\b(ristorant\w*|ristorazion\w*)\b/i, 'ristoranti'],
   ]
   for (const [re, label] of catPatterns) {
     if (re.test(q)) {

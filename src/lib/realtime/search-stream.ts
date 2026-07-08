@@ -21,7 +21,28 @@ export type SearchRealtimeUpdate = {
   status: SearchRealtimeStatus
   results: unknown[]
   updated_at?: string
+  heartbeat_at?: string
   user_message?: string | null
+  progress?: SearchJobProgress | null
+}
+
+export type SearchJobProgress = {
+  phase?: string
+  found?: number
+  target?: number
+  pages_scraped?: number
+  page_budget?: number
+  rounds?: number
+  unique_urls?: number
+  llm_requests?: number
+  cache_hits?: number
+  estimated_llm_cost_usd?: number
+  stop_reason?: string
+  updated_at?: string
+}
+
+function parseProgress(value: unknown): SearchJobProgress | null {
+  return value && typeof value === 'object' ? (value as SearchJobProgress) : null
 }
 
 function userMessageFromIntent(intent: unknown): string | null {
@@ -47,13 +68,17 @@ async function pollJobViaApi(searchId: string): Promise<SearchRealtimeUpdate | n
       status?: string
       results?: unknown[]
       updated_at?: string
+      heartbeat_at?: string
       user_message?: string | null
+      progress?: SearchJobProgress | null
     }
     return {
       status: String(data.status ?? 'pending'),
       results: Array.isArray(data.results) ? data.results : [],
       updated_at: data.updated_at ? String(data.updated_at) : undefined,
+      heartbeat_at: data.heartbeat_at ? String(data.heartbeat_at) : undefined,
       user_message: data.user_message ?? null,
+      progress: parseProgress(data.progress),
     }
   } catch (e) {
     console.warn('[search-realtime] poll failed:', e)
@@ -72,12 +97,14 @@ export function useSearchRealtime(
 ) {
   const [connected, setConnected] = useState(false)
   const callbacksRef = useRef(callbacks)
-  callbacksRef.current = callbacks
   const doneRef = useRef(false)
 
   useEffect(() => {
+    callbacksRef.current = callbacks
+  }, [callbacks])
+
+  useEffect(() => {
     if (!searchId) {
-      setConnected(false)
       doneRef.current = false
       return
     }
@@ -89,6 +116,7 @@ export function useSearchRealtime(
     let pollInterval: ReturnType<typeof setInterval> | null = null
     let lastResultCount = -1
     let lastUpdatedAt = ''
+    let lastHeartbeatAt = ''
 
     const cleanup = (channel: ReturnType<typeof supabase.channel> | null) => {
       if (idleTimeout) {
@@ -137,15 +165,15 @@ export function useSearchRealtime(
     const noteActivity = (update: SearchRealtimeUpdate) => {
       const count = update.results.length
       const ts = update.updated_at ?? ''
+      const heartbeat = update.heartbeat_at ?? ''
       const countChanged = count !== lastResultCount
       const tsChanged = ts && ts !== lastUpdatedAt
-      const statusActive = ['running', 'processing', 'pending', 'pending_user'].includes(
-        String(update.status),
-      )
+      const heartbeatChanged = heartbeat && heartbeat !== lastHeartbeatAt
 
-      if (countChanged || tsChanged || statusActive) {
+      if (countChanged || tsChanged || heartbeatChanged) {
         lastResultCount = count
         if (ts) lastUpdatedAt = ts
+        if (heartbeat) lastHeartbeatAt = heartbeat
         resetIdleTimer()
       }
     }
@@ -185,6 +213,7 @@ export function useSearchRealtime(
 
       const status = String(row.status ?? 'pending')
       const updated_at = row.updated_at ? String(row.updated_at) : undefined
+      const heartbeat_at = row.heartbeat_at ? String(row.heartbeat_at) : undefined
 
       let results: unknown[] = []
       try {
@@ -200,7 +229,13 @@ export function useSearchRealtime(
         results = parseLegacySearchResults(row.results)
       }
 
-      const update: SearchRealtimeUpdate = { status, results, updated_at }
+      const update: SearchRealtimeUpdate = {
+        status,
+        results,
+        updated_at,
+        heartbeat_at,
+        progress: parseProgress(row.progress),
+      }
       const intentMsg = userMessageFromIntent(row.intent)
       if (intentMsg) update.user_message = intentMsg
       noteActivity(update)
@@ -219,7 +254,7 @@ export function useSearchRealtime(
       try {
         const { data, error } = await supabase
           .from('searches')
-          .select('status, results, updated_at, intent')
+          .select('*')
           .eq('id', searchId)
           .single()
         if (error || !data || doneRef.current) return

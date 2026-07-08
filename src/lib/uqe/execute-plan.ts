@@ -321,10 +321,17 @@ async function executeOrganicWebSearch(
       technical_filters: plan.technical_filters,
       extraction_schema: plan.extraction_schema,
       intent_summary: plan.intent_summary,
+      research_questions: plan.research_questions,
+      source_plan: plan.source_plan,
+      evidence_policy: plan.evidence_policy,
+      commercial_hypothesis: plan.commercial_hypothesis,
+      ranking_policy: plan.ranking_policy,
     },
     intent: {
       required_signals: plan.required_signals,
       intent_summary: plan.intent_summary,
+      commercial_hypothesis: plan.commercial_hypothesis,
+      ranking_policy: plan.ranking_policy,
     },
   })
 

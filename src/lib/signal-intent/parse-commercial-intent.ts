@@ -347,12 +347,16 @@ async function parseWithLlm(
 
 function heuristicFallback(query: string): CommercialIntent {
   const heuristic = parseSignalIntentHeuristic(query)
+  const inferredIndustry =
+    heuristic.category === 'startup'
+      ? 'startup'
+      : heuristic.category || heuristic.sector_keywords?.[0] || null
   const intent: CommercialIntent = {
     ...EMPTY_COMMERCIAL_INTENT,
     original_query: query,
     parse_source: 'heuristic',
     target_profile: {
-      industries: heuristic.category ? [heuristic.category] : [],
+      industries: inferredIndustry ? [inferredIndustry] : [],
       locations: heuristic.location ? [heuristic.location] : [],
       roles: heuristic.hiring_roles ? [...heuristic.hiring_roles] : [],
     },
@@ -382,7 +386,7 @@ function heuristicFallback(query: string): CommercialIntent {
   }
 
   // Convert hiring roles into typed hiring signals so the query builder can filter jobs.
-  if (heuristic.hiring_roles?.length) {
+  if (heuristic.hiring_roles?.length && heuristic.required_signals.includes('hiring')) {
     intent.signals = intent.signals.filter((s) => s.type !== 'hiring')
     for (const role of heuristic.hiring_roles) {
       if (role) intent.signals.push({ type: 'hiring', params: { role } })

@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
 
     const { data, error } = await supabase
       .from('searches')
-      .select('status, results, intent, updated_at')
+      .select('*')
       .eq('id', jobId)
       .single()
 
@@ -52,6 +52,8 @@ export async function GET(request: NextRequest) {
       universe_hydrated,
       user_message,
       updated_at: data.updated_at ?? null,
+      heartbeat_at: data.heartbeat_at ?? null,
+      progress: data.progress && typeof data.progress === 'object' ? data.progress : null,
     })
   } catch (error) {
     console.error('check-scrape-job error:', error)

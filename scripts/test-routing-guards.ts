@@ -7,8 +7,18 @@ import {
   applyRoutingGuards,
   isSellerAbstractQuery,
 } from '../src/lib/uqe/mirax-query-planner'
+import type { UqeSearchStrategy } from '../src/types/uqe'
 
-const cases = [
+type RoutingCase = {
+  query: string
+  expectStrategy: UqeSearchStrategy
+  notStrategy?: UqeSearchStrategy
+  expectSector?: string
+  expectSignals?: string[]
+  label: string
+}
+
+const cases: RoutingCase[] = [
   {
     query: 'imprese di pulizie a otranto',
     expectStrategy: 'maps' as const,
@@ -72,6 +82,27 @@ if (!sellerOk || !buyerOk) {
   console.log('OK   isSellerAbstractQuery')
 }
 
+const hotAccountQuery =
+  'Trovami 50 PMI italiane a cui vendere il mio software di lead generation e Sales Intelligence, estremamente calde con segnali di acquisto concreti'
+const hotAccountPlan = buildHeuristicMiraxQueryPlan(hotAccountQuery)
+const hotAccountOk =
+  hotAccountPlan.search_strategy === 'organic_web_search' &&
+  hotAccountPlan.location === 'Italia' &&
+  hotAccountPlan.sector === 'PMI B2B con team commerciale in espansione' &&
+  hotAccountPlan.required_signals.length === 1 &&
+  hotAccountPlan.required_signals[0] === 'hiring' &&
+  hotAccountPlan.commercial_hypothesis?.hiring_roles.includes('Sales Development Representative') &&
+  hotAccountPlan.commercial_hypothesis?.decision_maker_roles.includes('Head of Sales') &&
+  hotAccountPlan.ranking_policy?.require_concrete_evidence === true &&
+  hotAccountPlan.extraction_schema.includes('source_url') &&
+  hotAccountPlan.extraction_schema.includes('decision_maker')
+if (!hotAccountOk) {
+  failed++
+  console.error('FAIL seller-to-buyer hot-account reasoning', hotAccountPlan)
+} else {
+  console.log('OK   seller-to-buyer hot-account reasoning')
+}
+
 if (failed > 0) {
   console.error(`\n${failed} test(s) failed`)
   process.exit(1)
@@ -111,4 +142,4 @@ if (failed > 0) {
   console.error(`\n${failed} test(s) failed`)
   process.exit(1)
 }
-console.log(`\nAll ${cases.length + 2} routing checks passed.`)
+console.log(`\nAll ${cases.length + 3} routing checks passed.`)

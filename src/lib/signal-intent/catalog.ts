@@ -178,7 +178,8 @@ export const SECTOR_KEYWORD_EXTRACTORS: Array<{ keyword: string; patterns: RegEx
   { keyword: 'edilizia', patterns: [/\bedil|\bcostruzion|\bristrutturaz|\bimpresa\s+edil/i] },
   { keyword: 'logistica', patterns: [/\blogistic|\btrasport|\bspedizion/i] },
   { keyword: 'software', patterns: [/\bsoftware|\bsaas|\bcloud|\bdigital/i] },
-  { keyword: 'turismo', patterns: [/\bturismo|\bhotel|\bristorazion/i] },
+  { keyword: 'turismo', patterns: [/\bturismo|\bhotel/i] },
+  { keyword: 'ristorazione', patterns: [/\bristorazion|\bristorant/i] },
   { keyword: 'sanita', patterns: [/\bsanit|\bclinic|\bospedal|\bmedici/i] },
 ]
 

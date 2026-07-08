@@ -7,6 +7,57 @@ export type UqeSearchStrategy = 'graph' | 'maps' | 'hybrid' | 'organic_web_searc
 
 export type UqeParseSource = 'llm' | 'heuristic' | 'fallback'
 
+export type UqeSourceLane =
+  | 'public_registry'
+  | 'public_procurement'
+  | 'job_market'
+  | 'funding'
+  | 'company_web'
+  | 'news'
+  | 'technology'
+  | 'real_estate'
+  | 'regulatory'
+  | 'web_evidence'
+
+export interface UqeSourcePlanItem {
+  lane: UqeSourceLane
+  source_types: string[]
+  query_templates: string[]
+  expected_evidence: string[]
+  priority: number
+  llm_required: boolean
+}
+
+export interface UqeEvidencePolicy {
+  require_source_url: boolean
+  require_official_domain: boolean
+  min_signal_confidence: number
+  max_age_days: number | null
+}
+
+export interface UqeCommercialHypothesis {
+  offer: string
+  target_profile: string[]
+  buyer_pains: string[]
+  buying_signals: string[]
+  hiring_roles: string[]
+  decision_maker_roles: string[]
+  disqualifiers: string[]
+}
+
+export interface UqeRankingPolicy {
+  signal_match_mode: 'any' | 'all'
+  max_signal_age_days: number
+  require_concrete_evidence: boolean
+  weights: {
+    intent_fit: number
+    signal_strength: number
+    recency: number
+    evidence_quality: number
+    contactability: number
+  }
+}
+
 /** Segnali d'acquisto supportati dal motore MIRAX. */
 export type UqeSignalType =
   | 'hiring'
@@ -56,6 +107,21 @@ export interface MiraxQueryPlan {
 
   /** Origine del piano */
   parse_source: UqeParseSource
+
+  /** Domande che il discovery engine deve riuscire a provare. */
+  research_questions?: string[]
+
+  /** Fonti ordinate per valore/costo, estensibili anche per query long-tail. */
+  source_plan?: UqeSourcePlanItem[]
+
+  /** Contratto minimo per poter pubblicare una riga come lead verificato. */
+  evidence_policy?: UqeEvidencePolicy
+
+  /** Ipotesi commerciale esplicita: offerta -> dolore -> segnali osservabili. */
+  commercial_hypothesis?: UqeCommercialHypothesis
+
+  /** Contratto deterministico per ordinare i lead piu caldi. */
+  ranking_policy?: UqeRankingPolicy
 
   /**
    * Messaggio utente quando search_strategy === 'fallback'
@@ -122,6 +188,14 @@ export function createFallbackPlan(
     confidence: 0,
     intent_summary: userMessage,
     parse_source: parseSource,
+    research_questions: [],
+    source_plan: [],
+    evidence_policy: {
+      require_source_url: true,
+      require_official_domain: true,
+      min_signal_confidence: 0.7,
+      max_age_days: null,
+    },
     user_message: userMessage,
     reasoning: 'Query non mappabile in un piano eseguibile.',
   }

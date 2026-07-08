@@ -8,7 +8,11 @@ import {
   UQE_SIGNAL_ALIASES,
   UqePlannerError,
   type MiraxQueryPlan,
+  type UqeSourceLane,
+  type UqeSourcePlanItem,
   type UqeParseSource,
+  type UqeCommercialHypothesis,
+  type UqeRankingPolicy,
   type UqeSearchStrategy,
 } from '@/types/uqe'
 import { parseSignalIntentHeuristic } from '@/lib/signal-intent/parse-heuristic'
@@ -19,14 +23,26 @@ import {
 
 const MIRAX_QUERY_PLAN_TOOL_NAME = 'submit_mirax_query_plan'
 
-const SYSTEM_PROMPT = `Sei il motore semantico di MIRAX. Analizza la query dell'utente e decidi la strategia.
+const SYSTEM_PROMPT = `Sei il motore strategico commerciale evidence-first di MIRAX. Ragiona come un team composto da esperto di marketing B2B, sales intelligence, data engineering, scouting e outreach. La query originale dell'utente e il vincolo dominante: non sostituirla con un target generico.
+
+METODO OBBLIGATORIO:
+1. Distingui cio che l'utente VENDE dal tipo di azienda che dovrebbe COMPRARLO. Non usare automaticamente il prodotto venduto come settore target.
+2. Traduci l'offerta in problemi/costi che risolve, ICP plausibile, buying committee e segnali d'acquisto osservabili adesso.
+3. Trasforma i segnali in fatti verificabili (annuncio di lavoro, outbound, nuova pipeline, gara, round, nuova sede, cambio tecnologia), fonti e domande di ricerca.
+4. Dai priorita ai segnali piu vicini alla spesa: espliciti, recenti, specifici e supportati da URL/data. Popolarita o crescita generica non bastano.
+5. Definisci disqualifier e ranking. Un lead senza prova non e "caldo".
+6. Richiedi dal sito ufficiale tutti i dati utili e pubblici: contatti business, social, decision maker, tecnologie, criticita e contesto per l'outreach.
+
+ESEMPIO: se l'utente vende lead generation/Sales Intelligence, cerca aziende che stanno assumendo SDR/BDR/Inside Sales/Business Developer, citano outbound, prospecting, sviluppo nuovi clienti o gestione pipeline. Non cercare genericamente aziende software e non usare funding come prova sufficiente da solo.
+
+ANTI-ALLUCINAZIONE: non inventare aziende o segnali. commercial_hypothesis e un'ipotesi di ricerca; ogni lead dovra poi avere evidence, source_url ed evidence_date quando disponibile.
 
 REGOLE DI ROUTING (CRITICHE):
 1. maps — categoria fisica + città (es. 'imprese edili a Genova', 'ristoranti Milano', 'imprese di pulizie a Otranto') O filtri tecnici sul sito (es. 'senza pixel', 'con errori SEO').
 2. hybrid — settore + geo espliciti con segnali secondari (es. 'hotel a Roma in espansione'). NON usare hybrid per intenti puramente basati su segnale d'acquisto senza categoria Maps.
 3. organic_web_search — (A) intento venditore/servizio astratto (es. 'sono commercialista cerco clienti') OPPURE (B) ricerca per SEGNALI D'ACQUISTO sul web (es. 'aziende che investono in marketing', 'stanno assumendo', 'hanno vinto gare', 'in fase di espansione'). Per (B) il worker usa WebResearcher (articoli, comunicati) — NON Google Maps.
 
-Devi SEMPRE chiamare submit_mirax_query_plan con: search_strategy, sector, location, required_signals, technical_filters, extraction_schema, confidence, intent_summary, is_unmappable.
+Devi SEMPRE chiamare submit_mirax_query_plan con tutti i campi richiesti, inclusi commercial_hypothesis e ranking_policy.
 - sector: settore/categoria target dedotto dalla query.
 - location: città/regione se esplicita, altrimenti "" o "Italia".
 - required_signals: es. hiring, new_company, funding_received, expansion, no_pixel.
@@ -76,6 +92,70 @@ const OPENAI_TOOL_SCHEMA = {
           type: 'string',
           description: "Messaggio per l'utente se unmappable o chiarimento necessario.",
         },
+        research_questions: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Domande fattuali che la ricerca deve provare.',
+        },
+        source_plan: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              lane: {
+                type: 'string',
+                enum: [
+                  'public_registry', 'public_procurement', 'job_market', 'funding',
+                  'company_web', 'news', 'technology', 'real_estate', 'regulatory', 'web_evidence',
+                ],
+              },
+              source_types: { type: 'array', items: { type: 'string' } },
+              query_templates: { type: 'array', items: { type: 'string' } },
+              expected_evidence: { type: 'array', items: { type: 'string' } },
+              priority: { type: 'number', minimum: 1, maximum: 100 },
+              llm_required: { type: 'boolean' },
+            },
+            required: ['lane', 'source_types', 'query_templates', 'expected_evidence', 'priority', 'llm_required'],
+          },
+          description: 'Piano fonti ordinato per valore e costo.',
+        },
+        commercial_hypothesis: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            offer: { type: 'string' },
+            target_profile: { type: 'array', items: { type: 'string' } },
+            buyer_pains: { type: 'array', items: { type: 'string' } },
+            buying_signals: { type: 'array', items: { type: 'string' } },
+            hiring_roles: { type: 'array', items: { type: 'string' } },
+            decision_maker_roles: { type: 'array', items: { type: 'string' } },
+            disqualifiers: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['offer', 'target_profile', 'buyer_pains', 'buying_signals', 'hiring_roles', 'decision_maker_roles', 'disqualifiers'],
+        },
+        ranking_policy: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            signal_match_mode: { type: 'string', enum: ['any', 'all'] },
+            max_signal_age_days: { type: 'number', minimum: 1, maximum: 1825 },
+            require_concrete_evidence: { type: 'boolean' },
+            weights: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                intent_fit: { type: 'number', minimum: 0, maximum: 1 },
+                signal_strength: { type: 'number', minimum: 0, maximum: 1 },
+                recency: { type: 'number', minimum: 0, maximum: 1 },
+                evidence_quality: { type: 'number', minimum: 0, maximum: 1 },
+                contactability: { type: 'number', minimum: 0, maximum: 1 },
+              },
+              required: ['intent_fit', 'signal_strength', 'recency', 'evidence_quality', 'contactability'],
+            },
+          },
+          required: ['signal_match_mode', 'max_signal_age_days', 'require_concrete_evidence', 'weights'],
+        },
       },
       required: [
         'search_strategy',
@@ -87,6 +167,8 @@ const OPENAI_TOOL_SCHEMA = {
         'confidence',
         'intent_summary',
         'is_unmappable',
+        'commercial_hypothesis',
+        'ranking_policy',
       ],
     },
   },
@@ -110,6 +192,130 @@ type RawToolPlan = {
   reasoning?: string
   is_unmappable?: boolean
   user_message?: string
+  research_questions?: unknown
+  source_plan?: unknown
+  commercial_hypothesis?: unknown
+  ranking_policy?: unknown
+}
+
+const VALID_SOURCE_LANES = new Set<UqeSourceLane>([
+  'public_registry', 'public_procurement', 'job_market', 'funding', 'company_web',
+  'news', 'technology', 'real_estate', 'regulatory', 'web_evidence',
+])
+
+function defaultSourcePlan(query: string, signals: string[]): UqeSourcePlanItem[] {
+  const lanes: UqeSourcePlanItem[] = []
+  const add = (
+    lane: UqeSourceLane,
+    sourceTypes: string[],
+    expectedEvidence: string[],
+    llmRequired = false,
+  ) => {
+    if (lanes.some((item) => item.lane === lane)) return
+    lanes.push({
+      lane,
+      source_types: sourceTypes,
+      query_templates: [query],
+      expected_evidence: expectedEvidence,
+      priority: Math.max(1, 100 - lanes.length * 10),
+      llm_required: llmRequired,
+    })
+  }
+  if (signals.includes('tender_won')) {
+    add('public_procurement', ['ANAC', 'TED Europa', 'albi pretori'], ['CIG', 'aggiudicatario', 'data'])
+  }
+  if (signals.includes('hiring')) {
+    add('job_market', ['JobPosting JSON-LD', 'job board', 'careers'], ['azienda', 'ruolo', 'data annuncio'])
+  }
+  if (signals.some((signal) => ['funding', 'funding_received'].includes(signal))) {
+    add('funding', ['registri investimenti', 'comunicati', 'database startup'], ['azienda', 'round/importo', 'data'])
+  }
+  if (signals.some((signal) => ['registry_change', 'new_company', 'executive_change'].includes(signal))) {
+    add('public_registry', ['registro imprese', 'albo pubblico', 'comunicati societari'], ['identita legale', 'evento', 'data'])
+  }
+  if (signals.some((signal) => ['crm_change', 'tech_migration', 'no_pixel', 'site_stale'].includes(signal))) {
+    add('technology', ['sito ufficiale', 'job posting tecnici', 'case study fornitore'], ['dominio ufficiale', 'tecnologia', 'evidenza'])
+  }
+  if (signals.includes('expansion')) {
+    add('real_estate', ['permessi', 'immobili commerciali', 'comunicati apertura'], ['azienda', 'nuova sede/apertura', 'data'])
+  }
+  add('news', ['comunicati stampa', 'stampa locale', 'newsroom'], ['azienda', 'segnale', 'data'], true)
+  add('company_web', ['sito ufficiale'], ['dominio ufficiale', 'identita aziendale'])
+  add('web_evidence', ['motori di ricerca verticali', 'open web'], ['azienda', 'fonte', 'segnale'], true)
+  return lanes
+}
+
+function normalizeSourcePlan(raw: unknown, query: string, signals: string[]): UqeSourcePlanItem[] {
+  if (!Array.isArray(raw)) return defaultSourcePlan(query, signals)
+  const normalized: UqeSourcePlanItem[] = []
+  for (const value of raw) {
+    if (!value || typeof value !== 'object') continue
+    const item = value as Record<string, unknown>
+    const lane = String(item.lane || '') as UqeSourceLane
+    if (!VALID_SOURCE_LANES.has(lane)) continue
+    normalized.push({
+      lane,
+      source_types: asStringArray(item.source_types),
+      query_templates: asStringArray(item.query_templates),
+      expected_evidence: asStringArray(item.expected_evidence),
+      priority: Math.max(1, Math.min(100, Number(item.priority) || 50)),
+      llm_required: item.llm_required === true,
+    })
+  }
+  return normalized.length ? normalized.sort((a, b) => b.priority - a.priority) : defaultSourcePlan(query, signals)
+}
+
+function sourcePlanForCommercialHypothesis(
+  raw: unknown,
+  query: string,
+  signals: string[],
+  hypothesis?: UqeCommercialHypothesis,
+): UqeSourcePlanItem[] {
+  if (!hypothesis || !hypothesis.hiring_roles.length) return normalizeSourcePlan(raw, query, signals)
+  // Seller-intent lanes are closed and deterministic. An LLM may improve the
+  // wording, but cannot spend the SERP budget on registries/PDFs unrelated to
+  // the observable commercial pain.
+  return [
+    {
+      lane: 'job_market',
+      source_types: ['careers ufficiali', 'Indeed', 'InfoJobs', 'LinkedIn Jobs'],
+      query_templates: [
+        '("SDR" OR "BDR" OR "Inside Sales") (outbound OR prospecting) Italia',
+        '("Business Developer" OR "Sales Account") ("sviluppo nuovi clienti" OR pipeline OR "new business") Italia',
+      ],
+      expected_evidence: ['azienda', 'titolo ruolo', 'frase su outbound/new business', 'data annuncio', 'URL fonte'],
+      priority: 100,
+      llm_required: false,
+    },
+    {
+      lane: 'company_web',
+      source_types: ['sito ufficiale', 'careers', 'lavora con noi'],
+      query_templates: [
+        'site:.it (careers OR "lavora con noi") (SDR OR BDR OR "Business Developer")',
+      ],
+      expected_evidence: ['dominio ufficiale', 'ruolo sales', 'testo annuncio', 'data'],
+      priority: 90,
+      llm_required: false,
+    },
+    {
+      lane: 'news',
+      source_types: ['newsroom aziendale', 'comunicati stampa', 'stampa business'],
+      query_templates: [
+        'PMI Italia ("potenziamento commerciale" OR "nuovi mercati" OR "rete vendita")',
+      ],
+      expected_evidence: ['azienda', 'investimento sales', 'data', 'URL fonte'],
+      priority: 70,
+      llm_required: true,
+    },
+    {
+      lane: 'web_evidence',
+      source_types: ['motori di ricerca', 'annunci indicizzati'],
+      query_templates: [query],
+      expected_evidence: ['azienda', 'segnale commerciale esplicito', 'data', 'URL fonte'],
+      priority: 60,
+      llm_required: true,
+    },
+  ]
 }
 
 function clampConfidence(v: unknown): number {
@@ -124,6 +330,111 @@ function asStringArray(v: unknown): string[] {
     .filter((x): x is string => typeof x === 'string')
     .map((s) => s.trim())
     .filter(Boolean)
+}
+
+const DEFAULT_RANKING_POLICY: UqeRankingPolicy = {
+  signal_match_mode: 'any',
+  max_signal_age_days: 180,
+  require_concrete_evidence: true,
+  weights: {
+    intent_fit: 0.25,
+    signal_strength: 0.3,
+    recency: 0.2,
+    evidence_quality: 0.15,
+    contactability: 0.1,
+  },
+}
+
+function normalizeRankingPolicy(raw: unknown): UqeRankingPolicy {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return DEFAULT_RANKING_POLICY
+  const value = raw as Record<string, unknown>
+  const rawWeights = value.weights && typeof value.weights === 'object'
+    ? (value.weights as Record<string, unknown>)
+    : {}
+  const fallback = DEFAULT_RANKING_POLICY.weights
+  const weights = {
+    intent_fit: Math.max(0, Number(rawWeights.intent_fit) || fallback.intent_fit),
+    signal_strength: Math.max(0, Number(rawWeights.signal_strength) || fallback.signal_strength),
+    recency: Math.max(0, Number(rawWeights.recency) || fallback.recency),
+    evidence_quality: Math.max(0, Number(rawWeights.evidence_quality) || fallback.evidence_quality),
+    contactability: Math.max(0, Number(rawWeights.contactability) || fallback.contactability),
+  }
+  const total = Object.values(weights).reduce((sum, weight) => sum + weight, 0) || 1
+  return {
+    signal_match_mode: value.signal_match_mode === 'all' ? 'all' : 'any',
+    max_signal_age_days: Math.max(1, Math.min(1825, Math.round(Number(value.max_signal_age_days) || 180))),
+    require_concrete_evidence: value.require_concrete_evidence !== false,
+    weights: {
+      intent_fit: weights.intent_fit / total,
+      signal_strength: weights.signal_strength / total,
+      recency: weights.recency / total,
+      evidence_quality: weights.evidence_quality / total,
+      contactability: weights.contactability / total,
+    },
+  }
+}
+
+function isLeadGenerationSellerQuery(query: string): boolean {
+  const q = query.toLowerCase()
+  const seller = /\b(a\s+cui\s+vendere|vendere\s+(?:il|la|i|le|un|una|mio|mia)|clienti\s+per|lead\s+cald|prospect)\b/i.test(q)
+  const offer = /\b(lead\s*generation|sales\s*intelligence|prospect(?:ing)?|outreach|generazione\s+lead)\b/i.test(q)
+  return seller && offer
+}
+
+function inferCommercialHypothesis(query: string): UqeCommercialHypothesis | undefined {
+  if (isLeadGenerationSellerQuery(query)) {
+    return {
+      offer: 'Software di lead generation e Sales Intelligence',
+      target_profile: [
+        'PMI italiane B2B con processo commerciale attivo',
+        'aziende che stanno costruendo o ampliando il team new business',
+      ],
+      buyer_pains: [
+        'prospecting e ricerca account manuali',
+        'pipeline insufficiente o costosa da alimentare',
+        'SDR e commerciali che spendono tempo a cercare dati e contatti',
+      ],
+      buying_signals: [
+        'assunzione recente di SDR, BDR, Inside Sales o Business Developer',
+        'annuncio che cita outbound, prospecting, lead generation o sviluppo nuovi clienti',
+        'potenziamento rete commerciale, ingresso in nuovi mercati o nuova pipeline',
+      ],
+      hiring_roles: [
+        'Sales Development Representative',
+        'Business Development Representative',
+        'Inside Sales',
+        'Business Developer',
+        'Sales Account New Business',
+        'Lead Generation Specialist',
+      ],
+      decision_maker_roles: ['CEO', 'Founder', 'Head of Sales', 'Sales Director', 'Revenue Operations'],
+      disqualifiers: [
+        'annuncio senza azienda identificabile',
+        'ruolo puramente retail o assistenza clienti senza new business',
+        'azienda non italiana o non coerente con PMI se il requisito e esplicito',
+        'segnale senza URL o prova testuale',
+      ],
+    }
+  }
+  return undefined
+}
+
+function normalizeCommercialHypothesis(raw: unknown, query: string): UqeCommercialHypothesis | undefined {
+  const inferred = inferCommercialHypothesis(query)
+  if (inferred) return inferred
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const value = raw as Record<string, unknown>
+  const offer = String(value.offer || '').trim()
+  if (!offer) return undefined
+  return {
+    offer,
+    target_profile: asStringArray(value.target_profile),
+    buyer_pains: asStringArray(value.buyer_pains),
+    buying_signals: asStringArray(value.buying_signals),
+    hiring_roles: asStringArray(value.hiring_roles),
+    decision_maker_roles: asStringArray(value.decision_maker_roles),
+    disqualifiers: asStringArray(value.disqualifiers),
+  }
 }
 
 function normalizeSignals(signals: string[]): string[] {
@@ -169,6 +480,12 @@ function inferEconomicIntentSignals(query: string): string[] {
     if (!out.includes(s)) out.push(s)
   }
 
+  if (isLeadGenerationSellerQuery(q)) {
+    add('hiring')
+    add('expansion')
+    return out
+  }
+
   if (/\b(commercialist|ragioniere|contabil|consulent\w*\s+fisc|cfd\b|fiscalist)\b/i.test(q)) {
     add('new_company')
     add('funding_received')
@@ -202,7 +519,7 @@ function inferEconomicIntentSignals(query: string): string[] {
 
 /** Intento venditore astratto → solo agentic organic. */
 export function isSellerAbstractQuery(query: string): boolean {
-  return /\b(sono\s+(?:un|una)\b|potenziali\s+clienti|cerco\s+clienti|trov\w+\s+lead|lead\s+caldi|vendere\s+i\s+miei|servizi\s+da|clienti\s+per|mi\s+servono\s+clienti)\b/i.test(
+  return /\b(sono\s+(?:un|una)\b|potenziali\s+clienti|cerco\s+clienti|trov\w+\s+lead|lead\s+caldi|a\s+cui\s+vendere|vendere\s+(?:il|la|un|una|i|le|mio|mia)|servizi\s+da|clienti\s+per|mi\s+servono\s+clienti)\b/i.test(
     query.trim(),
   )
 }
@@ -354,6 +671,14 @@ function extractionFromQuery(query: string): string[] {
   if (/\bpartita\s*iva\b|\bpiva\b|\bvat\b/i.test(q) && !base.includes('partita_iva')) base.push('partita_iva')
   if (/\binstagram\b/i.test(q) && !base.includes('instagram')) base.push('instagram')
   if (/\blinkedin\b/i.test(q) && !base.includes('linkedin')) base.push('linkedin')
+  if (isSellerAbstractQuery(query) || /\b(segnal\w*\s+d.?acquisto|lead\s+cald)\b/i.test(q)) {
+    for (const field of [
+      'linkedin', 'instagram', 'facebook', 'decision_maker', 'evidence', 'evidence_date',
+      'source_url', 'hiring_title', 'hotness_score', 'why_now', 'pitch_angle',
+    ]) {
+      if (!base.includes(field)) base.push(field)
+    }
+  }
   return base
 }
 
@@ -379,16 +704,32 @@ export function normalizeMiraxQueryPlan(
     )
   }
 
-  const sector = String(raw.sector || '').trim()
-  const location = String(raw.location || '').trim()
-  const required_signals = normalizeSignals(asStringArray(raw.required_signals))
+  const inferredHypothesis = inferCommercialHypothesis(originalQuery)
+  let sector = String(raw.sector || '').trim()
+  let location = String(raw.location || '').trim()
+  let required_signals = normalizeSignals(asStringArray(raw.required_signals))
+  if (inferredHypothesis) {
+    sector = 'PMI B2B con team commerciale in espansione'
+    location = /\b(italia|italian[ei])\b/i.test(originalQuery) ? 'Italia' : location
+    required_signals = normalizeSignals(['hiring'])
+  }
   const technical_filters =
     raw.technical_filters && typeof raw.technical_filters === 'object' && !Array.isArray(raw.technical_filters)
       ? (raw.technical_filters as Record<string, unknown>)
       : {}
 
-  const extraction_schema = asStringArray(raw.extraction_schema)
+  const extraction_schema = [
+    ...new Set([...asStringArray(raw.extraction_schema), ...extractionFromQuery(originalQuery)]),
+  ]
   const confidence = clampConfidence(raw.confidence)
+  const commercial_hypothesis = normalizeCommercialHypothesis(raw.commercial_hypothesis, originalQuery)
+  const model_ranking_policy = normalizeRankingPolicy(raw.ranking_policy)
+  const ranking_policy = inferredHypothesis
+    ? {
+        ...DEFAULT_RANKING_POLICY,
+        max_signal_age_days: Math.min(180, model_ranking_policy.max_signal_age_days),
+      }
+    : model_ranking_policy
 
   let search_strategy = normalizeStrategy(raw.search_strategy)
   if (search_strategy === 'fallback') search_strategy = 'hybrid'
@@ -404,6 +745,23 @@ export function normalizeMiraxQueryPlan(
     confidence,
     intent_summary: String(raw.intent_summary || '').trim() || `Ricerca: ${originalQuery.slice(0, 120)}`,
     parse_source: parseSource,
+    research_questions: asStringArray(raw.research_questions).length
+      ? asStringArray(raw.research_questions)
+      : [`Quali organizzazioni soddisfano: ${originalQuery}?`],
+    source_plan: sourcePlanForCommercialHypothesis(
+      raw.source_plan,
+      originalQuery,
+      required_signals,
+      commercial_hypothesis,
+    ),
+    evidence_policy: {
+      require_source_url: true,
+      require_official_domain: true,
+      min_signal_confidence: 0.7,
+      max_age_days: ranking_policy.max_signal_age_days,
+    },
+    commercial_hypothesis,
+    ranking_policy,
     user_message: raw.user_message?.trim() || null,
     reasoning: raw.reasoning?.trim() || null,
   }
@@ -423,16 +781,23 @@ export function normalizeMiraxQueryPlan(
 export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan {
   const query = userInput.trim()
   const spec = parseSignalIntentHeuristic(query)
+  const commercial_hypothesis = inferCommercialHypothesis(query)
   let sector = String(spec.category || spec.sector_keywords?.[0] || '').trim()
-  const location = String(spec.location || '').trim()
+  let location = String(spec.location || '').trim()
   const economicSignals = inferEconomicIntentSignals(query)
-  const required_signals = normalizeSignals([
+  let required_signals = normalizeSignals([
     ...(spec.required_signals || []),
     ...economicSignals,
   ])
   const technical_filters = technicalFiltersFromHeuristic(
     (spec.technical_filters || {}) as Record<string, unknown>,
   )
+
+  if (commercial_hypothesis) {
+    sector = 'PMI B2B con team commerciale in espansione'
+    location = /\b(italia|italian[ei])\b/i.test(query) ? 'Italia' : ''
+    required_signals = normalizeSignals(['hiring'])
+  }
 
   if (!sector && (_heuristicLooksAbstract(query) || economicSignals.length > 0)) {
     sector = 'aziende in crescita'
@@ -447,6 +812,7 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
   }
 
   const search_strategy = inferStrategyFromQuery(query, sector, location, required_signals)
+  const ranking_policy = normalizeRankingPolicy(undefined)
 
   const plan: MiraxQueryPlan = {
     original_query: query,
@@ -457,9 +823,34 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
     technical_filters,
     extraction_schema: extractionFromQuery(query),
     confidence: planHasExecutableTarget({ sector, location, required_signals, technical_filters }) ? 0.45 : 0.1,
-    intent_summary: spec.intent_summary || `Ricerca euristica: ${query.slice(0, 100)}`,
+    intent_summary: commercial_hypothesis
+      ? 'PMI italiane B2B con investimento commerciale verificato: SDR/BDR, outbound, prospecting o sviluppo nuovi clienti.'
+      : spec.intent_summary || `Ricerca euristica: ${query.slice(0, 100)}`,
     parse_source: 'heuristic',
-    reasoning: spec.reasoning || 'Parser euristico offline.',
+    research_questions: commercial_hypothesis
+      ? [
+          'Quali PMI italiane stanno investendo adesso in sviluppo commerciale o outbound?',
+          'Quale annuncio o fonte prova SDR, BDR, prospecting, pipeline o acquisizione nuovi clienti?',
+          'Quanto e recente il segnale e chi guida Sales/Revenue nell azienda?',
+        ]
+      : [`Quali organizzazioni soddisfano: ${query}?`],
+    source_plan: sourcePlanForCommercialHypothesis(
+      undefined,
+      query,
+      required_signals,
+      commercial_hypothesis,
+    ),
+    evidence_policy: {
+      require_source_url: true,
+      require_official_domain: true,
+      min_signal_confidence: 0.7,
+      max_age_days: ranking_policy.max_signal_age_days,
+    },
+    commercial_hypothesis,
+    ranking_policy,
+    reasoning: commercial_hypothesis
+      ? 'Seller-to-buyer reasoning: offerta lead generation -> costo prospecting manuale -> segnali sales hiring/outbound.'
+      : spec.reasoning || 'Parser euristico offline.',
   }
 
   if (!planHasExecutableTarget(plan) || plan.confidence < 0.15) {
