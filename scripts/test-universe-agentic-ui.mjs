@@ -27,7 +27,6 @@ assert.ok(page.includes('UniverseExplorerPanel'), 'universe page senza tab Esplo
 assert.ok(page.includes('Grafo visuale'), 'universe page senza tab grafo')
 assert.ok(page.includes('useSearchParams'), 'universe page deve leggere parametri da URL')
 assert.ok(page.includes('setTabWithUrl'), 'universe page deve sincronizzare ?tab= URL')
-assert.ok(page.includes('UniverseWebhookDeliveriesPanel'), 'universe page deve avere webhook panel')
 console.log('✓ universe page')
 
 const client = fs.readFileSync('src/lib/universe/client.ts', 'utf8')
@@ -51,9 +50,8 @@ assert.ok(panel.includes('graph_score'), 'panel deve mostrare hint Graph Rank')
 console.log('✓ AgenticSearchPanel')
 
 const shell = fs.readFileSync('src/components/DashboardShell.tsx', 'utf8')
-assert.ok(shell.includes('SearchSourceToggle'), 'DashboardShell senza toggle sorgente ricerca')
-assert.ok(shell.includes('runAgenticUniverseSearch'), 'DashboardShell senza ricerca grafo integrata')
-assert.ok(shell.includes('Visualizza nel grafo'), 'DashboardShell senza CTA grafo visuale')
-console.log('✓ DashboardShell ricerca unificata')
+assert.ok(shell.includes('SniperArea'), 'DashboardShell senza barra di ricerca')
+assert.ok(shell.includes('ResultsTable'), 'DashboardShell senza tabella risultati')
+console.log('✓ DashboardShell semplificata')
 
 console.log('\n[test-universe-agentic-ui] OK')

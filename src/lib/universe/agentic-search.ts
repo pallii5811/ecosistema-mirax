@@ -29,7 +29,7 @@ import { getLatestObservation } from './observation-repository.ts'
 import { rankUniverseEntities } from './graph-ranking.ts'
 import { buildCommercialOpportunities, rankOpportunities, type CommercialOpportunity } from './opportunity.ts'
 import { getEntityFeedbackBoostMap, applyFeedbackBoost } from './feedback.ts'
-import { graphCategoryTokenForQuery, inferQueryCategoryKey } from '@/lib/lead-relevance'
+import { graphCategoryTokenForQuery } from '@/lib/lead-relevance'
 
 export type UniverseQueryIntent = {
   query: UniverseQuery
@@ -192,7 +192,12 @@ function commercialTargetToFilters(
   }
 
   for (const ind of target.industries ?? []) {
-    if (ind.trim()) observations.push({ attribute: 'category', operator: 'contains', value: ind.trim() })
+    if (!ind.trim()) continue
+    if (/^(startup|scaleup)$/i.test(ind.trim())) {
+      observations.push({ attribute: 'company_stage', operator: 'contains', value: ind.trim().toLowerCase() })
+    } else {
+      observations.push({ attribute: 'category', operator: 'contains', value: ind.trim() })
+    }
   }
 
   const size = target.company_size
@@ -345,6 +350,20 @@ function commercialGraphConstraintsToRelationships(
         target_filters: Object.keys(target_filters).length ? target_filters : undefined,
       }
     })
+}
+
+function hiringRoleAliases(role: string): string[] {
+  const normalized = role.trim().toLowerCase()
+  if (/programmator|developer|sviluppator|software engineer|full[\s-]?stack|backend|frontend/.test(normalized)) {
+    return ['programmatore', 'developer', 'sviluppatore', 'software engineer', 'frontend', 'backend']
+  }
+  if (/commercial|sales|venditor|account manager|business developer/.test(normalized)) {
+    return ['commerciale', 'sales', 'venditore', 'account manager', 'business developer']
+  }
+  if (/marketing|growth|seo|social media|copywriter/.test(normalized)) {
+    return ['marketing', 'growth', 'seo', 'social media', 'copywriter']
+  }
+  return normalized ? [normalized] : []
 }
 
 function shouldUseGraphReasoning(intent: CommercialIntent): boolean {
@@ -518,9 +537,6 @@ export function commercialIntentToUniverseQuery(
     }
   }
 
-  const categoryKey = inferQueryCategoryKey(intent.original_query ?? '')
-  const nameToken = categoryKey ? graphCategoryTokenForQuery(intent.original_query ?? '') : null
-
   // If the intent carries explicit hiring roles, build precise job relationships.
   const hasHiringSignal = intent.signals.some((s) => s.type === 'hiring')
   const hiringRoles = intent.signals
@@ -537,14 +553,13 @@ export function commercialIntentToUniverseQuery(
 
   if (hasHiringSignal) {
     if (explicitRoles.length) {
-      for (const role of explicitRoles) {
-        relationships.push({
-          relationship_type: 'hires',
-          direction: 'outgoing',
-          target_entity_type: 'job',
-          target_filters: { name_contains: role },
-        })
-      }
+      const aliases = [...new Set(explicitRoles.flatMap(hiringRoleAliases))]
+      relationships.push({
+        relationship_type: 'hires',
+        direction: 'outgoing',
+        target_entity_type: 'job',
+        target_filters: { name_contains_any: aliases },
+      })
     } else {
       relationships.push({
         relationship_type: 'hires',
@@ -563,7 +578,6 @@ export function commercialIntentToUniverseQuery(
     entity_type: entityType,
     filters: {
       city: targetFilters.city,
-      name_contains: nameToken ?? undefined,
       observations: observations.length ? observations : undefined,
     },
     relationships: relationships.length ? relationships : undefined,

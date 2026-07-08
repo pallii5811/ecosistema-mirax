@@ -30,6 +30,9 @@ const TS_MODULES = [
   'src/lib/universe/webhooks.ts',
   'src/lib/universe/event-archive.ts',
   'src/lib/universe/require-auth.ts',
+  'src/lib/universe/feedback.ts',
+  'src/lib/universe/quality.ts',
+  'src/lib/universe/pii.ts',
   'src/lib/universe/index.ts',
 ]
 
@@ -68,6 +71,9 @@ const API_ROUTES = [
   'src/app/api/cron/universe-process-events/route.ts',
   'src/app/api/universe/alerts/route.ts',
   'src/app/api/universe/webhooks/deliveries/route.ts',
+  'src/app/api/universe/feedback/route.ts',
+  'src/app/api/universe/quality/route.ts',
+  'src/app/api/universe/entities/[id]/pii/route.ts',
 ]
 
 for (const f of API_ROUTES) {

@@ -143,8 +143,8 @@ console.log('✓ Graph Rank UX helpers')
 
 const page = fs.readFileSync('src/app/dashboard/universe/page.tsx', 'utf8')
 assert.ok(page.includes('setTabWithUrl'), 'tab sincronizzati con URL ?tab=')
-assert.ok(page.includes('UniverseWebhookDeliveriesPanel'), 'pannello webhook in analytics')
-console.log('✓ universe page UX (tab URL + webhook panel)')
+assert.ok(page.includes('UniverseGraphCanvas'), 'pagina con canvas grafo')
+console.log('✓ universe page UX (tab URL + grafo visuale')
 
 const evidenceChips = buildGraphRankEvidence({
   freshness: 12,

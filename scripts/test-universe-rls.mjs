@@ -129,11 +129,21 @@ try {
     const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY)
     const probe = await sb.from('universe_entities').select('id', { head: true, count: 'exact' })
     if (!probe.error || !isNetworkError(probe.error.message)) {
-      await runViaRest(sb)
-      console.log('\n[test-universe-rls] OK (REST)')
-      process.exit(0)
+      try {
+        await runViaRest(sb)
+        console.log('\n[test-universe-rls] OK (REST)')
+        process.exit(0)
+      } catch (restErr) {
+        const restMsg = restErr instanceof Error ? restErr.message : String(restErr)
+        if (/schema cache|pg_tables|pg_policies/i.test(restMsg)) {
+          console.warn('REST non espone cataloghi di sistema — fallback Postgres:', restMsg)
+        } else {
+          throw restErr
+        }
+      }
+    } else {
+      console.warn('REST non disponibile — fallback Postgres:', probe.error?.message)
     }
-    console.warn('REST non disponibile — fallback Postgres:', probe.error?.message)
   }
 
   await runViaPg()

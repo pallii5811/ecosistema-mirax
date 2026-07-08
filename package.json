@@ -49,7 +49,7 @@
     "test:universe:worker": "node scripts/test-universe-worker-integration.mjs",
     "test:universe:reaudit": "node scripts/test-universe-reaudit.mjs",
     "test:universe:conventions": "node scripts/test-universe-conventions.mjs",
-    "test:universe:query-builder": "node --experimental-strip-types --experimental-default-type=module scripts/test-universe-query-builder.mjs",
+    "test:universe:query-builder": "npx tsx scripts/test-universe-query-builder.mjs",
     "test:universe:scale": "npx tsx scripts/test-universe-no-pixel.mjs",
     "test:universe:api": "node scripts/test-universe-api.mjs",
     "test:universe:ui": "node scripts/test-universe-ui.mjs",

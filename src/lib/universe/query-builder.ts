@@ -22,6 +22,27 @@ export const ALLOWED_OPERATORS = [
   'contains',
 ] as const
 
+const DB_PAGE_SIZE = 1_000
+const MAX_GRAPH_CANDIDATES = 50_000
+const ENTITY_ID_BATCH_SIZE = 150
+const MIN_RELATIONSHIP_CONFIDENCE = 0.65
+
+function intersectIds(left: string[], right: string[]): string[] {
+  const allowed = new Set(right)
+  return left.filter((id) => allowed.has(id))
+}
+
+function hasRelationshipTargetConstraints(relFilter: RelationshipFilter): boolean {
+  const tf = relFilter.target_filters
+  return Boolean(
+    relFilter.target_entity_type ||
+      tf?.name_contains ||
+      tf?.name_contains_any?.length ||
+      tf?.observation ||
+      tf?.observations?.length,
+  )
+}
+
 export type ObservationOperator = (typeof ALLOWED_OPERATORS)[number]
 
 export interface ObservationFilter {
@@ -36,6 +57,7 @@ export interface RelationshipFilter {
   target_entity_type?: EntityType
   target_filters?: {
     name_contains?: string
+    name_contains_any?: string[]
     /** @deprecated use observations */
     observation?: ObservationFilter
     observations?: ObservationFilter[]
@@ -123,12 +145,20 @@ export async function fetchEntityIdsByObservation(
   if (filter.operator === 'contains') {
     const pattern = typeof filter.value === 'string' ? `%${filter.value}%` : `%${String(filter.value)}%`
     // universe_observations.value is jsonb; use server-side cast via RPC.
-    const { data, error } = await sb.rpc('universe_observation_text_search', {
-      p_attribute: filter.attribute,
-      p_pattern: pattern,
-    })
-    if (error) throw wrapSupabaseError(error)
-    return (data ?? []).map((d: { entity_id: string }) => d.entity_id)
+    const ids: string[] = []
+    for (let from = 0; from < MAX_GRAPH_CANDIDATES; from += DB_PAGE_SIZE) {
+      const { data, error } = await sb
+        .rpc('universe_observation_text_search', {
+          p_attribute: filter.attribute,
+          p_pattern: pattern,
+        })
+        .range(from, from + DB_PAGE_SIZE - 1)
+      if (error) throw wrapSupabaseError(error)
+      const page = (data ?? []).map((d: { entity_id: string }) => d.entity_id)
+      ids.push(...page)
+      if (page.length < DB_PAGE_SIZE) break
+    }
+    return [...new Set(ids)]
   } else if (filter.operator === 'is_null') {
     q = q.filter('value', 'is', null)
   } else if (filter.operator === 'not_null') {
@@ -140,9 +170,15 @@ export async function fetchEntityIdsByObservation(
     }
   }
 
-  const { data, error } = await q
-  if (error) throw wrapSupabaseError(error)
-  return (data ?? []).map((d) => d.entity_id)
+  const ids: string[] = []
+  for (let from = 0; from < MAX_GRAPH_CANDIDATES; from += DB_PAGE_SIZE) {
+    const { data, error } = await q.range(from, from + DB_PAGE_SIZE - 1)
+    if (error) throw wrapSupabaseError(error)
+    const page = (data ?? []).map((d) => d.entity_id)
+    ids.push(...page)
+    if (page.length < DB_PAGE_SIZE) break
+  }
+  return [...new Set(ids)]
 }
 
 export async function resolveTargetEntityIds(
@@ -150,25 +186,37 @@ export async function resolveTargetEntityIds(
   relFilter: RelationshipFilter,
 ): Promise<string[]> {
   const tf = relFilter.target_filters
-  const hasTargetFilters =
-    relFilter.target_entity_type || tf?.name_contains || tf?.observation || tf?.observations?.length
+  const hasTargetFilters = hasRelationshipTargetConstraints(relFilter)
 
   if (!hasTargetFilters) {
     // No target constraints — every relationship of this type matches.
     return []
   }
 
-  let targetQ = sb.from('universe_entities').select('id')
-  if (relFilter.target_entity_type) {
-    targetQ = targetQ.eq('entity_type', relFilter.target_entity_type)
+  const aliases = (tf?.name_contains_any ?? []).map((value) => value.trim().toLowerCase()).filter(Boolean)
+  const hasEntityConstraints = Boolean(relFilter.target_entity_type || tf?.name_contains || aliases.length)
+  let ids: string[] | undefined
+  if (hasEntityConstraints) {
+    ids = []
+    for (let from = 0; from < MAX_GRAPH_CANDIDATES; from += DB_PAGE_SIZE) {
+      let targetQ = sb.from('universe_entities').select('id, name')
+      if (relFilter.target_entity_type) targetQ = targetQ.eq('entity_type', relFilter.target_entity_type)
+      if (tf?.name_contains) targetQ = targetQ.ilike('name', `%${tf.name_contains}%`)
+      const { data, error } = await targetQ.range(from, from + DB_PAGE_SIZE - 1)
+      if (error) throw wrapSupabaseError(error)
+      const page = data ?? []
+      ids.push(
+        ...page
+          .filter((entity) => {
+            if (!aliases.length) return true
+            const name = String(entity.name ?? '').toLowerCase()
+            return aliases.some((alias) => name.includes(alias))
+          })
+          .map((entity) => entity.id),
+      )
+      if (page.length < DB_PAGE_SIZE) break
+    }
   }
-  if (tf?.name_contains) {
-    targetQ = targetQ.ilike('name', `%${tf.name_contains}%`)
-  }
-
-  const { data, error } = await targetQ
-  if (error) throw wrapSupabaseError(error)
-  let ids = (data ?? []).map((d) => d.id)
 
   const obsFilters: ObservationFilter[] = [
     ...(tf?.observations ?? []),
@@ -177,11 +225,11 @@ export async function resolveTargetEntityIds(
 
   for (const obs of obsFilters) {
     const obsIds = await fetchEntityIdsByObservation(sb, obs)
-    ids = ids.filter((id) => obsIds.includes(id))
+    ids = ids ? intersectIds(ids, obsIds) : obsIds
     if (ids.length === 0) break
   }
 
-  return ids
+  return [...new Set(ids ?? [])]
 }
 
 export async function executeUniverseQuery(
@@ -207,20 +255,26 @@ export async function executeUniverseQuery(
 
   // Name search
   if (query.filters?.name_contains) {
-    const { data, error } = await sb
-      .from('universe_entities')
-      .select('id')
-      .eq('entity_type', query.entity_type)
-      .ilike('name', `%${query.filters.name_contains}%`)
-    if (error) throw wrapSupabaseError(error)
-    candidateIds = (data ?? []).map((d) => d.id)
+    candidateIds = []
+    for (let from = 0; from < MAX_GRAPH_CANDIDATES; from += DB_PAGE_SIZE) {
+      const { data, error } = await sb
+        .from('universe_entities')
+        .select('id')
+        .eq('entity_type', query.entity_type)
+        .ilike('name', `%${query.filters.name_contains}%`)
+        .range(from, from + DB_PAGE_SIZE - 1)
+      if (error) throw wrapSupabaseError(error)
+      const page = data ?? []
+      candidateIds.push(...page.map((entity) => entity.id))
+      if (page.length < DB_PAGE_SIZE) break
+    }
   }
 
   // Observation filters
   if (query.filters?.observations && query.filters.observations.length > 0) {
     for (const obsFilter of query.filters.observations) {
       const ids = await fetchEntityIdsByObservation(sb, obsFilter)
-      candidateIds = candidateIds ? candidateIds.filter((id) => ids.includes(id)) : ids
+      candidateIds = candidateIds ? intersectIds(candidateIds, ids) : ids
       if (candidateIds.length === 0) return { entities: [], total: 0 }
     }
   }
@@ -231,20 +285,33 @@ export async function executeUniverseQuery(
       const sourceCol = relFilter.direction === 'outgoing' ? 'source_entity_id' : 'target_entity_id'
       const targetCol = relFilter.direction === 'outgoing' ? 'target_entity_id' : 'source_entity_id'
 
-      let relQ = sb
-        .from('universe_relationships')
-        .select(sourceCol)
-        .eq('relationship_type', relFilter.relationship_type)
-
       const targetIds = await resolveTargetEntityIds(sb, relFilter)
-      if (targetIds.length > 0) {
-        relQ = relQ.in(targetCol, targetIds)
+      if (hasRelationshipTargetConstraints(relFilter) && targetIds.length === 0) {
+        return { entities: [], total: 0 }
       }
-
-      const { data, error } = await relQ
-      if (error) throw wrapSupabaseError(error)
-      const ids = (data ?? []).map((d) => (d as Record<string, string>)[sourceCol])
-      candidateIds = candidateIds ? candidateIds.filter((id) => ids.includes(id)) : ids
+      const targetBatches: Array<string[] | undefined> = targetIds.length
+        ? Array.from({ length: Math.ceil(targetIds.length / ENTITY_ID_BATCH_SIZE) }, (_, index) =>
+            targetIds.slice(index * ENTITY_ID_BATCH_SIZE, (index + 1) * ENTITY_ID_BATCH_SIZE),
+          )
+        : [undefined]
+      const relationshipIds = new Set<string>()
+      for (const targetBatch of targetBatches) {
+        for (let from = 0; from < MAX_GRAPH_CANDIDATES; from += DB_PAGE_SIZE) {
+          let relQ = sb
+            .from('universe_relationships')
+            .select(sourceCol)
+            .eq('relationship_type', relFilter.relationship_type)
+            .gte('confidence', MIN_RELATIONSHIP_CONFIDENCE)
+          if (targetBatch) relQ = relQ.in(targetCol, targetBatch)
+          const { data, error } = await relQ.range(from, from + DB_PAGE_SIZE - 1)
+          if (error) throw wrapSupabaseError(error)
+          const page = data ?? []
+          for (const row of page) relationshipIds.add((row as Record<string, string>)[sourceCol])
+          if (page.length < DB_PAGE_SIZE) break
+        }
+      }
+      const ids = [...relationshipIds]
+      candidateIds = candidateIds ? intersectIds(candidateIds, ids) : ids
       if (candidateIds.length === 0) return { entities: [], total: 0 }
     }
   }
@@ -252,33 +319,72 @@ export async function executeUniverseQuery(
   // Step 3: event filters
   if (query.events && query.events.length > 0) {
     for (const eventFilter of query.events) {
-      let q = sb.from('universe_events').select('entity_id').eq('event_type', eventFilter.event_type)
-
-      if (eventFilter.time_window_days != null && eventFilter.time_window_days > 0) {
-        const since = new Date(
-          Date.now() - eventFilter.time_window_days * 24 * 60 * 60 * 1000,
-        ).toISOString()
-        q = q.gte('occurred_at', since)
+      const eventIds = new Set<string>()
+      for (let from = 0; from < MAX_GRAPH_CANDIDATES; from += DB_PAGE_SIZE) {
+        let q = sb.from('universe_events').select('entity_id').eq('event_type', eventFilter.event_type)
+        if (eventFilter.time_window_days != null && eventFilter.time_window_days > 0) {
+          const since = new Date(
+            Date.now() - eventFilter.time_window_days * 24 * 60 * 60 * 1000,
+          ).toISOString()
+          q = q.gte('occurred_at', since)
+        }
+        const { data, error } = await q.range(from, from + DB_PAGE_SIZE - 1)
+        if (error) throw wrapSupabaseError(error)
+        const page = data ?? []
+        for (const row of page) if (row.entity_id) eventIds.add(row.entity_id)
+        if (page.length < DB_PAGE_SIZE) break
       }
-
-      const { data, error } = await q
-      if (error) throw wrapSupabaseError(error)
-      const ids = (data ?? []).map((d) => d.entity_id).filter((id): id is string => Boolean(id))
-      candidateIds = candidateIds ? candidateIds.filter((id) => ids.includes(id)) : ids
+      const ids = [...eventIds]
+      candidateIds = candidateIds ? intersectIds(candidateIds, ids) : ids
       if (candidateIds.length === 0) return { entities: [], total: 0 }
     }
   }
 
-  // Step 4: fetch full entities
+  // Step 4: fetch full entities. Large candidate sets are chunked to avoid
+  // oversized PostgREST URLs (e.g. thousands of entities without Meta Pixel).
+  const limit = query.limit ?? 50
+  const offset = query.offset ?? 0
+  if (candidateIds) {
+    const uniqueIds = [...new Set(candidateIds)]
+    const batches: string[][] = []
+    for (let index = 0; index < uniqueIds.length; index += ENTITY_ID_BATCH_SIZE) {
+      batches.push(uniqueIds.slice(index, index + ENTITY_ID_BATCH_SIZE))
+    }
+
+    const pages: UniverseEntity[][] = []
+    for (let index = 0; index < batches.length; index += 6) {
+      const wave = batches.slice(index, index + 6)
+      const results = await Promise.all(
+        wave.map(async (ids) => {
+          let batchQ = sb.from('universe_entities').select('*').eq('entity_type', query.entity_type).in('id', ids)
+          if (query.filters?.city) batchQ = batchQ.ilike('city', `%${query.filters.city}%`)
+          if (query.filters?.country) batchQ = batchQ.eq('country', query.filters.country)
+          const { data, error } = await batchQ
+          if (error) throw wrapSupabaseError(error)
+          return (data as UniverseEntity[]) ?? []
+        }),
+      )
+      pages.push(...results)
+    }
+
+    const entities = pages.flat()
+    const orderAttribute = query.orderBy?.attribute ?? 'last_seen_at'
+    const direction = query.orderBy?.direction === 'asc' ? 1 : -1
+    entities.sort((a, b) => {
+      const left = String((a as unknown as Record<string, unknown>)[orderAttribute] ?? '')
+      const right = String((b as unknown as Record<string, unknown>)[orderAttribute] ?? '')
+      return left.localeCompare(right) * direction
+    })
+    return {
+      entities: entities.slice(offset, offset + limit),
+      total: entities.length,
+    }
+  }
+
   let entityQ = sb.from('universe_entities').select('*', { count: 'exact' }).eq('entity_type', query.entity_type)
 
   if (query.filters?.city) entityQ = entityQ.ilike('city', `%${query.filters.city}%`)
   if (query.filters?.country) entityQ = entityQ.eq('country', query.filters.country)
-  if (candidateIds) entityQ = entityQ.in('id', candidateIds)
-
-  const limit = query.limit ?? 50
-  const offset = query.offset ?? 0
-
   const { data, error, count } = await entityQ
     .order(query.orderBy?.attribute ?? 'last_seen_at', {
       ascending: query.orderBy?.direction === 'asc',

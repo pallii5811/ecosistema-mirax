@@ -35,7 +35,20 @@ export function isUniverseError(error: unknown): error is UniverseError {
 
 export function wrapSupabaseError(error: unknown, fallbackCode: UniverseErrorCode = 'DATABASE_ERROR'): UniverseError {
   if (isUniverseError(error)) return error
-  const message = error instanceof Error ? error.message : String(error)
+  const message =
+    error instanceof Error
+      ? error.message
+      : error && typeof error === 'object'
+        ? [
+            (error as { message?: unknown }).message,
+            (error as { details?: unknown }).details,
+            (error as { hint?: unknown }).hint,
+            (error as { code?: unknown }).code,
+          ]
+            .filter(Boolean)
+            .map(String)
+            .join(' | ') || JSON.stringify(error)
+        : String(error)
   return new UniverseError(fallbackCode, message, error)
 }
 

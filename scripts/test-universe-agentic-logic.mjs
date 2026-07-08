@@ -16,6 +16,8 @@ import {
   agenticResultsToCsv,
 } from '../src/lib/universe/agentic-ui.ts'
 import { buildNoPixelRomaQuery } from '../src/lib/universe/query-builder.ts'
+import { buildGraphQueryPlan } from '../src/lib/universe/graph-reasoning.ts'
+import { EMPTY_COMMERCIAL_INTENT } from '../src/lib/signal-intent/commercial-intent.ts'
 
 assert.equal(labelParseSource('heuristic'), 'Interpretazione rapida')
 assert.equal(labelParseSource('unknown_xyz'), 'unknown_xyz')
@@ -90,5 +92,31 @@ console.log('✓ buildGraphRankEvidence')
 assert.equal(readGraphRankFactors({ graph_rank_factors: { freshness: 5 } })?.freshness, 5)
 assert.equal(readGraphRankFactors({}), null)
 console.log('✓ readGraphRankFactors')
+
+const supplierPlan = buildGraphQueryPlan({ ...EMPTY_COMMERCIAL_INTENT, original_query: 'fornitori di Acme Srl' })
+assert.equal(supplierPlan.hops.length, 1)
+assert.equal(supplierPlan.hops[0].relationship_type, 'sells_to')
+assert.equal(supplierPlan.hops[0].direction, 'incoming')
+assert.equal(supplierPlan.hops[0].target_filters.name_contains, 'Acme Srl')
+console.log('✓ buildGraphQueryPlan supplier')
+
+const customerPlan = buildGraphQueryPlan({ ...EMPTY_COMMERCIAL_INTENT, original_query: 'clienti di Beta Spa' })
+assert.equal(customerPlan.hops.length, 1)
+assert.equal(customerPlan.hops[0].relationship_type, 'has_customer')
+assert.equal(customerPlan.hops[0].direction, 'outgoing')
+assert.equal(customerPlan.hops[0].target_filters.name_contains, 'Beta Spa')
+console.log('✓ buildGraphQueryPlan customer')
+
+const competitorPlan = buildGraphQueryPlan({
+  ...EMPTY_COMMERCIAL_INTENT,
+  original_query: 'competitor dei clienti di Gamma Srl',
+})
+assert.equal(competitorPlan.hops.length, 2)
+assert.equal(competitorPlan.hops[0].relationship_type, 'has_customer')
+assert.equal(competitorPlan.hops[0].direction, 'outgoing')
+assert.equal(competitorPlan.hops[0].target_filters.name_contains, 'gamma srl')
+assert.equal(competitorPlan.hops[1].relationship_type, 'competes_with')
+assert.equal(competitorPlan.hops[1].direction, 'any')
+console.log('✓ buildGraphQueryPlan multi-hop competitor')
 
 console.log('\n[test-universe-agentic-logic] OK')

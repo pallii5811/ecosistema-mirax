@@ -82,7 +82,7 @@ export default function DashboardShell() {
           target={streamingProgress.target}
           message={
             isScraping
-              ? 'Discovery in corso — i lead restano in lista mentre arrivano audit e contatti.'
+              ? loadingMessage || 'Discovery in corso — i lead restano in lista mentre arrivano audit e contatti.'
               : undefined
           }
         />

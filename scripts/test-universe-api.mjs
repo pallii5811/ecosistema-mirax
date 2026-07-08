@@ -22,17 +22,21 @@ for (const [name, path] of Object.entries(routes)) {
   if (name === 'reconcile') {
     assert.ok(content.includes('getEntityByCanonicalId'), 'reconcile deve confrontare entità')
     assert.ok(content.includes('ingestMiraxLead'), 'reconcile deve supportare backfill')
+    assert.ok(content.includes('SUPABASE_SERVICE_ROLE_KEY'), 'reconcile usa service role')
   } else if (name === 'agentic') {
     assert.ok(content.includes('parseSignalIntent'), 'agentic deve parsare intent')
     assert.ok(content.includes('executeAgenticUniverseSearch'), 'agentic deve eseguire query')
     assert.ok(content.includes('signal_intent'), 'agentic deve restituire signal_intent')
+    assert.ok(content.includes('createClient'), 'agentic deve usare client autenticato per la ricerca')
   } else if (name === 'timeline') {
     assert.ok(content.includes('getTimeline'), 'timeline deve usare getTimeline')
+    assert.ok(content.includes('createClient'), 'timeline deve usare client autenticato')
   } else if (name === 'resolve') {
     assert.ok(content.includes('normalizeDomain'), 'resolve deve normalizzare dominio')
     assert.ok(content.includes('getEntityByCanonicalId'), 'resolve deve cercare per canonical_id')
+    assert.ok(content.includes('createClient'), 'resolve deve usare client autenticato')
   } else {
-    assert.ok(content.includes('createServiceRoleClient'), `${name} usa service role`)
+    assert.ok(content.includes('createClient'), `${name} deve usare client autenticato`)
   }
   console.log(`✓ ${name}`)
 }
