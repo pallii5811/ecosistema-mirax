@@ -710,8 +710,8 @@ export function normalizeMiraxQueryPlan(
   let required_signals = normalizeSignals(asStringArray(raw.required_signals))
   if (inferredHypothesis) {
     sector = 'PMI B2B con team commerciale in espansione'
-    location = /\b(italia|italian[ei])\b/i.test(originalQuery) ? 'Italia' : location
-    required_signals = normalizeSignals(['hiring'])
+    location = 'Italia'
+    required_signals = normalizeSignals(['hiring', 'expansion'])
   }
   const technical_filters =
     raw.technical_filters && typeof raw.technical_filters === 'object' && !Array.isArray(raw.technical_filters)
@@ -795,8 +795,8 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
 
   if (commercial_hypothesis) {
     sector = 'PMI B2B con team commerciale in espansione'
-    location = /\b(italia|italian[ei])\b/i.test(query) ? 'Italia' : ''
-    required_signals = normalizeSignals(['hiring'])
+    location = 'Italia'
+    required_signals = normalizeSignals(['hiring', 'expansion'])
   }
 
   if (!sector && (_heuristicLooksAbstract(query) || economicSignals.length > 0)) {
@@ -868,7 +868,7 @@ async function callOpenAiQueryPlan(query: string): Promise<RawToolPlan | null> {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) return null
 
-  const model = process.env.UQE_OPENAI_MODEL || process.env.SEMANTIC_OPENAI_MODEL || 'gpt-4o-mini'
+  const model = process.env.UQE_OPENAI_MODEL || process.env.SEMANTIC_OPENAI_MODEL || 'gpt-5.5'
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',

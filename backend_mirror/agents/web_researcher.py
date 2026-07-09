@@ -19,7 +19,9 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger("web_researcher")
 
 DEFAULT_MAX_QUERIES = 7
+DISCOVERY_MAX_QUERIES = int(os.getenv("AGENTIC_DISCOVERY_MAX_QUERIES", "12") or "12")
 DEFAULT_MAX_URLS_PER_QUERY = 25
+DISCOVERY_MAX_URLS_PER_QUERY = int(os.getenv("AGENTIC_DISCOVERY_MAX_URLS_PER_QUERY", "60") or "60")
 DEFAULT_MAX_TEXT_CHARS = 5000
 DEFAULT_PAGE_TIMEOUT_MS = 25_000
 DEFAULT_NAV_TIMEOUT_MS = 20_000
@@ -130,6 +132,25 @@ def _finalize_search_queries(queries: List[str], *, max_queries: int = DEFAULT_M
     return out
 
 
+def _is_sales_intelligence_seller_query(plan: Dict[str, Any]) -> bool:
+    """True when the user sells lead-gen/sales-intelligence software/services."""
+    hypothesis = plan.get("commercial_hypothesis") if isinstance(plan.get("commercial_hypothesis"), dict) else {}
+    blob = " ".join(
+        str(value or "")
+        for value in (
+            plan.get("original_query"),
+            plan.get("query"),
+            hypothesis.get("offer"),
+            hypothesis.get("target_profile"),
+            " ".join(str(v) for v in hypothesis.get("buying_signals") or []),
+        )
+    ).lower()
+    return bool(
+        re.search(r"\b(lead\s*generation|leadgen|sales intelligence|prospecting|outbound|pipeline)\b", blob)
+        and re.search(r"\b(vendere|vendo|software|servizio|piattaforma|tool)\b", blob)
+    )
+
+
 def _queries_for_discovery_round(
     queries: List[str],
     plan: Dict[str, Any],
@@ -146,11 +167,18 @@ def _queries_for_discovery_round(
         return base
 
     current_year = datetime.now(timezone.utc).year
+    is_sales_hiring = _is_sales_intelligence_seller_query(plan)
     suffixes = (
         f'({current_year} OR {current_year - 1} OR "ultimo anno")',
-        '("comunicato stampa" OR newsroom OR notizie)',
-        '(provincia OR regione OR Italia)',
-        '(filetype:pdf OR intitle:news OR intitle:careers)',
+        '("lavora con noi" OR careers OR "posizioni aperte")'
+        if is_sales_hiring
+        else '("comunicato stampa" OR newsroom OR notizie)',
+        '("sales" OR commerciale OR outbound OR prospecting)'
+        if is_sales_hiring
+        else '(provincia OR regione OR Italia)',
+        '(intitle:careers OR intitle:jobs OR "join us")'
+        if is_sales_hiring
+        else '(filetype:pdf OR intitle:news OR intitle:careers)',
     )
     suffix = suffixes[(round_idx - 2) % len(suffixes)]
     cycle = (round_idx - 2) // len(suffixes)
@@ -167,7 +195,7 @@ def _signal_boolean_queries(plan: Dict[str, Any]) -> List[str]:
     """Query Boolean mirate al required_signal (USE)."""
     signals_raw = plan.get("required_signals") or []
     sig_set = {str(s).lower().strip().replace("-", "_") for s in signals_raw}
-    sector = _plan_str(plan, "sector") or "PMI"
+    sector = _plan_str(plan, "sector") or "piccole medie imprese italiane"
     location = _plan_str(plan, "location") or "Italia"
     original = _plan_str(plan, "original_query")
     orig_low = original.lower()
@@ -189,15 +217,30 @@ def _signal_boolean_queries(plan: Dict[str, Any]) -> List[str]:
         if hypothesis_roles:
             queries.append(
                 '(site:indeed.it OR site:infojobs.it) '
-                '("SDR" OR "BDR" OR "Inside Sales") (outbound OR prospecting) Italia'
+                f'("SDR" OR "BDR" OR "Inside Sales") (outbound OR prospecting) {location}'
             )
             queries.append(
                 '("Sales Development Representative" OR "Business Developer") '
-                '(pipeline OR "new business" OR "sviluppo nuovi clienti") Italia'
+                f'(pipeline OR "new business" OR "sviluppo nuovi clienti") {location}'
             )
             queries.append(
                 'site:.it (careers OR "lavora con noi") '
                 '(SDR OR BDR OR "Business Developer")'
+            )
+            queries.append(
+                f'("Sales Account" OR "Account Executive") ("new business" OR outbound OR prospecting) {location}'
+            )
+            queries.append(
+                f'("Business Development Representative" OR BDR) ("pipeline" OR prospecting) {location}'
+            )
+            queries.append(
+                f'("Inside Sales" OR "Sales Development") ("lavora con noi" OR careers) {location}'
+            )
+            queries.append(
+                f'site:linkedin.com/jobs ("SDR" OR "Business Developer" OR "Sales Account") {location}'
+            )
+            queries.append(
+                f'("Junior Sales" OR "Sales Specialist") (outbound OR "sviluppo commerciale") {location}'
             )
         else:
             queries.append(f'site:indeed.it OR site:infojobs.it "{role}" Italia')
@@ -255,7 +298,7 @@ def _source_plan_queries(plan: Dict[str, Any]) -> List[str]:
             if lane_context.lower() not in query.lower():
                 query = f"{query} {lane_context}"
             queries.append(query)
-            if len(queries) >= DEFAULT_MAX_QUERIES:
+            if len(queries) >= DISCOVERY_MAX_QUERIES:
                 return queries
     return queries
 
@@ -280,19 +323,21 @@ def _heuristic_search_queries(plan: Dict[str, Any]) -> List[str]:
         if index < len(source_queries):
             queries.append(source_queries[index])
 
-    if re.search(r"\b(python|programmatore|developer|sviluppat\w*|software)\b", orig_low):
+    seller_sales_intel = _is_sales_intelligence_seller_query(plan)
+
+    if re.search(r"\b(python|programmatore|developer|sviluppat\w*)\b", orig_low):
         queries.extend([
             f'site:indeed.it OR site:infojobs.it "sviluppatore Python" {location}',
-            f'PMI {location} lavora con noi sviluppatore backend',
+            f'piccole medie imprese {location} lavora con noi sviluppatore backend -pmi.com',
         ])
-    elif re.search(r"\b(commercialist|ragioniere|contabil|potenziali clienti|vendere)\b", orig_low):
+    elif not seller_sales_intel and re.search(r"\b(commercialist|ragioniere|contabil|potenziali clienti|vendere)\b", orig_low):
         queries.extend([
             f'"nuova apertura" OR "costituzione società" {location}',
             f'site:startupitalia.eu "round di finanziamento" {location}',
         ])
     elif re.search(r"\b(sono\s+un|freelanc|clienti|potrebbero\s+aver\s+bisogno)\b", orig_low):
         queries.extend([
-            f'PMI {location} in crescita assume {datetime.now(timezone.utc).year} site:.it',
+            f'piccole medie imprese {location} in crescita assume {datetime.now(timezone.utc).year} site:.it -pmi.com',
             f'site:startupitalia.eu funding round {location}',
         ])
     elif not queries:
@@ -304,9 +349,9 @@ def _heuristic_search_queries(plan: Dict[str, Any]) -> List[str]:
         ])
 
     if "hiring" in signals and not any("indeed" in q for q in queries):
-        queries.append(f'site:indeed.it OR site:infojobs.it "{sector or "PMI"}" Italia')
+        queries.append(f'site:indeed.it OR site:infojobs.it "{sector or "piccole medie imprese italiane"}" Italia -pmi.com')
 
-    return _finalize_search_queries(queries)
+    return _finalize_search_queries(queries, max_queries=DISCOVERY_MAX_QUERIES)
 
 
 B2B_SYSTEM_PROMPT = """Sei un Universal Web Researcher B2B evidence-first per MIRAX.
@@ -328,7 +373,7 @@ REGOLE IRON DOME:
 - Ogni query DEVE includere: -site:github.com -site:medium.com
 - NON cercare la professione dell'utente letteralmente — cerca aziende con SEGNALI DI BISOGNO.
 - NON query generiche ("aziende informatica Italia").
-- 5-7 query diverse, operatori Boolean (site:, OR, virgolette).
+- Genera il numero richiesto di query diverse, operatori Boolean (site:, OR, virgolette).
 - Segui source_plan, research_questions ed evidence_policy quando presenti.
 - Per seller intent usa buying_signals e hiring_roles della commercial_hypothesis.
 - Le query devono cercare il FATTO osservabile, non il nome del software venduto.
@@ -350,6 +395,7 @@ class WebResearcher:
         *,
         max_queries: int = DEFAULT_MAX_QUERIES,
         max_urls_per_query: int = DEFAULT_MAX_URLS_PER_QUERY,
+        max_total_urls: Optional[int] = None,
         max_text_chars: int = DEFAULT_MAX_TEXT_CHARS,
         page_timeout_ms: int = DEFAULT_PAGE_TIMEOUT_MS,
         seen_urls: Optional[Set[str]] = None,
@@ -357,8 +403,19 @@ class WebResearcher:
         if not isinstance(plan, dict):
             raise ValueError("plan must be a dict (MiraxQueryPlan)")
         self.plan = plan
-        self.max_queries = max(5, min(max_queries, 7))
-        self.max_urls_per_query = max(15, min(max_urls_per_query, 30))
+        self.max_queries = max(3, min(max_queries, max(3, DISCOVERY_MAX_QUERIES)))
+        self.max_urls_per_query = max(1, min(max_urls_per_query, max(1, DISCOVERY_MAX_URLS_PER_QUERY)))
+        if max_total_urls is None:
+            try:
+                raw_total = int(plan.get("_max_total_urls") or 0)
+                max_total_urls = raw_total if raw_total > 0 else None
+            except (TypeError, ValueError):
+                max_total_urls = None
+        self.max_total_urls = (
+            max(1, int(max_total_urls))
+            if max_total_urls is not None
+            else self.max_urls_per_query * self.max_queries
+        )
         self.max_text_chars = max_text_chars
         self.page_timeout_ms = page_timeout_ms
         self.seen_urls = seen_urls if seen_urls is not None else set()
@@ -507,6 +564,7 @@ class WebResearcher:
             return results
 
         url_jobs: List[tuple[str, str]] = []
+        url_job_limit = max(1, min(self.max_total_urls, self.max_urls_per_query * self.max_queries))
         for q in queries:
             try:
                 found = await self._discover_urls_for_query(q)
@@ -516,8 +574,12 @@ class WebResearcher:
                         continue
                     seen_urls.add(key)
                     url_jobs.append((u, q))
+                    if len(url_jobs) >= url_job_limit:
+                        break
             except Exception as exc:
                 logger.warning("search failed query=%r: %s", q[:80], exc)
+            if len(url_jobs) >= url_job_limit:
+                break
 
         if not url_jobs:
             logger.info("no URLs discovered from search")
@@ -576,6 +638,7 @@ class WebResearcher:
             return
 
         url_jobs: List[tuple[str, str]] = []
+        url_job_limit = max(1, min(self.max_total_urls, self.max_urls_per_query * self.max_queries))
         for q in queries:
             try:
                 found = await self._discover_urls_for_query(q)
@@ -585,11 +648,11 @@ class WebResearcher:
                         continue
                     seen_urls.add(key)
                     url_jobs.append((u, q))
-                    if len(url_jobs) >= self.max_urls_per_query * self.max_queries:
+                    if len(url_jobs) >= url_job_limit:
                         break
             except Exception as exc:
                 logger.warning("search failed query=%r: %s", q[:80], exc)
-            if len(url_jobs) >= self.max_urls_per_query * self.max_queries:
+            if len(url_jobs) >= url_job_limit:
                 break
 
         if not url_jobs:
@@ -605,35 +668,62 @@ class WebResearcher:
             return
 
         try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
-                        "--disable-dev-shm-usage",
-                    ],
-                )
-                context = await browser.new_context(user_agent=USER_AGENT, locale="it-IT")
-                sem = asyncio.Semaphore(self.scrape_workers)
+            playwright = await async_playwright().start()
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                ],
+            )
+            context = await browser.new_context(user_agent=USER_AGENT, locale="it-IT")
+            sem = asyncio.Semaphore(self.scrape_workers)
+            tasks: List[asyncio.Task[Optional[Dict[str, str]]]] = []
 
-                async def _scrape_job(url: str, query_source: str) -> Optional[Dict[str, str]]:
-                    async with sem:
-                        page = await context.new_page()
-                        try:
-                            text = await self._scrape_url(page, url)
-                            if not text:
-                                return None
-                            return {"url": url, "raw_text": text, "query_source": query_source}
-                        finally:
-                            await page.close()
+            async def _scrape_job(url: str, query_source: str) -> Optional[Dict[str, str]]:
+                async with sem:
+                    page = await context.new_page()
+                    try:
+                        text = await self._scrape_url(page, url)
+                        if not text:
+                            return None
+                        return {"url": url, "raw_text": text, "query_source": query_source}
+                    finally:
+                        await page.close()
 
-                tasks = [asyncio.create_task(_scrape_job(url, source)) for url, source in url_jobs]
+            tasks = [asyncio.create_task(_scrape_job(url, source)) for url, source in url_jobs]
+            try:
                 for task in asyncio.as_completed(tasks):
                     item = await task
                     if item:
                         yield item
-                await browser.close()
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                if tasks:
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.gather(*tasks, return_exceptions=True),
+                            timeout=5.0,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "playwright scrape stream cleanup timed out; continuing after target reached"
+                        )
+                try:
+                    await asyncio.wait_for(context.close(), timeout=5.0)
+                except Exception as exc:
+                    logger.warning("playwright context close failed: %s", exc)
+                try:
+                    await asyncio.wait_for(browser.close(), timeout=5.0)
+                except Exception as exc:
+                    logger.warning("playwright browser close failed: %s", exc)
+                try:
+                    await asyncio.wait_for(playwright.stop(), timeout=5.0)
+                except Exception as exc:
+                    logger.warning("playwright stop failed: %s", exc)
         except Exception as exc:
             logger.warning("playwright scrape stream failed: %s", exc)
 
@@ -725,19 +815,19 @@ async def _call_openai_search_queries(plan: Dict[str, Any], max_queries: int) ->
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return []
-    model = os.getenv("UQE_OPENAI_MODEL") or os.getenv("SEMANTIC_OPENAI_MODEL") or "gpt-4o-mini"
+    model = os.getenv("UQE_OPENAI_MODEL") or os.getenv("SEMANTIC_OPENAI_MODEL") or "gpt-5.5"
     tool_schema = {
         "type": "function",
         "function": {
             "name": "submit_search_queries",
-            "description": "Invia 5-7 query B2B mirate su PMI italiane.",
+            "description": "Invia query B2B mirate su fonti osservabili, coerenti col target richiesto.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "queries": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "minItems": 5,
+                        "minItems": min(5, max_queries),
                         "maxItems": max_queries,
                     }
                 },
@@ -753,7 +843,7 @@ async def _call_openai_search_queries(plan: Dict[str, Any], max_queries: int) ->
                 json={
                     "model": model,
                     "temperature": 0,
-                    "max_tokens": 600,
+                    "max_tokens": max(600, min(1400, max_queries * 120)),
                     "messages": [
                         {"role": "system", "content": B2B_SYSTEM_PROMPT},
                         {"role": "user", "content": _llm_prompt(plan, max_queries)},
@@ -785,14 +875,14 @@ async def _call_anthropic_search_queries(plan: Dict[str, Any], max_queries: int)
     model = os.getenv("UQE_ANTHROPIC_MODEL") or os.getenv("SEMANTIC_MODEL") or "claude-sonnet-4-20250514"
     tool = {
         "name": "submit_search_queries",
-        "description": "Invia 5-7 query B2B mirate su PMI italiane.",
+        "description": "Invia query B2B mirate su fonti osservabili, coerenti col target richiesto.",
         "input_schema": {
             "type": "object",
             "properties": {
                     "queries": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "minItems": 5,
+                        "minItems": min(5, max_queries),
                         "maxItems": max_queries,
                     }
             },
@@ -810,7 +900,7 @@ async def _call_anthropic_search_queries(plan: Dict[str, Any], max_queries: int)
                 },
                 json={
                     "model": model,
-                    "max_tokens": 600,
+                    "max_tokens": max(600, min(1400, max_queries * 120)),
                     "temperature": 0,
                     "system": B2B_SYSTEM_PROMPT,
                     "tools": [tool],

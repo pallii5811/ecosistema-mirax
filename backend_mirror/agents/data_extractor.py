@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
@@ -29,8 +30,16 @@ CHUNK_OVERLAP = 400
 MIN_CHUNK_CHARS = 120
 TOOL_NAME = "submit_extracted_companies"
 
+_OPENAI_EXTRACT_LOCK: Optional[asyncio.Lock] = None
+_OPENAI_EXTRACT_LOCK_LOOP: Optional[asyncio.AbstractEventLoop] = None
+_OPENAI_EXTRACT_NEXT_AT = 0.0
+_OPENAI_EXTRACT_DISABLED_UNTIL = 0.0
+
 _SIGNAL_PREFILTERS = {
-    "hiring": ("assume", "assunzion", "lavora con noi", "careers", "job", "posizione aperta"),
+    "hiring": (
+        "assume", "assunzion", "lavora con noi", "careers", "career", "job", "posizione aperta",
+        "ricerca", "cerca", "seeking", "seeks", "hiring",
+    ),
     "funding": ("funding", "finanziament", "round", "seed", "serie a", "investimento"),
     "funding_received": ("funding", "finanziament", "round", "seed", "serie a", "investimento"),
     "tender_won": ("aggiudic", "appalto", "gara", "cig", "tender"),
@@ -50,6 +59,62 @@ def page_has_required_signal(text: str, plan: Dict[str, Any]) -> bool:
         return True
     lower = (text or "").lower()
     return any(keyword in lower for signal in known for keyword in _SIGNAL_PREFILTERS[signal])
+
+
+def _env_float(name: str, default: float, min_value: float, max_value: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(min_value, min(max_value, value))
+
+
+def _env_int(name: str, default: int, min_value: int, max_value: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(min_value, min(max_value, value))
+
+
+def _env_bool(name: str, default: bool = True) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+
+def _get_openai_extract_lock() -> asyncio.Lock:
+    global _OPENAI_EXTRACT_LOCK, _OPENAI_EXTRACT_LOCK_LOOP
+    loop = asyncio.get_running_loop()
+    if _OPENAI_EXTRACT_LOCK is None or _OPENAI_EXTRACT_LOCK_LOOP is not loop:
+        _OPENAI_EXTRACT_LOCK = asyncio.Lock()
+        _OPENAI_EXTRACT_LOCK_LOOP = loop
+    return _OPENAI_EXTRACT_LOCK
+
+
+async def _respect_openai_extract_rate_limit(extra_delay: float = 0.0) -> None:
+    """Process-local throttle: evita raffiche di chunk che causano 429."""
+    global _OPENAI_EXTRACT_NEXT_AT
+    min_interval = _env_float("OPENAI_EXTRACT_MIN_INTERVAL_SEC", 1.35, 0.0, 10.0)
+    lock = _get_openai_extract_lock()
+    async with lock:
+        now = time.monotonic()
+        wait_for = max(0.0, _OPENAI_EXTRACT_NEXT_AT - now)
+        if wait_for > 0:
+            await asyncio.sleep(wait_for)
+        _OPENAI_EXTRACT_NEXT_AT = time.monotonic() + min_interval + max(0.0, extra_delay)
+
+
+def _openai_extract_circuit_open() -> bool:
+    return time.monotonic() < _OPENAI_EXTRACT_DISABLED_UNTIL
+
+
+def _openai_extract_open_circuit() -> None:
+    global _OPENAI_EXTRACT_DISABLED_UNTIL
+    cooldown = _env_float("OPENAI_EXTRACT_CIRCUIT_BREAKER_SEC", 90.0, 0.0, 600.0)
+    if cooldown > 0:
+        _OPENAI_EXTRACT_DISABLED_UNTIL = max(_OPENAI_EXTRACT_DISABLED_UNTIL, time.monotonic() + cooldown)
 
 SYSTEM_PROMPT = """Sei un Senior Lead Generator B2B per il mercato italiano. Il tuo obiettivo è trovare Piccole e Medie Imprese (PMI) private.
 
@@ -200,6 +265,205 @@ def _sanitize_company(raw: Dict[str, Any], source_url: str) -> Optional[Dict[str
         "pitch_angle": str(raw.get("pitch_angle") or "").strip()[:300],
         "source_url": source_url,
     }
+
+
+def _source_origin(source_url: str) -> str:
+    try:
+        parsed = urlparse(source_url)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}/"
+    except Exception:
+        pass
+    return ""
+
+
+def _company_name_from_domain(source_url: str) -> str:
+    try:
+        host = (urlparse(source_url).netloc or "").lower()
+        host = host.removeprefix("www.")
+        label = host.split(".", 1)[0]
+        label = re.sub(r"[-_]+", " ", label).strip()
+        if not label:
+            return ""
+        known = {
+            "crm": "CRM",
+            "erp": "ERP",
+            "srl": "Srl",
+            "spa": "Spa",
+            "it": "IT",
+        }
+        return " ".join(known.get(part, part.capitalize()) for part in label.split())
+    except Exception:
+        return ""
+
+
+def _is_official_source_url(source_url: str) -> bool:
+    if not source_url or is_extraction_blocked_source(source_url):
+        return False
+    domain = _normalize_domain(source_url)
+    if not domain or _is_blacklisted_domain(domain):
+        return False
+    label = domain.split(".", 1)[0]
+    if label.startswith(("lavora", "lavoracon", "jobs", "careers")):
+        return False
+    return not is_source_portal_url(source_url)
+
+
+def _sales_hiring_keywords(plan: Dict[str, Any]) -> List[str]:
+    roles: List[str] = []
+    hypothesis = plan.get("commercial_hypothesis")
+    if isinstance(hypothesis, dict):
+        roles.extend(str(value) for value in hypothesis.get("hiring_roles") or [])
+    roles.extend(
+        [
+            "business development representative",
+            "sales development representative",
+            "inside sales",
+            "business developer",
+            "sales account",
+            "account executive",
+            "lead generation",
+            "outbound",
+            "prospecting",
+            "sviluppo commerciale",
+            "sviluppo nuovi clienti",
+            "commerciale",
+            "venditore",
+        ]
+    )
+    out: List[str] = []
+    seen: Set[str] = set()
+    for role in roles:
+        normalized = str(role or "").lower().strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            out.append(normalized)
+    return out
+
+
+def _evidence_snippet(text: str, keywords: List[str]) -> str:
+    compact = re.sub(r"\s+", " ", text or "").strip()
+    if not compact:
+        return ""
+    lower = compact.lower()
+    anchors = [keyword for keyword in keywords if keyword and keyword in lower]
+    if not anchors:
+        anchors = [keyword for keyword in ("assume", "ricerca", "cerca", "hiring", "careers", "lavora con noi", "job") if keyword in lower]
+    if not anchors:
+        return ""
+    idx = min(lower.find(anchor) for anchor in anchors if lower.find(anchor) >= 0)
+    start = max(0, idx - 140)
+    end = min(len(compact), idx + 220)
+    snippet = compact[start:end].strip(" .,-;:")
+    return snippet[:300]
+
+
+_BAD_HEURISTIC_NAMES = {
+    "business development representative",
+    "sales development representative",
+    "inside sales",
+    "business developer",
+    "sales account",
+    "account executive",
+    "software development",
+    "lead generation",
+    "lavoro",
+    "jobs",
+    "careers",
+    "lavora con noi",
+}
+
+
+def _candidate_company_names_from_text(text: str) -> List[str]:
+    compact = re.sub(r"\s+", " ", text or "")
+    patterns = [
+        r"\b([A-Z][A-Za-z0-9À-ÖØ-öø-ÿ&.'’\-\s]{2,80}?)\s+(?:is seeking|seeks|sta cercando|è alla ricerca|ricerca|cerca|assume)\b",
+        r"\b(?:presso|azienda|company|employer|società)\s*[:\-]?\s*([A-Z][A-Za-z0-9À-ÖØ-öø-ÿ&.'’\-\s]{2,80})",
+        r"\b([A-Z][A-Za-z0-9À-ÖØ-öø-ÿ&.'’\-\s]{2,70}?\s+(?:S\.?r\.?l\.?|Srl|S\.?p\.?A\.?|Spa|Group|Italia))\b",
+    ]
+    names: List[str] = []
+    seen: Set[str] = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, compact):
+            name = re.sub(r"\s+", " ", match.group(1)).strip(" .,-;:")
+            name_l = name.lower()
+            if len(name) < 3 or len(name) > 90:
+                continue
+            if any(bad in name_l for bad in _BAD_HEURISTIC_NAMES):
+                continue
+            if _is_blacklisted_name(name):
+                continue
+            if name_l not in seen:
+                seen.add(name_l)
+                names.append(name)
+            if len(names) >= 5:
+                return names
+    return names
+
+
+def _heuristic_extract_companies(
+    plan: Dict[str, Any],
+    source_url: str,
+    chunk: str,
+) -> List[Dict[str, Any]]:
+    """
+    Fallback zero-cost quando l'LLM è rate-limitato/non disponibile.
+    Estrae solo se trova un segnale esplicito nel testo; se la fonte è il sito
+    ufficiale usa quel dominio, altrimenti lascia il dominio da risolvere.
+    """
+    if not page_has_required_signal(chunk, plan):
+        return []
+
+    signals = [str(value).lower().strip() for value in plan.get("required_signals") or []]
+    hypothesis = plan.get("commercial_hypothesis") if isinstance(plan.get("commercial_hypothesis"), dict) else {}
+    has_explicit_sales_roles = bool(hypothesis.get("hiring_roles"))
+    matched: List[str] = []
+    lower = (chunk or "").lower()
+    if not signals or "hiring" in signals:
+        keywords = _sales_hiring_keywords(plan)
+        has_sales_role = any(keyword in lower for keyword in keywords)
+        has_generic_hiring = any(term in lower for term in ("assume", "ricerca", "cerca", "hiring", "careers", "lavora con noi"))
+        if has_sales_role or (has_generic_hiring and not has_explicit_sales_roles):
+            matched.append("hiring")
+    for signal in signals:
+        if signal and signal not in matched and signal in _SIGNAL_PREFILTERS:
+            if signal == "hiring" and has_explicit_sales_roles:
+                continue
+            if any(keyword in lower for keyword in _SIGNAL_PREFILTERS[signal]):
+                matched.append(signal)
+    if signals and not matched:
+        return []
+
+    evidence = _evidence_snippet(chunk, _sales_hiring_keywords(plan))
+    if not evidence:
+        return []
+
+    candidates: List[Dict[str, Any]] = []
+    if _is_official_source_url(source_url):
+        name = _company_name_from_domain(source_url)
+        website = _source_origin(source_url)
+        if name and website:
+            candidates.append({"name": name, "website": website})
+    else:
+        for name in _candidate_company_names_from_text(chunk):
+            candidates.append({"name": name, "website": ""})
+
+    out: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        out.append(
+            {
+                "name": candidate["name"],
+                "website": candidate["website"],
+                "evidence": evidence,
+                "matched_signals": matched or signals,
+                "hiring_title": "",
+                "signal_detail": evidence,
+                "why_now": evidence,
+                "pitch_angle": "Lead generation/Sales Intelligence: il segnale indica bisogno di pipeline commerciale o recruiting sales.",
+                "source_url": source_url,
+            }
+        )
+    return out[:3]
 
 
 def _parse_companies_payload(data: Any) -> List[Dict[str, Any]]:
@@ -495,52 +759,78 @@ async def _call_openai_extract(
     chunk_total: int,
     telemetry: Optional[Dict[str, int]] = None,
 ) -> Optional[List[Dict[str, Any]]]:
+    if not _env_bool("OPENAI_EXTRACT_ENABLED", True):
+        logger.info("OpenAI extract disabled by OPENAI_EXTRACT_ENABLED — using fallback extractor")
+        return None
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return None
-    if telemetry is not None:
-        telemetry["openai_requests"] = telemetry.get("openai_requests", 0) + 1
+    if _openai_extract_circuit_open():
+        logger.info("OpenAI extract circuit open — using fallback extractor")
+        return None
 
-    model = os.getenv("UQE_OPENAI_MODEL") or os.getenv("SEMANTIC_OPENAI_MODEL") or "gpt-4o-mini"
+    model = os.getenv("UQE_OPENAI_MODEL") or os.getenv("SEMANTIC_OPENAI_MODEL") or "gpt-5.5"
     user_content = _extraction_user_prompt(plan, source_url, chunk, chunk_index, chunk_total)
+    max_retries = _env_int("OPENAI_EXTRACT_MAX_RETRIES", 1, 0, 4)
 
-    try:
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            res = await client.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": model,
-                    "temperature": 0,
-                    "max_tokens": 1500,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_content},
-                    ],
-                    "tools": [_tool_schema_openai()],
-                    "tool_choice": {"type": "function", "function": {"name": TOOL_NAME}},
-                },
-            )
-        if res.status_code != 200:
+    for attempt in range(max_retries + 1):
+        try:
+            await _respect_openai_extract_rate_limit()
+            if telemetry is not None:
+                telemetry["openai_requests"] = telemetry.get("openai_requests", 0) + 1
+            async with httpx.AsyncClient(timeout=35.0) as client:
+                res = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": model,
+                        "temperature": 0,
+                        "max_tokens": 1500,
+                        "messages": [
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": user_content},
+                        ],
+                        "tools": [_tool_schema_openai()],
+                        "tool_choice": {"type": "function", "function": {"name": TOOL_NAME}},
+                    },
+                )
+            if res.status_code == 429:
+                if telemetry is not None:
+                    telemetry["provider_failures"] = telemetry.get("provider_failures", 0) + 1
+                retry_after = 0.0
+                try:
+                    retry_after = float(res.headers.get("retry-after") or 0)
+                except (TypeError, ValueError):
+                    retry_after = 0.0
+                sleep_for = max(retry_after, min(18.0, 2.5 * (attempt + 1)))
+                logger.warning("OpenAI extract HTTP 429 attempt=%s/%s backoff=%.1fs", attempt + 1, max_retries + 1, sleep_for)
+                if attempt < max_retries:
+                    await asyncio.sleep(sleep_for)
+                    continue
+                _openai_extract_open_circuit()
+                return None
+            if res.status_code != 200:
+                if telemetry is not None:
+                    telemetry["provider_failures"] = telemetry.get("provider_failures", 0) + 1
+                logger.warning("OpenAI extract HTTP %s", res.status_code)
+                return None
+            data = res.json()
+            if telemetry is not None:
+                usage = data.get("usage") or {}
+                telemetry["input_tokens"] = telemetry.get("input_tokens", 0) + int(usage.get("prompt_tokens") or 0)
+                telemetry["output_tokens"] = telemetry.get("output_tokens", 0) + int(usage.get("completion_tokens") or 0)
+            for tc in (data.get("choices") or [{}])[0].get("message", {}).get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                if fn.get("name") != TOOL_NAME:
+                    continue
+                args = json.loads(fn.get("arguments") or "{}")
+                return _parse_companies_payload(args)
+            return []
+        except Exception as exc:
             if telemetry is not None:
                 telemetry["provider_failures"] = telemetry.get("provider_failures", 0) + 1
-            logger.warning("OpenAI extract HTTP %s", res.status_code)
+            logger.warning("OpenAI extract failed: %s", exc)
             return None
-        data = res.json()
-        if telemetry is not None:
-            usage = data.get("usage") or {}
-            telemetry["input_tokens"] = telemetry.get("input_tokens", 0) + int(usage.get("prompt_tokens") or 0)
-            telemetry["output_tokens"] = telemetry.get("output_tokens", 0) + int(usage.get("completion_tokens") or 0)
-        for tc in (data.get("choices") or [{}])[0].get("message", {}).get("tool_calls") or []:
-            fn = tc.get("function") or {}
-            if fn.get("name") != TOOL_NAME:
-                continue
-            args = json.loads(fn.get("arguments") or "{}")
-            return _parse_companies_payload(args)
-    except Exception as exc:
-        if telemetry is not None:
-            telemetry["provider_failures"] = telemetry.get("provider_failures", 0) + 1
-        logger.warning("OpenAI extract failed: %s", exc)
     return None
 
 
@@ -629,6 +919,10 @@ async def _llm_extract_companies(
             plan, source_url, chunk, chunk_index, chunk_total, telemetry=telemetry
         )
     if companies is None:
+        companies = _heuristic_extract_companies(plan, source_url, chunk)
+    elif not companies and _is_official_source_url(source_url):
+        companies = _heuristic_extract_companies(plan, source_url, chunk)
+    if not companies:
         return []
     await asyncio.to_thread(cache.set, cache_key, companies)
     return companies
