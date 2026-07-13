@@ -157,6 +157,11 @@ export const NL_SIGNAL_PATTERNS: Array<{
     patterns: [
       /\b(?:assunz\w*|assum\w*|personale|ruoli?)\s+(?:operativ\w*|di\s+cantiere|di\s+produzione|di\s+magazzino)\b/i,
       /\b(?:operai|autisti|magazzinieri|installatori|manutentori|tecnici)\s+(?:ricercati|cercati|in\s+assunzione)\b/i,
+      /\b(?:assunz\w*|assum\w*|assumono|assumendo)\s+(?:di\s+)?operai\b/i,
+      /\bassunz\w*\s+di\s+operai\b/i,
+      /\baddetti\s+operativ\w*\b/i,
+      /\bcrescita\s+del\s+personale\s+operativ\w*\b/i,
+      /\bcantier\w*\b/i,
     ],
   },
   {
@@ -188,7 +193,7 @@ export const NL_SIGNAL_PATTERNS: Array<{
   {
     requirement: 'tender_won',
     patterns: [
-      /\b(gara|appalto|aggiudicat\w*|vincit\w*|bando\s+pubblic\w*|lavori\s+pubblici|pubblica\s+amministrazione|anac|mepa)\b/i,
+      /\b(gara|appalt\w*|aggiudicat\w*|vincit\w*|bando\s+pubblic\w*|lavori\s+pubblici|pubblica\s+amministrazione|anac|mepa|ted)\b/i,
     ],
   },
   {
@@ -282,6 +287,8 @@ export const NL_SIGNAL_PATTERNS: Array<{
       /\b(?:impiant\w*|process\w*\s+industrial\w*)[^.;]{0,80}\b(?:espansion\w*|ampliament\w*|aument\w*)\b/i,
       /\b(?:sed[ei]|impiant\w*|stabiliment\w*|capannon\w*|capacit[aà])\s+(?:produttiv\w*|industrial\w*)[^.;]{0,60}\b(?:espansion\w*|ampliament\w*|crescita|aument\w*)\b/i,
       /\b(?:espansion\w*|ampliament\w*|aument\w*)[^.;]{0,60}\b(?:produzion\w*|capacit[aà]\s+produttiv\w*|stabiliment\w*|impiant\w*)\b/i,
+      /\b(?:aprendo|aprendono|aprono|apertura\s+(?:di\s+)?|inaugurano|inaugura|inaugurazione\s+di\s+)\s*nuov\w+\s+stabiliment\w*\b/i,
+      /\bproduzion\w*\b/i,
     ],
   },
   {

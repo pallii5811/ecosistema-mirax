@@ -1,0 +1,28 @@
+{
+  "fixture_version": "1.0.0",
+  "vertical": "workplace_safety",
+  "run_id": "0dd16cf5-f1a9-4e0f-a0f7-49f4a0240285",
+  "canary_id": "8e0297c9-8724-45c0-8a9f-5de17ff48be8",
+  "search_id": "6ecc8d72-db71-4b06-a215-9cc0fb92f303",
+  "release_id": "2026-07-13-complete-signal-lane-coverage-v5-11",
+  "query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane con cantieri, produzione, appalti o crescita del personale operativo",
+  "required_signals": ["contract_awarded", "hiring_operational", "production_expansion"],
+  "covered_signals_before_fix": ["hiring_operational"],
+  "missing_signals_before_fix": ["contract_awarded", "production_expansion"],
+  "seller_offer_before_fix": "consulenza sicurezza sul lavoro",
+  "explicit_seller_offer": "consulenza sicurezza sul lavoro",
+  "root_causes": [
+    "required signals were taken only from partial compiler output instead of every explicit query term",
+    "catalog patterns missed plural appalti, operai in assunzione and nuovi stabilimenti",
+    "preferred source projection stopped after the first compatible signal instead of covering every manifest-required signal",
+    "municipal_register supported plant permits in ontology but not in source registry signals_supported"
+  ],
+  "expected_fix": "every manifest-required signal has a compatible executable source lane with non-empty query templates and per-signal evidence projection",
+  "stop_reason": "incomplete_required_signal_coverage_before_source_execution",
+  "source_queries_executed": 0,
+  "candidates_produced": 0,
+  "customer_publications": 0,
+  "customer_charges": 0,
+  "compiler_cost_eur": 0.05,
+  "quarantined": true
+}

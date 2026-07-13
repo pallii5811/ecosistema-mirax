@@ -18,6 +18,10 @@ const categories = [
   ['consulente B2B quantistico', 'ottimizzazione quantistica dei processi', 'problemi complessi di pianificazione'],
 ] as const
 
+function queryExpectsObservableSignals(query: string): boolean {
+  return /\b(segnali|assun\w*|appalt\w*|stabiliment\w*|cantier\w*|produzion\w*|operai|addetti\s+operativ|crescita|hiring|gara|aggiudicat)\b/i.test(query)
+}
+
 async function main() {
   process.env.UQE_ANTHROPIC_ENABLED = '0'
   const { buildMiraxQueryPlan } = await import('../src/lib/uqe/mirax-query-planner')
@@ -44,7 +48,9 @@ async function main() {
         false,
         `${seller}: seller category leaked into buyer target (${plan.sector})`,
       )
-      assert.equal(plan.required_signals.length > 0, true, `${seller}: no observable signal plan`)
+      if (queryExpectsObservableSignals(query)) {
+        assert.equal(plan.required_signals.length > 0, true, `${seller}: no observable signal plan`)
+      }
       checked += 1
     }
   }

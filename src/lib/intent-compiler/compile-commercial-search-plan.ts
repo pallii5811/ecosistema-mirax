@@ -371,16 +371,25 @@ function normalizePayload(
     ? [...canonicalAllowed]
     : ['official_company_website']
   sourcePolicy.allowed_source_classes = allowedSourceClasses
-  const preferredSourceClasses = [
+  const preferredFromPayload = [
     ...new Set(
       (Array.isArray(sourcePolicy.preferred_source_classes) ? sourcePolicy.preferred_source_classes : [])
         .map(String)
         .filter((source) => canonicalAllowed.has(source)),
     ),
   ]
-  sourcePolicy.preferred_source_classes = preferredSourceClasses.length > 0
-    ? preferredSourceClasses
-    : allowedSourceClasses.slice(0, 3)
+  const preferredPerSignal: string[] = []
+  for (const signal of requiredSignals) {
+    const definition = getSignalDefinition(signal)
+    const preferred = definition?.preferredSourceClasses.find((source) => canonicalAllowed.has(source))
+      || definition?.likelySourceClasses.find((source) => canonicalAllowed.has(source))
+    if (preferred && !preferredPerSignal.includes(preferred)) preferredPerSignal.push(preferred)
+  }
+  sourcePolicy.preferred_source_classes = preferredPerSignal.length > 0
+    ? preferredPerSignal
+    : preferredFromPayload.length > 0
+      ? preferredFromPayload
+      : allowedSourceClasses.slice(0, 3)
   sourcePolicy.primary_source_required_for = canonicalSignals(sourcePolicy.primary_source_required_for)
   sourcePolicy.minimum_independent_sources = Math.max(
     1, Math.min(5, Math.trunc(Number(sourcePolicy.minimum_independent_sources) || 1)),

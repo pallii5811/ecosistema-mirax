@@ -1,8 +1,76 @@
 # MIRAX Master Implementation State
 
-Ultimo aggiornamento verificato: 2026-07-13 15:45 (Europe/Rome)
+Ultimo aggiornamento verificato: 2026-07-13 17:10 (Europe/Rome)
 
-## Checkpoint corrente — ispezione read-only + safety snapshot v5.11 — 2026-07-13 15:45 +02:00
+## Checkpoint corrente — workplace_safety fix + registry alignment + staging deploy — 2026-07-13 17:10 +02:00
+
+### Commit
+
+- **Hash**: `b7446e4`
+- **Message**: `fix: complete workplace safety source coverage without signal overfitting`
+- **Branch**: `safety/mirax-v5-11-codex-checkpoint`
+
+### Soluzione `municipal_register` / `production_expansion` (Opzione A)
+
+`municipal_register` resta in ontology come fonte SUAP/albo pretorio per ampliamenti produttivi.  
+**Registry**: aggiunto `production_expansion` a `signals_supported` con rischi `permit_application_not_started` e `authority_notice_not_company_action`.  
+Strategia eseguibile già presente: `access_method=web_search_and_document`, lane `regulatory`, template SUAP/albo pretorio in `canonicalLaneQueryTemplates`.
+
+### Fix anti-overfitting `workplace_safety`
+
+- **Nessun floor seller** che impone sempre i 3 segnali del manifest
+- Segnali `required` solo se espliciti nella query (pattern NL + compiler floor)
+- Playbook `workplace_safety` senza `signals` hardcoded; lane filtrate per segnali richiesti
+- Lane procurement usa solo `public_procurement_portal` (ID registry canonico)
+- Test negativi/metamorfici A–E in `scripts/test-workplace-safety-source-coverage.ts`
+- Contratto ontology/registry in `scripts/test-source-ontology-registry-contract.ts`
+
+### Quarantena `workplace_safety` (invariata)
+
+| Entità | ID | Stato |
+|---|---|---|
+| Search | `6ecc8d72-db71-4b06-a215-9cc0fb92f303` | `cancelled` |
+| Canary | `8e0297c9-8724-45c0-8a9f-5de17ff48be8` | `quarantined` |
+| Eval run | `0dd16cf5-f1a9-4e0f-a0f7-49f4a0240285` | `failed` |
+| Compiler cost | €0,05 settled | conservato |
+| Script | `scripts/quarantine-workplace-safety-orphan.mjs` | mutazioni solo con `CONFIRM_WORKPLACE_SAFETY_QUARANTINE` |
+
+### Test offline (exit 0, fail-fast)
+
+- `test:commercial-contract` — 24/24 + ontology/registry + normalization + security + pytest 9/9
+- `test-routing-guards.ts` — 13/13
+- `test-shadow-manifest-signal-floor.ts` — 10/10
+- `test-high-value-compiler-matrix.ts` — 10/10
+- `test-workplace-safety-source-coverage.ts` — A–E PASS
+- `test-commercial-query-matrix.ts` — 137/137
+- pytest cost/contract — 35/35
+- `tsc --noEmit` — PASS
+- `npm run preflight:canary` — PASS (post-deploy staging `20260713_171207`)
+
+### Staging deploy
+
+- **Release**: `20260713_171207`
+- **Health** (`:8002/health`): `{"status":"ok","service":"mirax-worker-api","release_id":"20260713_171207"}`
+- **Rollback**: `/home/worker/backups/staging-pre-20260713_171207` (release precedente `20260713_124614`)
+- **Contract hash match** (local ↔ staging): `source-registry.v1.json` `d00f4c79…`, `signal-ontology.v1.json` `c84eedf4…`
+- **Live**: **non modificato** (`20260712_201500_v4` su `:8001`)
+- **Worker staging**: `inactive` + `disabled`; API staging `active`
+- **`MIRAX_SEARCH_DISABLED`**: invariato su Vercel production (`true`); brake server-side invariato
+
+### Prossimo comando sicuro
+
+**NON** avviare worker generali, prepare pagato o fonti. Dopo verifica staging:
+
+```bash
+npm run test:commercial-contract && npx tsx scripts/test-workplace-safety-source-coverage.ts
+node scripts/quarantine-workplace-safety-orphan.mjs --verify-only
+```
+
+Solo con autorizzazione esplicita: **nuovo** prepare `workplace_safety` su search **nuova** (compiler singolo, cap €0,125).
+
+---
+
+## Checkpoint precedente — workplace_safety quarantinato + fix offline piano — 2026-07-13 16:10 +02:00
 
 ### Release e runtime verificati live (read-only)
 

@@ -63,7 +63,7 @@
     },
     {
       "id": "municipal_register",
-      "signals_supported": ["new_location", "tender_won", "contract_awarded", "certification", "regulatory_change"],
+      "signals_supported": ["new_location", "production_expansion", "tender_won", "contract_awarded", "certification", "regulatory_change"],
       "trust_level": 0.95,
       "primary": true,
       "cost_eur_per_operation": 0,
@@ -72,7 +72,7 @@
       "freshness_days": 14,
       "rate_limit_per_minute": 20,
       "extraction_method": "document_extract",
-      "false_positive_risks": ["issuer_as_buyer"],
+      "false_positive_risks": ["issuer_as_buyer", "permit_application_not_started", "authority_notice_not_company_action"],
       "corroboration_required": false,
       "publishable_alone": true
     },

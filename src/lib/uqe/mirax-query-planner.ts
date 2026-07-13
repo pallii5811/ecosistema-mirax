@@ -27,6 +27,7 @@ import {
 } from '@/lib/intent-compiler/compile-commercial-search-plan'
 import type { CommercialSearchPlan } from '@/lib/contracts/commercial-search-plan'
 import { sourceSupportsSignal } from '@/lib/source-intelligence/registry'
+import { canonicalSignalId, getSignalDefinition } from '@/lib/signal-ontology/ontology'
 
 const MIRAX_QUERY_PLAN_TOOL_NAME = 'submit_mirax_query_plan'
 
@@ -304,6 +305,7 @@ function normalizeSourcePlan(raw: unknown, query: string, signals: string[]): Uq
 type SellerPlaybookKind =
   | 'sales_intelligence'
   | 'accounting_tax'
+  | 'workplace_safety'
   | 'insurance_broker'
   | 'web_agency'
   | 'software_development'
@@ -312,7 +314,7 @@ type SellerPlaybookKind =
 type SellerPlaybookDefaults = {
   sector: string
   location: string
-  signals: string[]
+  signals?: string[]
   summary: string
   research_questions: string[]
   reasoning: string
@@ -327,6 +329,9 @@ function classifySellerPlaybook(query: string, hypothesis?: UqeCommercialHypothe
   }
   if (/\b(commercialist\w*|ragionier\w*|contabil\w*|fiscal\w*|paghe|payroll|dichiarazion\w*\s+fiscal|bilancio|consulenza\s+fiscale)\b/i.test(blob)) {
     return 'accounting_tax'
+  }
+  if (/\b(?:consulente|consulenza|vendo|offro|fornisco|servizi(?:\s+di)?)\b[^.]{0,100}\b(?:sicurezza\s+(?:sul\s+)?lavoro|hse)\b/i.test(blob)) {
+    return 'workplace_safety'
   }
   if (/\b(broker\s+assicur|assicurazion|polizze?|rc\s*(?:auto|professionale|aziendale)?|rischi?\s+aziendal|welfare|infortuni|responsabilit\w*)\b/i.test(blob)) {
     return 'insurance_broker'
@@ -390,6 +395,18 @@ function sellerPlaybookDefaults(
       reasoning: 'Seller-to-buyer reasoning: broker assicurativo -> rischio/asset/personale/compliance -> segnali hiring, appalti, espansione e nuove attivita.',
     }
   }
+  if (kind === 'workplace_safety') {
+    return {
+      sector: 'PMI con segnali operativi, appalti o espansione produttiva coerenti con la richiesta',
+      location,
+      summary: 'Clienti caldi per consulenza sicurezza sul lavoro: imprese con attivita operative verificabili nella query.',
+      research_questions: [
+        'Quali PMI mostrano il segnale commerciale esplicitamente richiesto nella query?',
+        'Quali evidenze pubbliche rendono attuale il bisogno HSE per il buyer?',
+      ],
+      reasoning: 'Seller-to-buyer reasoning: consulente sicurezza sul lavoro -> rischio operativo verificabile solo sui segnali esplicitamente richiesti.',
+    }
+  }
   if (kind === 'web_agency') {
     return {
       sector: 'PMI locali con sito migliorabile, tracking assente o domanda digitale attiva',
@@ -432,6 +449,14 @@ function sellerPlaybookDefaults(
   }
 }
 
+function laneCoversRequiredSignals(
+  expectedEvidence: string[],
+  requiredSignals: string[],
+): boolean {
+  const required = new Set(requiredSignals.map((signal) => canonicalSignalId(signal) || signal))
+  return expectedEvidence.some((item) => required.has(canonicalSignalId(item) || item))
+}
+
 function sourcePlanForCommercialHypothesis(
   raw: unknown,
   query: string,
@@ -440,7 +465,7 @@ function sourcePlanForCommercialHypothesis(
 ): UqeSourcePlanItem[] {
   const defaults = sellerPlaybookDefaults(query, hypothesis)
   const kind = classifySellerPlaybook(query, hypothesis)
-  if (!hypothesis || !defaults || !kind) return normalizeSourcePlan(raw, query, signals)
+  if (!defaults || !kind) return normalizeSourcePlan(raw, query, signals)
   // Seller-intent lanes are closed and deterministic. An LLM may improve the
   // wording, but cannot spend the SERP budget on registries/PDFs unrelated to
   // the observable commercial pain.
@@ -577,6 +602,54 @@ function sourcePlanForCommercialHypothesis(
         llm_required: true,
       },
     ]
+  }
+  if (kind === 'workplace_safety') {
+    const lanes = [
+      {
+        lane: 'public_procurement',
+        source_types: ['public_procurement_portal'],
+        query_templates: [
+          '("aggiudicazione appalto" OR "appalto aggiudicato" OR "contratto affidato") ("Srl" OR "impresa") {location}',
+          '(site:anac.gov.it OR site:ted.europa.eu) ("aggiudicazione" OR "aggiudicatario" OR "stazione appaltante") {location}',
+        ],
+        expected_evidence: ['contract_awarded'],
+        priority: 100,
+        llm_required: false,
+      },
+      {
+        lane: 'job_market',
+        source_types: ['company_careers', 'job_board'],
+        query_templates: [
+          'site:.it ("lavora con noi" OR careers OR "posizioni aperte") (operai OR autisti OR magazzinieri OR installatori OR manutentori OR tecnici) ("Srl" OR "PMI") {location}',
+          '(site:indeed.it OR site:infojobs.it OR site:linkedin.com/jobs) (operai OR autisti OR magazzinieri OR installatori OR manutentori OR tecnici) ("Srl" OR "PMI") {location}',
+        ],
+        expected_evidence: ['hiring_operational'],
+        priority: 95,
+        llm_required: false,
+      },
+      {
+        lane: 'news',
+        source_types: ['recognized_local_news', 'industry_publication', 'official_company_website'],
+        query_templates: [
+          '("ampliamento produttivo" OR "nuovo stabilimento" OR "nuova linea produttiva" OR "ampliamento impianto") ("Srl" OR "PMI") {location}',
+          'site:.it ("comunicato stampa" OR newsroom) ("ampliamento" OR "nuovo stabilimento" OR "nuova linea produttiva") {location}',
+        ],
+        expected_evidence: ['production_expansion'],
+        priority: 90,
+        llm_required: true,
+      },
+      {
+        lane: 'regulatory',
+        source_types: ['municipal_register'],
+        query_templates: [
+          '("SUAP" OR "autorizzazione unica" OR "albo pretorio" OR "ampliamento stabilimento" OR "ampliamento impianto") (impresa OR "Srl") {location}',
+        ],
+        expected_evidence: ['production_expansion'],
+        priority: 82,
+        llm_required: false,
+      },
+    ] as UqeSourcePlanItem[]
+    return lanes.filter((lane) => laneCoversRequiredSignals(lane.expected_evidence, signals))
   }
   if (kind === 'software_development') {
     return [
@@ -999,7 +1072,7 @@ function inferEconomicIntentSignals(query: string): string[] {
   }
 
   const sellerDefaults = sellerPlaybookDefaults(query)
-  if (sellerDefaults) {
+  if (sellerDefaults?.signals?.length) {
     for (const signal of sellerDefaults.signals) add(signal)
     return out
   }
@@ -1230,7 +1303,9 @@ export function normalizeMiraxQueryPlan(
   if (inferredDefaults) {
     sector = inferredDefaults.sector
     location = inferredDefaults.location
-    required_signals = normalizeSignals(inferredDefaults.signals)
+    if (inferredDefaults.signals?.length) {
+      required_signals = normalizeSignals(inferredDefaults.signals)
+    }
   }
   const technical_filters =
     raw.technical_filters && typeof raw.technical_filters === 'object' && !Array.isArray(raw.technical_filters)
@@ -1316,7 +1391,9 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
   if (sellerDefaults) {
     sector = sellerDefaults.sector
     location = sellerDefaults.location
-    required_signals = normalizeSignals(sellerDefaults.signals)
+    if (sellerDefaults.signals?.length) {
+      required_signals = normalizeSignals(sellerDefaults.signals)
+    }
   }
 
   if (!sector && (_heuristicLooksAbstract(query) || economicSignals.length > 0)) {
@@ -1478,6 +1555,14 @@ function canonicalLaneQueryTemplates(
   return [`${plan.raw_query} ("Srl" OR "PMI") {location}`]
 }
 
+function primaryPreferredSourceForSignal(signal: string, preferredSources: string[]): string | null {
+  const definition = getSignalDefinition(signal)
+  if (!definition) return null
+  return definition.preferredSourceClasses.find((source) => preferredSources.includes(source))
+    || definition.likelySourceClasses.find((source) => preferredSources.includes(source))
+    || null
+}
+
 export function canonicalPlanToLegacy(plan: CommercialSearchPlan): MiraxQueryPlan {
   const requiredSignals = normalizeSignals(plan.signal_policy.required_signals)
   const preferredCompatible = plan.source_policy.preferred_source_classes.filter((source) =>
@@ -1518,9 +1603,10 @@ export function canonicalPlanToLegacy(plan: CommercialSearchPlan): MiraxQueryPla
       (item) => `Quale evidenza osservabile dimostra ${item.triggering_events.join(' / ')} per ${item.buyer_problem}?`,
     ),
     source_plan: [...grouped.entries()].map(([lane, sourceTypes], index) => {
-      const laneSignals = requiredSignals.filter((signal) =>
-        sourceTypes.some((source) => sourceSupportsSignal(source, signal)),
-      )
+      const laneSignals = requiredSignals.filter((signal) => {
+        const primary = primaryPreferredSourceForSignal(signal, preferredSources)
+        return Boolean(primary && sourceTypes.includes(primary))
+      })
       return {
         lane,
         source_types: sourceTypes,

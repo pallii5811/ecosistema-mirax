@@ -113,4 +113,4 @@ assert.equal(strictSellerSchema.$defs.signalPolicy.properties.required_signals.m
 const directBuyerSchema = compilerToolSchema('architetti a Genova') as any
 assert.equal(directBuyerSchema.$defs.seller.properties.products_or_services.minItems, undefined)
 
-console.log('Commercial plan + source registry + high-value semantics: 23/23 OK')
+console.log('Commercial plan + source registry + high-value semantics: 24/24 OK')
