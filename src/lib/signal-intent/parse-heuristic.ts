@@ -221,16 +221,22 @@ function buildSummary(spec: SignalIntentSpec): string | null {
 export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec {
   const q = (userQuery || '').trim()
   if (!q) return { ...EMPTY_SIGNAL_INTENT }
+  const buyerVerb = q.match(/\b(?:trovami|cercami|trova|cerca)\b/i)
+  const sellerFramed = /^\s*(?:sono\b|vendo\b|offro\b|fornisco\b)/i.test(q)
+  const signalQ = sellerFramed && buyerVerb?.index !== undefined ? q.slice(buyerVerb.index) : q
 
   const required_signals: MiraxSignalRequirement[] = []
   const excluded_signals: MiraxSignalRequirement[] = []
   for (const entry of NL_SIGNAL_PATTERNS) {
     for (const pattern of entry.patterns) {
-      const m = q.match(pattern)
+      const m = signalQ.match(pattern)
       if (!m) continue
       const matchStart = m.index ?? 0
-      const context = q.slice(Math.max(0, matchStart - 40), matchStart).toLowerCase()
-      const negated = /\b(non|senza|manca|nessun|no)\b/.test(context)
+      // Negation is local to the matched signal. A broad look-behind made
+      // unrelated exclusions such as "PMI non famose con sito debole" negate
+      // the website signal because the word "non" happened to be nearby.
+      const context = signalQ.slice(Math.max(0, matchStart - 32), matchStart).toLowerCase()
+      const negated = /\b(?:non|senza|no|nessun[aoei]?|manca(?:no)?)\s+(?:(?:hanno|ha|avere|con|il|lo|la|i|gli|le|un|una)\s+){0,2}$/.test(context)
       if (negated) {
         excluded_signals.push(entry.requirement)
       } else {
@@ -238,23 +244,29 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
       }
     }
   }
+  if (required_signals.some((signal) => [
+    'hiring_operational', 'hiring_technology', 'hiring_sales', 'hiring_marketing',
+  ].includes(signal))) {
+    const genericHiring = required_signals.indexOf('hiring')
+    if (genericHiring >= 0) required_signals.splice(genericHiring, 1)
+  }
 
   const hiring_roles: string[] = []
-  const buyerMarketingSpend = isBuyerMarketingInvestmentQuery(q)
+  const buyerMarketingSpend = isBuyerMarketingInvestmentQuery(signalQ)
   for (const entry of HIRING_ROLE_PATTERNS) {
     if (buyerMarketingSpend && entry.role === 'marketing') continue
-    if (entry.patterns.some((p) => p.test(q))) hiring_roles.push(entry.role)
+    if (entry.patterns.some((p) => p.test(signalQ))) hiring_roles.push(entry.role)
   }
   // Freelancer / "chi ha bisogno di me" → cerca aziende che assumono quel ruolo
   const FREELANCER_NEED =
-    /\b(sono\s+(?:un|una)\b|potrebbero\s+aver\s+bisogno|che\s+potrebbero\s+aver\s+bisogno|freelanc\w*|libero\s+profession\w*)\b/i
-  if (hiring_roles.length && FREELANCER_NEED.test(q) && !required_signals.includes('hiring')) {
+    /\b(sono\s+(?:un['’]?\s*|una\s+)|potrebbero\s+aver\s+bisogno|che\s+potrebbero\s+aver\s+bisogno|freelanc\w*|libero\s+profession\w*)/i
+  if (!buyerVerb && hiring_roles.length && FREELANCER_NEED.test(q) && !required_signals.includes('hiring')) {
     required_signals.push('hiring')
   }
 
   const sector_keywords: string[] = []
   for (const entry of SECTOR_KEYWORD_EXTRACTORS) {
-    if (entry.patterns.some((p) => p.test(q))) sector_keywords.push(entry.keyword)
+    if (entry.patterns.some((p) => p.test(signalQ))) sector_keywords.push(entry.keyword)
   }
 
   let category: string | null = null
@@ -262,13 +274,13 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
   const stopWords = 'che|con|per|da|di|a|ad|in|su|e|o'
   const nonGeoWords =
     /^(marketing|software|digitale|crescita|espansione|vendite|cloud|crm|seo|ads|pubblicit\w*|assunzion\w*|hiring|personale)$/i
-  const locMatch = q.match(
+  const locMatch = signalQ.match(
     new RegExp(`\\b(?:a|ad|in)\\s+([A-Za-zÀ-ÿ]+)(?:\\s+(?!${stopWords}\\b)[A-Za-zÀ-ÿ]+)?\\b`, 'i'),
   )
   if (locMatch) {
     const candidate = locMatch[1].trim()
     const investInMarketing =
-      /\binvest\w*\s+in\s+marketing\b/i.test(q) && candidate.toLowerCase() === 'marketing'
+      /\binvest\w*\s+in\s+marketing\b/i.test(signalQ) && candidate.toLowerCase() === 'marketing'
     if (!investInMarketing && !nonGeoWords.test(candidate)) {
       location = candidate
     }
@@ -283,27 +295,28 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
     [/\b(ristorant\w*|ristorazion\w*)\b/i, 'ristoranti'],
   ]
   for (const [re, label] of catPatterns) {
-    if (re.test(q)) {
+    if (re.test(signalQ)) {
       category = label
       break
     }
   }
 
   if (sector_keywords.length && !required_signals.includes('sector_investment')) {
-    const investIntent = /\b(invest|investono|investimento|investe\s+in|puntano\s+su|puntare\s+su)\b/i.test(q)
-    if (investIntent) {
+    const investIntent = /\b(invest|investono|investimento|investe\s+in|puntano\s+su|puntare\s+su)\b/i.test(signalQ)
+    const vagueDigitalInvestment = /\binvestimento\s+digitale\b|\binvest\w*\s+(?:nel|in)\s+digitale\b/i.test(signalQ)
+    if (investIntent && !(vagueDigitalInvestment && sector_keywords.every((keyword) => keyword === 'software'))) {
       required_signals.push('sector_investment')
     }
   }
 
   const crm_keywords: string[] = []
   for (const entry of CRM_KEYWORD_EXTRACTORS) {
-    if (entry.patterns.some((p) => p.test(q))) crm_keywords.push(entry.crm)
+    if (entry.patterns.some((p) => p.test(signalQ))) crm_keywords.push(entry.crm)
   }
 
   const require_crm_change =
-    (/\b(cambiat\w*|migrat\w*|nuovo\s+crm|switch|sostituit\w*)\b/i.test(q) &&
-      (/\bcrm\b/i.test(q) || crm_keywords.length > 0)) ||
+    (/\b(cambiat\w*|migrat\w*|nuovo\s+crm|switch|sostituit\w*)\b/i.test(signalQ) &&
+      (/\bcrm\b/i.test(signalQ) || crm_keywords.length > 0)) ||
     required_signals.includes('crm_change')
 
   if (require_crm_change && !required_signals.includes('crm_change')) {
@@ -317,7 +330,7 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
     if (idx >= 0 && crm_keywords.length === 0) required_signals.splice(idx, 1)
   }
 
-  let time_window_days = extractTimeWindowDays(q)
+  let time_window_days = extractTimeWindowDays(signalQ)
   if (required_signals.includes('tender_won') && !time_window_days) {
     time_window_days = 365
   }
@@ -325,9 +338,9 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
     time_window_days = 30
   }
 
-  const technical_filters = extractTechnicalFilters(q)
-  const social_filters = extractSocialFilters(q)
-  const business_filters = extractBusinessFilters(q)
+  const technical_filters = extractTechnicalFilters(signalQ)
+  const social_filters = extractSocialFilters(signalQ)
+  const business_filters = extractBusinessFilters(signalQ)
 
   const spec: SignalIntentSpec = {
     required_signals: unique(required_signals),

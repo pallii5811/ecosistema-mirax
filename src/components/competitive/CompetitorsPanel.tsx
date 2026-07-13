@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Bell, Loader2, Plus, Trash2, Users } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { useToast } from '@/components/ToastProvider'
 
 export type CompetitorRow = {
   id: string
@@ -33,6 +34,7 @@ type Props = {
 }
 
 export function CompetitorsPanel({ onChanged }: Props) {
+  const { success: toastSuccess, error: toastError } = useToast()
   const [competitors, setCompetitors] = useState<CompetitorRow[]>([])
   const [alerts, setAlerts] = useState<AlertRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -77,8 +79,9 @@ export function CompetitorsPanel({ onChanged }: Props) {
       setWebsite('')
       await load()
       onChanged?.()
+      toastSuccess('Competitor aggiunto', 'Market Map')
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Errore')
+      toastError(e instanceof Error ? e.message : 'Errore', 'Market Map')
     } finally {
       setBusy(false)
     }

@@ -4,32 +4,40 @@
 set -euo pipefail
 
 HOST="${1:-root@116.203.137.39}"
-REMOTE_DIR="/home/worker/app/backend-staging"
-REMOTE_SCRAPER_DIR="/home/worker/app/backend"
-SERVICE="mirax-worker-staging"
-API_SERVICE="mirax-audit-api-staging"
 LOCAL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+WORKSPACE_DIR="$(cd "${LOCAL_DIR}/.." && pwd)"
 TS="$(date +%Y%m%d_%H%M%S)"
-BACKUP_DIR="/home/worker/backups/staging_${TS}"
+ARCHIVE="${TMPDIR:-/tmp}/mirax-staging-${TS}.tar.gz"
+REMOTE_ARCHIVE="/tmp/mirax-staging-${TS}.tar.gz"
+ACTIVATOR="${LOCAL_DIR}/scripts/activate-staging-release.sh"
 
-echo "==> MIRAX deploy STAGING -> ${HOST}:${REMOTE_DIR}"
+echo "==> MIRAX deploy STAGING atomico -> ${HOST}"
 
-ssh "$HOST" "mkdir -p ${BACKUP_DIR} && cp -a ${REMOTE_DIR}/*.py ${BACKUP_DIR}/ 2>/dev/null || true"
-echo "    Backup remoto: ${BACKUP_DIR}"
+cleanup() { rm -f "${ARCHIVE}"; }
+trap cleanup EXIT
 
-rsync -avz --delete \
-  --exclude '.env' \
-  --exclude '__pycache__' \
-  --exclude '*.pyc' \
-  "${LOCAL_DIR}/" "${HOST}:${REMOTE_DIR}/"
+tar czf "${ARCHIVE}" \
+  --exclude='.env*' \
+  --exclude='__pycache__' \
+  --exclude='*.pyc' \
+  --exclude='data' \
+  --exclude='*.db*' \
+  -C "${LOCAL_DIR}" . \
+  -C "${WORKSPACE_DIR}" contracts
 
-# Lo worker staging importa `backend.main` da /home/worker/app/backend/ — allinea scraper.
-for f in main.py audit_engine.py; do
-  rsync -avz "${LOCAL_DIR}/${f}" "${HOST}:${REMOTE_SCRAPER_DIR}/${f}"
-done
-ssh "$HOST" "chown -R worker:worker ${REMOTE_DIR} ${REMOTE_SCRAPER_DIR}/main.py ${REMOTE_SCRAPER_DIR}/audit_engine.py 2>/dev/null || true"
+if tar tzf "${ARCHIVE}" | grep -Eq '(^|/)\.env|__pycache__|\.db($|[-.])'; then
+  echo "Archivio non sicuro: contiene runtime state o segreti" >&2
+  exit 1
+fi
 
-ssh "$HOST" "systemctl restart ${API_SERVICE} && systemctl restart ${SERVICE}"
-ssh "$HOST" "sudo systemctl is-active ${SERVICE} && curl -sf http://127.0.0.1:8002/health | head -c 200"
+tar tzf "${ARCHIVE}" | grep -q '^contracts/fixtures/commercial-search-plan.valid.json$'
+tar tzf "${ARCHIVE}" | grep -q '^contracts/signal-ontology.v1.json$'
+tar tzf "${ARCHIVE}" | grep -q '^contracts/source-registry.v1.json$'
+tar tzf "${ARCHIVE}" | grep -q '^contracts/commercial-search-plan.schema.json$'
 
-echo "==> Deploy staging completato. Log: journalctl -u ${SERVICE} -f"
+scp -o BatchMode=yes -o ConnectTimeout=15 "${ARCHIVE}" "${HOST}:${REMOTE_ARCHIVE}"
+scp -o BatchMode=yes -o ConnectTimeout=15 "${ACTIVATOR}" "${HOST}:/tmp/activate-staging-release.sh"
+ssh -o BatchMode=yes -o ConnectTimeout=15 "${HOST}" \
+  "chmod 700 /tmp/activate-staging-release.sh && /tmp/activate-staging-release.sh '${REMOTE_ARCHIVE}' '${TS}'"
+
+echo "==> Deploy staging completato: release ${TS}"

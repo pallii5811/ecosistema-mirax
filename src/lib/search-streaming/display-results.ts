@@ -6,6 +6,7 @@ import { buildTechFilter, deduplicateResults, hasLeadContactOrWebsite, leadRowKe
 import { hasLeadContact } from '@/lib/search-contact-quality'
 import { isAuditPendingLead } from '@/lib/lead-audit-status'
 import { clampSearchMaxLeads } from '@/lib/search-job-payload'
+import { shouldRejectEnterpriseLead } from '@/lib/lead-enterprise-guard'
 
 export type StreamingBatchOpts = {
   query: string
@@ -54,6 +55,7 @@ export function normalizeStreamingBatch(raw: unknown[], opts: StreamingBatchOpts
     deduplicateResults(Array.isArray(raw) ? raw.map(normalizeLeadFields) : []) as Record<string, unknown>[]
   ).filter((l) => contactGate(l, scraping))
 
+  leads = leads.filter((lead) => !shouldRejectEnterpriseLead(lead, opts.query))
   leads = applyActiveFilters(leads, opts.activeFilters)
   if (techFilter) leads = leads.filter(techFilter)
 

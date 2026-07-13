@@ -24,6 +24,7 @@ from business_events_enrich import (
     _utc_now_iso,
     apply_signals_to_lead,
     detect_hiring_signal,
+    detect_hiring_via_website,
     detect_registry_signals_api,
     detect_registry_signals_from_lead,
     detect_signals_from_audit,
@@ -40,17 +41,20 @@ SIGNAL_REGISTRY: Dict[str, Dict[str, Any]] = {
     "hiring": {
         "sources": [
             {"name": "mirax_audit", "timeout_ms": 500},
-            {"name": "indeed_it", "timeout_ms": 4000},
-            {"name": "infojobs", "timeout_ms": 4000},
+            {"name": "indeed_it", "timeout_ms": 5000},
+            {"name": "infojobs_it", "timeout_ms": 5000},
+            {"name": "google_jobs", "timeout_ms": 6000},
+            {"name": "linkedin_jobs", "timeout_ms": 5000},
+            {"name": "website_careers", "timeout_ms": 8000},
         ],
-        "max_sources_to_try": 3,
+        "max_sources_to_try": 5,
         "parallel": False,
     },
     "tender_won": {
         "sources": [
             {"name": "mirax_audit", "timeout_ms": 500},
-            {"name": "anac_opendata", "timeout_ms": 5000},
-            {"name": "ted_europa", "timeout_ms": 6000},
+            {"name": "anac_opendata", "timeout_ms": 60000},
+            {"name": "ted_europa", "timeout_ms": 10000},
         ],
         "max_sources_to_try": 3,
         "parallel": False,
@@ -78,7 +82,7 @@ SIGNAL_REGISTRY: Dict[str, Dict[str, Any]] = {
     "site_stale": {"sources": [{"name": "mirax_audit", "timeout_ms": 500}], "max_sources_to_try": 1, "parallel": False},
     "google_ads_started": {"sources": [{"name": "mirax_audit", "timeout_ms": 500}], "max_sources_to_try": 1, "parallel": False},
     "meta_ads_started": {"sources": [{"name": "mirax_audit", "timeout_ms": 500}], "max_sources_to_try": 1, "parallel": False},
-    "crm_detected": {"sources": [{"name": "mirax_audit", "timeout_ms": 500}], "max_sources_to_try": 1, "parallel": False},
+    "crm_installed": {"sources": [{"name": "mirax_audit", "timeout_ms": 500}], "max_sources_to_try": 1, "parallel": False},
     "registry_change": {
         "sources": [
             {"name": "mirax_audit", "timeout_ms": 500},
@@ -89,8 +93,44 @@ SIGNAL_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# In-memory snapshot store (production: Supabase website_snapshots)
+# In-memory fallback snapshot store (production: Supabase website_snapshots)
 _WEBSITE_SNAPSHOTS: Dict[str, str] = {}
+
+
+def _snapshot_url_hash(url: str) -> str:
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_snapshot(supabase_client: Any, url_hash: str) -> Optional[str]:
+    if supabase_client is None:
+        return _WEBSITE_SNAPSHOTS.get(url_hash)
+    try:
+        resp = (
+            supabase_client.table("website_snapshots")
+            .select("snapshot_text")
+            .eq("url_hash", url_hash)
+            .maybe_single()
+            .execute()
+        )
+        data = resp.data if resp else None
+        return data.get("snapshot_text") if data else None
+    except Exception as e:
+        print(f"[snapshot] load error: {e}", flush=True)
+        return _WEBSITE_SNAPSHOTS.get(url_hash)
+
+
+def _save_snapshot(supabase_client: Any, url_hash: str, url: str, text: str) -> None:
+    _WEBSITE_SNAPSHOTS[url_hash] = text
+    if supabase_client is None:
+        return
+    try:
+        html_hash = hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+        supabase_client.table("website_snapshots").upsert(
+            {"url_hash": url_hash, "lead_website": url, "url": url, "snapshot_text": text, "html_hash": html_hash},
+            on_conflict="url_hash",
+        ).execute()
+    except Exception as e:
+        print(f"[snapshot] save error: {e}", flush=True)
 
 
 class EnrichmentSource(ABC):
@@ -118,43 +158,62 @@ class IndeedSource(EnrichmentSource):
     async def fetch(self, lead: Dict[str, Any], signal_type: str, location: str = "") -> List[Dict[str, Any]]:
         if signal_type != "hiring":
             return []
-        return await detect_hiring_signal(_lead_name(lead), location)
+        roles = lead.get("_hiring_roles")
+        return await detect_hiring_signal(_lead_name(lead), location, roles=roles)
 
 
 class InfojobsSource(EnrichmentSource):
-    name = "infojobs"
+    name = "infojobs_it"
 
     async def fetch(self, lead: Dict[str, Any], signal_type: str, location: str = "") -> List[Dict[str, Any]]:
         if signal_type != "hiring":
             return []
-        name = _lead_name(lead)
-        if len(name) < 2:
-            return []
-        try:
-            import httpx
+        from hiring_sources import detect_hiring_via_infojobs_it
 
-            q = quote(name)
-            url = f"https://www.infojobs.it/ofertas-trabajo.aspx?keyword={q}"
-            headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
-            async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
-                resp = await client.get(url, headers=headers)
-                if resp.status_code != 200:
-                    return []
-                html = resp.text or ""
-            if name.lower()[:10] not in html.lower() and "offerta" not in html.lower():
-                return []
-            return [
-                _make_signal(
-                    "hiring",
-                    f"Offerte lavoro su InfoJobs — {name[:40]}",
-                    severity="medium",
-                    confidence=65,
-                    evidence=[{"label": "Fonte", "value": "InfoJobs", "source": "infojobs", "url": url}],
-                )
-            ]
-        except Exception as e:
-            print(f"[waterfall] infojobs skip: {e}", flush=True)
+        roles = lead.get("_hiring_roles")
+        return await detect_hiring_via_infojobs_it(_lead_name(lead), location, roles=roles)
+
+
+class GoogleJobsSource(EnrichmentSource):
+    name = "google_jobs"
+
+    async def fetch(self, lead: Dict[str, Any], signal_type: str, location: str = "") -> List[Dict[str, Any]]:
+        if signal_type != "hiring":
             return []
+        from hiring_sources import detect_hiring_via_google_jobs
+
+        roles = lead.get("_hiring_roles")
+        return await detect_hiring_via_google_jobs(_lead_name(lead), location, roles=roles)
+
+
+class LinkedInJobsSource(EnrichmentSource):
+    name = "linkedin_jobs"
+
+    async def fetch(self, lead: Dict[str, Any], signal_type: str, location: str = "") -> List[Dict[str, Any]]:
+        if signal_type != "hiring":
+            return []
+        from hiring_sources import detect_hiring_via_linkedin_jobs
+
+        roles = lead.get("_hiring_roles")
+        return await detect_hiring_via_linkedin_jobs(_lead_name(lead), location, roles=roles)
+
+
+class InfojobsLegacySource(EnrichmentSource):
+    """Alias legacy infojobs → infojobs_it."""
+    name = "infojobs"
+
+    async def fetch(self, lead: Dict[str, Any], signal_type: str, location: str = "") -> List[Dict[str, Any]]:
+        return await InfojobsSource().fetch(lead, signal_type, location)
+
+
+class WebsiteCareersSource(EnrichmentSource):
+    name = "website_careers"
+
+    async def fetch(self, lead: Dict[str, Any], signal_type: str, location: str = "") -> List[Dict[str, Any]]:
+        if signal_type != "hiring":
+            return []
+        roles = lead.get("_hiring_roles")
+        return await detect_hiring_via_website(lead, roles=roles)
 
 
 class ANACSource(EnrichmentSource):
@@ -163,7 +222,7 @@ class ANACSource(EnrichmentSource):
     async def fetch(self, lead: Dict[str, Any], signal_type: str, location: str = "") -> List[Dict[str, Any]]:
         if signal_type != "tender_won":
             return []
-        return await detect_tender_signals(_lead_name(lead))
+        return await detect_tender_signals(_lead_name(lead), cf=_lead_piva(lead))
 
 
 class TEDSource(EnrichmentSource):
@@ -303,6 +362,9 @@ class NewsAPISource(EnrichmentSource):
 class WebsiteDiffSource(EnrichmentSource):
     name = "mirax_diff_engine"
 
+    def __init__(self, supabase_client: Any = None) -> None:
+        self.supabase_client = supabase_client
+
     async def fetch(self, lead: Dict[str, Any], signal_type: str, location: str = "") -> List[Dict[str, Any]]:
         if signal_type not in {"website_changed", "price_change"}:
             return []
@@ -319,9 +381,9 @@ class WebsiteDiffSource(EnrichmentSource):
                     return []
                 html = resp.text or ""
             text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))[:8000]
-            key = hashlib.sha256(url.encode()).hexdigest()[:16]
-            prev = _WEBSITE_SNAPSHOTS.get(key)
-            _WEBSITE_SNAPSHOTS[key] = text
+            key = _snapshot_url_hash(url)
+            prev = _load_snapshot(self.supabase_client, key)
+            _save_snapshot(self.supabase_client, key, url, text)
             if not prev:
                 return []
             ratio = difflib.SequenceMatcher(None, prev[:4000], text[:4000]).ratio()
@@ -349,16 +411,22 @@ class WebsiteDiffSource(EnrichmentSource):
 class WaterfallEnricher:
     """Per ogni segnale, prova fonti in cascata con timeout rigido."""
 
-    def __init__(self) -> None:
+    def __init__(self, supabase_client: Any = None) -> None:
+        self.supabase_client = supabase_client
         self.sources: Dict[str, EnrichmentSource] = {
             "mirax_audit": AuditSource(),
             "indeed_it": IndeedSource(),
-            "infojobs": InfojobsSource(),
+            "infojobs": InfojobsLegacySource(),
+            "infojobs_it": InfojobsSource(),
+            "google_jobs": GoogleJobsSource(),
+            "linkedin_jobs": LinkedInJobsSource(),
+            "website_careers": WebsiteCareersSource(),
+            "company_careers_page": WebsiteCareersSource(),
             "anac_opendata": ANACSource(),
             "ted_europa": TEDSource(),
             "openapi_cciaa": OpenAPISource(),
             "news_api": NewsAPISource(),
-            "mirax_diff_engine": WebsiteDiffSource(),
+            "mirax_diff_engine": WebsiteDiffSource(supabase_client),
         }
         self.monitor = get_health_monitor()
         self.cache = get_universal_cache()
@@ -424,8 +492,12 @@ class WaterfallEnricher:
         required_signals: Optional[List[str]] = None,
         *,
         skip_audit: bool = False,
+        hiring_roles: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         all_signals: List[Dict[str, Any]] = []
+
+        if hiring_roles:
+            lead["_hiring_roles"] = hiring_roles
 
         if not skip_audit:
             audit = await self.sources["mirax_audit"].fetch(lead, "all", location)
@@ -459,8 +531,7 @@ class WaterfallEnricher:
                         break
                 else:
                     print(f"[waterfall] {sig_type} → {src_name} empty, next", flush=True)
-            if not found and sig_type in {"hiring", "tender_won", "registry_change", "funding_received"}:
-                found.append(emergency_mock(sig_type, _lead_name(lead) or "azienda"))
+            # No emergency mocks: only real signals with evidence.
             return found
 
         if external_targets:
@@ -493,10 +564,12 @@ class WaterfallEnricher:
 
 
 _default_enricher: Optional[WaterfallEnricher] = None
+_default_enricher_client: Any = None
 
 
-def get_waterfall_enricher() -> WaterfallEnricher:
-    global _default_enricher
-    if _default_enricher is None:
-        _default_enricher = WaterfallEnricher()
+def get_waterfall_enricher(supabase_client: Any = None) -> WaterfallEnricher:
+    global _default_enricher, _default_enricher_client
+    if _default_enricher is None or _default_enricher_client != supabase_client:
+        _default_enricher = WaterfallEnricher(supabase_client)
+        _default_enricher_client = supabase_client
     return _default_enricher

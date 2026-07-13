@@ -1,0 +1,47 @@
+{
+  "fixture_version": "mirax-v5-systemic-failure-v1",
+  "captured_at": "2026-07-13T01:41:19.194Z",
+  "run_id": "dab2d5dc-88d8-46b2-b0ac-3333837137a9",
+  "canary_id": "9fc485c1-b180-418a-adc3-a54ded6d96ae",
+  "search_id": "3c37b930-4227-484b-b56c-28bd98991d71",
+  "classification": "SYSTEMIC",
+  "paid_stage": "intent_compilation_only",
+  "source_queries_executed": 0,
+  "customer_publications": 0,
+  "cost_eur": 0.05,
+  "query": "Sono un commercialista: trovami PMI italiane con crescita, nuova apertura o cambi societari recenti e bisogno amministrativo verificabile",
+  "sanitized_failure": {
+    "seller": {
+      "offer_category": null,
+      "offer_description_copied_raw_query": true,
+      "products_or_services": [],
+      "problems_solved": [],
+      "preferred_buyer_roles": []
+    },
+    "required_signals": [
+      "registry_change",
+      "company_formation",
+      "geographic_expansion"
+    ],
+    "triggering_events": [],
+    "buyer_problem_was_generic_placeholder": true,
+    "implied_need_was_generic_placeholder": true,
+    "relevance_to_offer_was_generic_placeholder": true,
+    "allowed_sources": [
+      "official_registry",
+      "official_company_website",
+      "industry_publication",
+      "recognized_local_news"
+    ]
+  },
+  "failed_gate_codes": [
+    "SELLER_OFFER_CATEGORY_MISSING",
+    "SELLER_PRODUCT_MISSING",
+    "SELLER_PROBLEM_MISSING",
+    "BUYER_ROLE_MISSING",
+    "SELLER_DESCRIPTION_COPIES_QUERY",
+    "TRIGGERING_EVENT_MISSING",
+    "GENERIC_COMMERCIAL_HYPOTHESIS"
+  ],
+  "expected_behavior": "Fail closed before any source execution or customer publication."
+}

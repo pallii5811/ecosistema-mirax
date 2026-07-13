@@ -1,6 +1,6 @@
 # MIRAX Ecosistema — Documentazione Completa A → Z
 
-**Versione:** 2026-06-29  
+**Versione:** 2026-07-06  
 **Repo attivo:** `pallii5811/ecosistema-mirax`  
 **Cartella locale:** `WEB APP CKB - Dev`  
 **Deploy app:** https://ecosistema-mirax.vercel.app  
@@ -9,6 +9,7 @@
 
 > **Documento canonico** del progetto ecosistema MIRAX. Spiega in linguaggio chiaro **cosa fa ogni parte**, come comunica col database, e l’architettura tecnica.  
 > Per il dettaglio storico sezione-per-sezione vedi anche `ARCHITETTURA_MIRAX_TECNICA_AZ.md`.  
+> **Brief Universal Query (GLM 5.2 — gap, criticità, piano):** `docs/GLM52_UNIVERSAL_QUERY_MASTER_BRIEF.md`  
 > **Inventario file (646 path):** `docs/MIRAX_FILE_INVENTORY.txt`
 
 ---
@@ -39,6 +40,7 @@
 22. [Roadmap blocchi 0–10 + Universe](#22-roadmap-blocchi-010--universe)
 23. [Glossario](#23-glossario)
 24. [Appendice — migrazioni SQL](#24-appendice--migrazioni-sql)
+25. [Universal Query — stato reale e roadmap (2026-07-06)](#25-universal-query--stato-reale-e-roadmap-2026-07-06)
 
 ---
 
@@ -60,16 +62,30 @@ MIRAX è una **piattaforma B2B italiana** che aiuta agenzie e commerciali a:
 | **Audit** | “Il sito non ha pixel / è lento / ha errori SEO” | `audit_engine.py`, `buyingSignals.ts` |
 | **Azione** | Pitch, email, WhatsApp, pipeline, CRM | `outreach/`, `sequences/`, `nous/`, `pipeline/` |
 
-### MIRAX “Omnivoro”
+### MIRAX “Omnivoro” — cosa significa **oggi** (onesto)
 
-L’utente scrive in italiano naturale (*“imprese edili a Taormina senza pixel”*). Il sistema:
+L’obiettivo prodotto è accettare **query in linguaggio naturale libero**. Lo stato **reale** a luglio 2026:
 
-1. **Interpreta** la richiesta → `parseSignalIntent()` (euristica + Claude/OpenAI)
-2. **Traduce** in parametri di ricerca → categoria, città, filtri tecnici, segnali richiesti
-3. **Scopre** aziende → Discovery territoriale (worker) e/o Knowledge Graph (grafo già arricchito)
+| Capacità | Stato |
+|----------|-------|
+| Settore + città (“edili Roma”) | ✅ Affidabile |
+| Settore + città + audit tech (“senza pixel”) | ✅ Affidabile |
+| Settore + città + hiring + ruolo | 🟡 ~25–35% con evidenza strict |
+| Query venditore (“mi servono clienti per…”) | 🟡 Fix recente; mapping buyer limitato |
+| Funding / investimenti / gare | 🟡 Enrichment spesso incompleto |
+| Relazioni grafo (“fornitori di X”) | ❌ Parziale |
+| **Qualsiasi query immaginabile** | ❌ **No** |
+
+Il flusso attuale:
+
+1. **Interpreta** → `parseCommercialIntent()` + `parseSignalIntentOffline()` + `seller-buyer-inference.ts`
+2. **Traduce** in categoria Maps + città (fallback `Italia`) + segnali
+3. **Scopre** → Discovery (worker) e/o Knowledge Graph
 4. **Audita** ogni sito → motore audit Playwright
-5. **Arricchisce** → Claude batch, Indeed, ANAC, OpenAPI, Apollo…
-6. **Mostra** risultati in tabella con score, badge segnali, colonna intent
+5. **Arricchisce** → waterfall (Indeed, careers, ANAC, Claude…)
+6. **Mostra** risultati — **tutti** i lead con badge viola/giallo/grigio (non nascondere in attesa)
+
+**Documento completo gap + piano GLM 5.2:** `docs/GLM52_UNIVERSAL_QUERY_MASTER_BRIEF.md`
 
 **Regola d’oro:** MIRAX non inventa email o telefoni. Ogni contatto proviene da fonti verificabili (sito, directory, enrichment).
 
@@ -663,7 +679,7 @@ Vedi file esempio:
 |--------|-----------|
 | Supabase | `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` |
 | Backend | `BACKEND_URL` (default 116:8002) |
-| AI | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` |
+| AI | `ANTHROPIC_API_KEY`, `ANTHROPIC_API_KEY` |
 | Billing | `STRIPE_*`, `PAYPAL_*` |
 | Email | `RESEND_API_KEY` |
 | Universe | `UNIVERSE_ENABLED`, `UNIVERSE_READ_ENABLED` |
@@ -714,7 +730,8 @@ npm run test:block1        # Stabilità ricerca
 | 9 | ✅ | Ops, AI Act audit |
 | 10 | 🟡 | Promote to production (Copia) |
 | **Universe 0–10** | ✅ | Knowledge Graph completo |
-| **Ricerca unificata** | ✅ | Discovery/Grafo/Ibrido |
+| **Ricerca unificata** | 🟡 | Discovery/Grafo/Ibrido — seller query fix 2026-07-06 |
+| **Universal Query Engine** | ❌ | Target: vedi `GLM52_UNIVERSAL_QUERY_MASTER_BRIEF.md` |
 
 Dettaglio: `ECOSISTEMA_ROADMAP.md`
 
@@ -782,10 +799,32 @@ Per ogni path, consultare il file sorgente e la sezione dominio corrispondente i
 
 ---
 
+## 25. Universal Query — stato reale e roadmap (2026-07-06)
+
+### Risposta secca
+
+**No**, MIRAX non comprende ancora *letteralmente qualsiasi* query. Comprende bene i pattern in §1 (Omnivoro).
+
+### Cosa manca per la visione
+
+1. Un solo **`MiraxQueryPlan`** al posto di due parser paralleli  
+2. **Mai zero silenzioso** — discovery sempre con fallback intelligente  
+3. **Enrichment query-aware** per ogni fonte  
+4. **Score caldo personalizzato** (non solo audit generico)  
+5. **Evidenza obbligatoria** su ogni match  
+6. Fonti hiring/funding affidabili  
+7. Test matrix 200 query in CI  
+8. Feedback conversione da CRM  
+
+**Piano completo:** `docs/GLM52_UNIVERSAL_QUERY_MASTER_BRIEF.md`
+
+---
+
 ## Documenti correlati
 
 | Documento | Quando usarlo |
 |-----------|---------------|
+| **`GLM52_UNIVERSAL_QUERY_MASTER_BRIEF.md`** | **Gap analysis, UQE target, piano implementazione GLM 5.2** |
 | `ARCHITETTURA_MIRAX_TECNICA_AZ.md` | Dettaglio tecnico sezione 12 Maps flow, actions.ts, criticità |
 | `ARCHITETTURA_MIRAX_TECNICA_AZ_APPENDICE.md` | Schema lead JSONB, flussi E2E passo-passo |
 | `docs/UNIVERSE_DATA_MODEL.md` | Spec UDM formale |
@@ -796,4 +835,4 @@ Per ogni path, consultare il file sorgente e la sezione dominio corrispondente i
 
 ---
 
-*Ultimo aggiornamento: 2026-06-29 — include ricerca unificata, Knowledge Graph visuale, organic discovery, copy senza terminologia Maps in UI.*
+*Ultimo aggiornamento: 2026-07-06 — Universal Query brief, fix UI visibility, seller-buyer inference.*

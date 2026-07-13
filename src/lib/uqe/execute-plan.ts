@@ -8,14 +8,14 @@ import { unifiedSearchAction, type UnifiedSearchResponse } from '@/app/dashboard
 import { normalizeLeadObject } from '@/lib/lead-object'
 import { normalizeLead } from '@/lib/nous/normalizer'
 import { requestAgenticWorkerJob } from '@/lib/search-cache'
-import { AGENTIC_NICHE_USER_MESSAGE, clampSearchMaxLeads } from '@/lib/search-job-payload'
+import { AGENTIC_NICHE_USER_MESSAGE, MAX_LEADS_PER_SEARCH, clampSearchMaxLeads } from '@/lib/search-job-payload'
 import { isNeo4jConfigured, Neo4jConfigError, runNeo4jQuery } from '@/lib/universe/neo4j-client'
 import type { MiraxQueryPlan } from '@/types/uqe'
 
 const GRAPH_QUERY_TIMEOUT_MS = 20_000
 const HYBRID_GRAPH_MIN = 5
 const DEFAULT_MAX_LEADS = 25
-const MAX_UQE_LEADS = 500
+const MAX_UQE_LEADS = MAX_LEADS_PER_SEARCH
 
 export class UqeExecuteError extends Error {
   readonly code: string
@@ -421,7 +421,7 @@ export async function executeMiraxQueryPlan(
   userId: string,
   options?: { maxLeads?: number },
 ): Promise<UqeExecuteResult> {
-  const maxLeads = Math.max(1, Math.min(options?.maxLeads ?? DEFAULT_MAX_LEADS, MAX_UQE_LEADS))
+  const maxLeads = clampSearchMaxLeads(Math.max(1, Math.min(options?.maxLeads ?? DEFAULT_MAX_LEADS, MAX_UQE_LEADS)))
   const engines_used: string[] = []
   const ai_debug: Record<string, unknown> = {
     uqe: true,

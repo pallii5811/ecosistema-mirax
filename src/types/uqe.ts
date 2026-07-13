@@ -17,6 +17,12 @@ export type UqeSourceLane =
   | 'technology'
   | 'real_estate'
   | 'regulatory'
+  | 'ads'
+  | 'reviews'
+  | 'events'
+  | 'marketplace'
+  | 'partnerships'
+  | 'compliance'
   | 'web_evidence'
 
 export interface UqeSourcePlanItem {
@@ -64,6 +70,8 @@ export type UqeSignalType =
   | 'funding'
   | 'tender_won'
   | 'site_stale'
+  | 'meta_ads_started'
+  | 'google_ads_started'
   | 'investing_marketing'
   | 'seeking_supplier'
   | 'expansion'
@@ -73,7 +81,10 @@ export type UqeSignalType =
   | 'no_pixel'
   | 'crm_change'
   | 'investing_expansion'
+  | 'new_product'
+  | 'market_entry'
   | 'new_company'
+  | 'crm_installed'
   | 'tech_migration'
   | 'funding_received'
 
@@ -107,6 +118,9 @@ export interface MiraxQueryPlan {
 
   /** Origine del piano */
   parse_source: UqeParseSource
+
+  /** Contratto canonico v1 condiviso con il worker, quando compilato dall'LLM. */
+  canonical_plan?: import('@/lib/contracts/commercial-search-plan').CommercialSearchPlan
 
   /** Domande che il discovery engine deve riuscire a provare. */
   research_questions?: string[]
@@ -147,12 +161,37 @@ export const UQE_SIGNAL_ALIASES: Record<string, UqeSignalType> = {
   tender_won: 'tender_won',
   no_pixel: 'no_pixel',
   'no meta pixel': 'no_pixel',
+  'senza pixel': 'no_pixel',
+  meta_ads: 'meta_ads_started',
+  'meta ads': 'meta_ads_started',
+  facebook_ads: 'meta_ads_started',
+  'facebook ads': 'meta_ads_started',
+  instagram_ads: 'meta_ads_started',
+  'instagram ads': 'meta_ads_started',
+  google_ads: 'google_ads_started',
+  'google ads': 'google_ads_started',
+  campagne_google: 'google_ads_started',
+  ads: 'investing_marketing',
+  pubblicita: 'investing_marketing',
+  pubblicità: 'investing_marketing',
+  marketing_spend: 'investing_marketing',
   site_stale: 'site_stale',
   expansion: 'expansion',
   espansione: 'expansion',
+  investing_expansion: 'investing_expansion',
+  cerca_fornitore: 'seeking_supplier',
+  seeking_supplier: 'seeking_supplier',
+  supplier_search: 'seeking_supplier',
+  cambio_dirigenza: 'executive_change',
+  executive_change: 'executive_change',
+  nuovo_prodotto: 'new_product',
+  new_product: 'new_product',
+  nuovo_mercato: 'market_entry',
+  market_entry: 'market_entry',
   new_company: 'new_company',
   nuova_apertura: 'new_company',
   costituzione: 'new_company',
+  crm_installed: 'crm_installed',
   tech_migration: 'tech_migration',
   migrazione_tech: 'tech_migration',
   digital_transformation: 'tech_migration',

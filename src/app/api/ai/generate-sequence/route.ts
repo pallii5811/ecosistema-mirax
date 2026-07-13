@@ -1,13 +1,75 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 
+type EmailStep = {
+  step: number
+  subject: string
+  body: string
+  waitDays: number
+}
+
+function buildFallbackSequence(input: {
+  companyName: string
+  website: string
+  service: string
+  senderName: string
+  senderCompany: string
+  tone: string
+  stepsCount: number
+}): EmailStep[] {
+  const company = input.companyName.trim()
+  const service = input.service.trim() || 'acquisizione clienti e presenza digitale'
+  const sender = input.senderName.trim() || input.senderCompany.trim() || 'il nostro team'
+  const sign = input.senderCompany.trim() || sender
+  const websiteLine = input.website.trim() ? ` Ho visto anche il sito ${input.website.trim()} e credo ci siano margini interessanti da valorizzare.` : ''
+  const formal = input.tone === 'professionale' || input.tone === 'consulenziale'
+  const greeting = formal ? 'Buongiorno' : 'Ciao'
+
+  const templates: Omit<EmailStep, 'step'>[] = [
+    {
+      waitDays: 0,
+      subject: `Spunto concreto per ${company}`,
+      body: `${greeting},\n\nle scrivo perché ${company} sembra un profilo interessante per un lavoro mirato su ${service}.${websiteLine}\n\nL’obiettivo sarebbe semplice: individuare 2-3 leve rapide per generare più contatti qualificati senza disperdere budget.\n\nHa senso fissare una call di 15 minuti questa settimana?\n\nUn saluto,\n${sender}`,
+    },
+    {
+      waitDays: 3,
+      subject: `Idea rapida su ${company}`,
+      body: `${greeting},\n\nmi ricollego alla mail precedente. Di solito vediamo che aziende come ${company} possono migliorare risultati commerciali lavorando su tre aree: target giusto, messaggio più specifico e follow-up costante.\n\nPosso mandarvi una mini-analisi con le opportunità più evidenti per ${service}?\n\nUn saluto,\n${sender}`,
+    },
+    {
+      waitDays: 7,
+      subject: `Priorità commerciali per i prossimi 30 giorni`,
+      body: `${greeting},\n\nse in questo periodo state cercando di aumentare richieste, appuntamenti o pipeline, posso aiutarvi a capire quali canali e messaggi hanno più probabilità di funzionare per ${company}.\n\nLa proposta è partire da una diagnosi breve e concreta, senza impegno.\n\nPreferite sentirci domani mattina o nel pomeriggio?\n\n${sign}`,
+    },
+    {
+      waitDays: 12,
+      subject: `Chiudo il cerchio`,
+      body: `${greeting},\n\nnon voglio insistere se non è una priorità. Le lascio però uno spunto: spesso il problema non è “fare più marketing”, ma trovare aziende già in target e contattarle con un motivo forte e verificabile.\n\nSe vuole, preparo una bozza di piano operativo per ${company}.\n\nUn saluto,\n${sender}`,
+    },
+    {
+      waitDays: 18,
+      subject: `Ultimo messaggio su ${company}`,
+      body: `${greeting},\n\nultimo messaggio da parte mia. Se ${service} non è tra le vostre priorità ora, nessun problema.\n\nSe invece volete capire dove ci sono opportunità rapide, posso inviarvi 3 azioni pratiche da valutare.\n\nGrazie,\n${sender}`,
+    },
+    {
+      waitDays: 25,
+      subject: `Riapro solo se utile`,
+      body: `${greeting},\n\nla contatto un’ultima volta con un approccio molto pratico: posso analizzare ${company} e dirvi dove vedo il miglior potenziale di crescita commerciale nei prossimi 30 giorni.\n\nSe può essere utile, mi basta un ok e preparo il materiale.\n\n${sign}`,
+    },
+  ]
+
+  return templates.slice(0, input.stepsCount).map((email, index) => ({
+    step: index + 1,
+    subject: email.subject,
+    body: email.body,
+    waitDays: email.waitDays,
+  }))
+}
+
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) return NextResponse.json({ error: 'OpenAI API key non configurata' }, { status: 500 })
 
   const body = await req.json()
   const {
@@ -24,6 +86,13 @@ export async function POST(req: NextRequest) {
   if (!companyName) return NextResponse.json({ error: 'Nome azienda obbligatorio' }, { status: 400 })
 
   const stepsCount = Math.min(Math.max(2, Number(steps) || 4), 6)
+  const apiKey = (['1','true','yes','on'].includes(String(process.env.UQE_OPENAI_ENABLED || '').toLowerCase()) ? '' : '')
+  if (!apiKey) {
+    return NextResponse.json({
+      sequence: buildFallbackSequence({ companyName, website, service, senderName, senderCompany, tone, stepsCount }),
+      fallback: true,
+    })
+  }
 
   const systemPrompt = `Sei un esperto copywriter B2B italiano specializzato in cold email outreach per agenzie di marketing digitale e vendita servizi.
 
@@ -55,7 +124,7 @@ Numero email nella sequenza: ${stepsCount}`
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 30000)
 
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res = await fetch('data:,mirax-legacy-provider-removed', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({

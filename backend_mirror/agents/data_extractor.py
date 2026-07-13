@@ -5,6 +5,7 @@ No hallucinations: solo aziende esplicitamente menzionate nel testo.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
 import httpx
+from cost_governor import ResearchBudgetExceeded, ResearchCostGovernor
 
 from .portal_blacklist import (
     is_blacklisted_domain,
@@ -40,13 +42,132 @@ _SIGNAL_PREFILTERS = {
         "assume", "assunzion", "lavora con noi", "careers", "career", "job", "posizione aperta",
         "ricerca", "cerca", "seeking", "seeks", "hiring",
     ),
+    "hiring_operational": (
+        "operaio", "operai", "autista", "magazziniere", "installatore", "manutentore",
+        "tecnico", "produzione", "cantiere", "logistica", "posizione aperta", "assunzion",
+    ),
+    "hiring_technology": (
+        "developer", "sviluppatore", "software engineer", "data engineer", "data scientist",
+        "cybersecurity", "sistemista", "cloud engineer", "posizione aperta", "assunzion",
+    ),
+    "hiring_sales": (
+        "sales", "commerciale", "venditore", "account manager", "business developer",
+        "sdr", "bdr", "posizione aperta", "assunzion",
+    ),
+    "hiring_marketing": (
+        "marketing", "growth", "seo", "content", "social media", "advertising",
+        "posizione aperta", "assunzion",
+    ),
     "funding": ("funding", "finanziament", "round", "seed", "serie a", "investimento"),
     "funding_received": ("funding", "finanziament", "round", "seed", "serie a", "investimento"),
     "tender_won": ("aggiudic", "appalto", "gara", "cig", "tender"),
     "new_company": ("costituz", "nuova societ", "nuova impresa", "startup", "apertura"),
     "expansion": ("espansion", "nuova sede", "nuova apertura", "crescita", "ampliamento"),
     "tech_migration": ("migrazion", "crm", "erp", "cloud", "digital transformation", "software"),
+    "technology_migration": ("migrazion", "crm", "erp", "cloud", "digital transformation", "nuova piattaforma", "software"),
+    "manual_processes": ("processo manuale", "processi manuali", "workflow manuale", "excel", "fogli di calcolo", "spreadsheet"),
+    "production_expansion": (
+        "ampliamento produttivo", "espansione produttiva", "capacita produttiva", "capacità produttiva",
+        "nuovo impianto", "nuovo stabilimento", "ampliamento stabilimento", "linea produttiva",
+    ),
+    "new_location": (
+        "nuova sede", "nuove sedi", "nuova apertura", "inaugura", "trasferimento sede",
+        "apertura filiale", "apertura ufficio", "apertura stabilimento",
+    ),
+    "cybersecurity_exposure": (
+        "vulnerabilita", "vulnerabilità", "rischio cyber", "cybersecurity", "sicurezza informatica",
+        "ecommerce", "e-commerce", "posta elettronica", "webmail", "servizi esposti",
+    ),
+    "regulatory_change": (
+        "nuovo requisito", "nuovi requisiti", "adeguamento normativo", "obbligo normativo",
+        "normativa", "autorizzazione", "compliance", "certificazione obbligatoria",
+    ),
+    # Critical cost/quality gate: marketing-investment queries must not call the
+    # LLM on generic pages.  A page has to mention an observable spend/ads/funnel
+    # signal first; otherwise it is cheap noise and gets skipped.
+    "investing_marketing": (
+        "meta ads", "facebook ads", "google ads", "ad library", "libreria inserzioni",
+        "inserzioni attive", "campagne attive", "campagna marketing", "campagna pubblicitaria",
+        "budget marketing", "budget ads", "budget pubblicitario", "paid media",
+        "remarketing", "pixel", "conversion tracking", "landing page", "lead ads",
+        "richiedi preventivo", "richiedi informazioni", "richiedi demo",
+    ),
+    "meta_ads_started": (
+        "meta ads", "facebook ads", "ad library", "libreria inserzioni",
+        "inserzioni attive", "campagne attive", "lead ads",
+    ),
+    "google_ads_started": (
+        "google ads", "campagne google", "annunci google", "paid search",
+        "conversion tracking", "landing page",
+    ),
 }
+
+
+def _is_non_entity_listing_page(source_url: str, plan: Dict[str, Any]) -> bool:
+    """Reject search/category surfaces before they can consume an LLM call."""
+    try:
+        parsed = urlparse(source_url)
+        host = (parsed.hostname or "").lower().replace("www.", "")
+        path = (parsed.path or "/").lower().rstrip("/")
+    except ValueError:
+        return True
+    if re.search(r"(^|\.)google\.", host) and path.startswith("/intl/"):
+        return True
+    if "infojobs." in host:
+        if "/jobsearch/" in path or re.fullmatch(r"/offerte-lavoro/[^/]+", path):
+            return True
+    if "indeed." in host and (path in {"/jobs", "/lavoro"} or path.startswith(("/jobs?", "/q-"))):
+        return True
+    if "linkedin." in host and path.startswith(("/jobs/search", "/jobs/collections")):
+        return True
+    required = {str(value).lower().strip().replace("-", "_") for value in plan.get("required_signals") or []}
+    if required.intersection({"hiring", "hiring_operational", "hiring_technology", "hiring_sales", "hiring_marketing"}):
+        if "/blog/" in path or "/tag/" in path or "/category/" in path:
+            return True
+    return False
+
+_MARKETING_SERVICE_PROVIDER_RE = re.compile(
+    r"\b("
+    r"agenzia\s+(?:web|marketing|digital|social|seo|comunicazione)|"
+    r"web\s+agency|digital\s+agency|seo\s+agency|marketing\s+agency|"
+    r"servizi\s+(?:di\s+)?(?:web\s+)?marketing|consulenza\s+(?:web\s+)?marketing|"
+    r"gestione\s+(?:pagina\s+facebook|social|campagne|google\s+ads|facebook\s+ads|meta\s+ads)|"
+    r"social\s+media\s+marketing|performance\s+marketing|"
+    r"corso\s+(?:di\s+)?marketing|guida\s+(?:a|al|alla|su)|"
+    r"come\s+funziona|cos['’]?\s*[eè]"
+    r")\b",
+    re.I,
+)
+_MARKETING_CLIENT_EVIDENCE_RE = re.compile(
+    r"\b(case\s+study|success\s+story|portfolio|risultati\s+ottenuti|"
+    r"abbiamo\s+(?:aiutato|realizzato|gestito)|campagna\s+per)\b",
+    re.I,
+)
+
+
+def _looks_like_marketing_provider_noise(text: str) -> bool:
+    blob = re.sub(r"[^0-9A-Za-zÀ-ÿ]+", " ", text or "").strip()
+    blob = re.sub(r"\s+", " ", blob)
+    if not blob:
+        return False
+    if not _MARKETING_SERVICE_PROVIDER_RE.search(blob):
+        return False
+    return not _MARKETING_CLIENT_EVIDENCE_RE.search(blob)
+
+
+def _plan_requires_marketing_signal(plan: Dict[str, Any]) -> bool:
+    signals = {str(value).lower().strip().replace("-", "_") for value in plan.get("required_signals") or []}
+    return bool(signals.intersection({"investing_marketing", "meta_ads_started", "google_ads_started"}))
+
+
+def _is_marketing_noise_source(source_url: str, raw_text: str, plan: Dict[str, Any]) -> bool:
+    if not _plan_requires_marketing_signal(plan):
+        return False
+    domain = normalize_domain(source_url)
+    if domain and is_blacklisted_domain(domain):
+        return True
+    source_blob = f"{source_url} {raw_text[:1200]}"
+    return _looks_like_marketing_provider_noise(source_blob)
 
 
 def page_has_required_signal(text: str, plan: Dict[str, Any]) -> bool:
@@ -58,6 +179,9 @@ def page_has_required_signal(text: str, plan: Dict[str, Any]) -> bool:
     if not known:
         return True
     lower = (text or "").lower()
+    if any(signal in {"investing_marketing", "meta_ads_started", "google_ads_started"} for signal in known):
+        if _looks_like_marketing_provider_noise(text):
+            return False
     return any(keyword in lower for signal in known for keyword in _SIGNAL_PREFILTERS[signal])
 
 
@@ -82,6 +206,51 @@ def _env_bool(name: str, default: bool = True) -> bool:
     if raw is None:
         return default
     return str(raw).strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+
+def _estimated_llm_cost_usd(telemetry: Dict[str, int]) -> float:
+    """Conservative per-job cost estimate used as a hard safety guard.
+
+    Rates are configurable because model pricing changes.  Defaults are
+    intentionally conservative for Sonnet-class extraction so a missing env var
+    cannot silently remove the budget guard.
+    """
+    input_rate = _env_float("MIRAX_LLM_INPUT_USD_PER_M", 3.0, 0.0, 1000.0)
+    output_rate = _env_float("MIRAX_LLM_OUTPUT_USD_PER_M", 15.0, 0.0, 1000.0)
+    return (
+        (int(telemetry.get("input_tokens") or 0) * input_rate)
+        + (int(telemetry.get("output_tokens") or 0) * output_rate)
+    ) / 1_000_000
+
+
+def _usd_to_eur(value: float) -> float:
+    # Default 1:1 is deliberately conservative for the budget gate. Production
+    # can pin a treasury rate, but a missing value must never under-reserve.
+    return max(0.0, float(value)) * _env_float("MIRAX_USD_TO_EUR", 1.0, 0.5, 2.0)
+
+
+def _llm_budget_allows_next_call(telemetry: Dict[str, int]) -> bool:
+    """Hard kill-switch for paid extraction inside a single search job."""
+    max_requests = _env_int("MIRAX_LLM_MAX_REQUESTS_PER_JOB", 3, 0, 10_000)
+    if max_requests <= 0:
+        telemetry["llm_skips_budget"] = telemetry.get("llm_skips_budget", 0) + 1
+        telemetry["llm_budget_exhausted"] = 1
+        return False
+
+    requests = int(telemetry.get("openai_requests") or 0) + int(telemetry.get("anthropic_requests") or 0)
+    if requests >= max_requests:
+        telemetry["llm_skips_budget"] = telemetry.get("llm_skips_budget", 0) + 1
+        telemetry["llm_budget_exhausted"] = 1
+        return False
+
+    max_cost = _env_float("MIRAX_LLM_MAX_COST_USD_PER_JOB", 0.03, 0.0, 1000.0)
+    reserve_per_call = _env_float("MIRAX_LLM_RESERVED_USD_PER_CALL", 0.015, 0.0, 1000.0)
+    if max_cost <= 0 or (_estimated_llm_cost_usd(telemetry) + reserve_per_call) > max_cost:
+        telemetry["llm_skips_budget"] = telemetry.get("llm_skips_budget", 0) + 1
+        telemetry["llm_budget_exhausted"] = 1
+        return False
+
+    return True
 
 
 def _get_openai_extract_lock() -> asyncio.Lock:
@@ -130,7 +299,7 @@ REGOLA FONDAMENTALE (ZERO ALLUCINAZIONI):
 - Estrai SOLO aziende menzionate ESPLICITAMENTE nel testo.
 - Se il testo non contiene aziende rilevanti, restituisci companies: [].
 - evidence: citazione letterale dal testo (max 300 caratteri).
-- matched_signals: solo segnali supportati da evidenza (hiring, funding, new_company, tender_won, tech_migration, expansion).
+- matched_signals: solo segnali supportati da evidenza (hiring, funding, new_company, tender_won, tech_migration, expansion, investing_marketing, meta_ads_started, google_ads_started).
 - Se c'è prova di assunzione, matched_signals=["hiring"] + hiring_title con il ruolo citato.
 
 Devi SEMPRE chiamare il tool submit_extracted_companies."""
@@ -161,6 +330,10 @@ REGOLE FONDAMENTALI:
   nell'output se il testo non la conferma.
 - Per lead caldi privilegia fatti vicini alla spesa: ruoli sales/new business,
   outbound, prospecting, pipeline, gare, budget, migrazioni o espansioni.
+- Se il piano richiede investing_marketing/meta_ads/google_ads e la pagina e di
+  un'agenzia marketing/web agency/consulente che vende gestione campagne,
+  NON estrarre l'agenzia come lead. Estrai solo eventuali clienti nominati con
+  evidenza esplicita di campagna/budget/landing e sito ufficiale presente.
 - why_now deve spiegare il timing usando solo il fatto e la data presenti nel testo.
 - pitch_angle puo collegare il fatto all'offerta, ma non deve inventare bisogni,
   budget, persone o tecnologie.
@@ -341,6 +514,21 @@ def _sales_hiring_keywords(plan: Dict[str, Any]) -> List[str]:
     return out
 
 
+def _required_signal_keywords(plan: Dict[str, Any]) -> List[str]:
+    keywords: List[str] = []
+    for signal in [str(value).lower().strip() for value in plan.get("required_signals") or []]:
+        keywords.extend(_SIGNAL_PREFILTERS.get(signal, ()))
+    keywords.extend(_sales_hiring_keywords(plan))
+    out: List[str] = []
+    seen: Set[str] = set()
+    for keyword in keywords:
+        normalized = str(keyword or "").lower().strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            out.append(normalized)
+    return out
+
+
 def _evidence_snippet(text: str, keywords: List[str]) -> str:
     compact = re.sub(r"\s+", " ", text or "").strip()
     if not compact:
@@ -434,7 +622,7 @@ def _heuristic_extract_companies(
     if signals and not matched:
         return []
 
-    evidence = _evidence_snippet(chunk, _sales_hiring_keywords(plan))
+    evidence = _evidence_snippet(chunk, _required_signal_keywords(plan))
     if not evidence:
         return []
 
@@ -527,6 +715,7 @@ class DataExtractor:
         *,
         chunk_size: int = CHUNK_SIZE,
         chunk_overlap: int = CHUNK_OVERLAP,
+        cost_governor: Optional[ResearchCostGovernor] = None,
     ) -> None:
         if not isinstance(plan, dict):
             raise ValueError("plan must be a dict (MiraxQueryPlan)")
@@ -534,6 +723,7 @@ class DataExtractor:
         self.pages = [p for p in (pages or []) if isinstance(p, dict)]
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.cost_governor = cost_governor
         self.telemetry: Dict[str, int] = {
             "pages_seen": 0,
             "blocked_pages": 0,
@@ -544,6 +734,8 @@ class DataExtractor:
             "cache_misses": 0,
             "openai_requests": 0,
             "anthropic_requests": 0,
+            "llm_skips_budget": 0,
+            "llm_budget_exhausted": 0,
             "provider_failures": 0,
             "input_tokens": 0,
             "output_tokens": 0,
@@ -552,16 +744,12 @@ class DataExtractor:
 
     def telemetry_snapshot(self) -> Dict[str, Any]:
         snapshot: Dict[str, Any] = dict(self.telemetry)
-        try:
-            input_rate = max(0.0, float(os.getenv("MIRAX_LLM_INPUT_USD_PER_M", "0") or "0"))
-            output_rate = max(0.0, float(os.getenv("MIRAX_LLM_OUTPUT_USD_PER_M", "0") or "0"))
-        except (TypeError, ValueError):
-            input_rate = output_rate = 0.0
-        snapshot["estimated_llm_cost_usd"] = round(
-            (snapshot["input_tokens"] * input_rate + snapshot["output_tokens"] * output_rate) / 1_000_000,
-            6,
+        snapshot["estimated_llm_cost_usd"] = round(_estimated_llm_cost_usd(snapshot), 6)
+        snapshot["llm_max_requests_per_job"] = _env_int("MIRAX_LLM_MAX_REQUESTS_PER_JOB", 3, 0, 10_000)
+        snapshot["llm_max_cost_usd_per_job"] = _env_float("MIRAX_LLM_MAX_COST_USD_PER_JOB", 0.03, 0.0, 1000.0)
+        snapshot["cost_rates_configured"] = bool(
+            os.getenv("MIRAX_LLM_INPUT_USD_PER_M") or os.getenv("MIRAX_LLM_OUTPUT_USD_PER_M")
         )
-        snapshot["cost_rates_configured"] = bool(input_rate or output_rate)
         return snapshot
 
     async def _extract_chunk(
@@ -578,6 +766,7 @@ class DataExtractor:
             chunk_index,
             chunk_total,
             telemetry=self.telemetry,
+            cost_governor=self.cost_governor,
         )
         out: List[Dict[str, Any]] = []
         for c in companies:
@@ -594,7 +783,15 @@ class DataExtractor:
             self.telemetry["blocked_pages"] += 1
             logger.info("extract skip blocked source url=%s", source_url[:80])
             return []
+        if _is_non_entity_listing_page(source_url, self.plan):
+            self.telemetry["prefilter_skips"] += 1
+            logger.info("extract skip non-entity listing url=%s", source_url[:80])
+            return []
         raw_text = str(page.get("raw_text") or "").strip()
+        if _is_marketing_noise_source(source_url, raw_text, self.plan):
+            self.telemetry["blocked_pages"] += 1
+            logger.info("extract skip marketing noise source url=%s", source_url[:80])
+            return []
         if not raw_text or len(raw_text) < MIN_CHUNK_CHARS:
             self.telemetry["short_pages"] += 1
             return []
@@ -613,6 +810,8 @@ class DataExtractor:
         for idx, chunk in enumerate(chunks):
             try:
                 leads = await self._extract_chunk(source_url, chunk, idx, len(chunks))
+            except ResearchBudgetExceeded:
+                raise
             except Exception as exc:
                 logger.warning(
                     "extract chunk failed url=%s chunk=%s/%s: %s",
@@ -759,17 +958,20 @@ async def _call_openai_extract(
     chunk_total: int,
     telemetry: Optional[Dict[str, int]] = None,
 ) -> Optional[List[Dict[str, Any]]]:
-    if not _env_bool("OPENAI_EXTRACT_ENABLED", True):
+    if not _env_bool("OPENAI_EXTRACT_ENABLED", False):
         logger.info("OpenAI extract disabled by OPENAI_EXTRACT_ENABLED — using fallback extractor")
         return None
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    api_key = ""
     if not api_key:
         return None
     if _openai_extract_circuit_open():
         logger.info("OpenAI extract circuit open — using fallback extractor")
         return None
 
-    model = os.getenv("UQE_OPENAI_MODEL") or os.getenv("SEMANTIC_OPENAI_MODEL") or "gpt-5.5"
+    model = "" or ""
+    if not model:
+        logger.info("OpenAI extract enabled but no explicit OpenAI model configured — skipping OpenAI")
+        return None
     user_content = _extraction_user_prompt(plan, source_url, chunk, chunk_index, chunk_total)
     max_retries = _env_int("OPENAI_EXTRACT_MAX_RETRIES", 1, 0, 4)
 
@@ -780,7 +982,7 @@ async def _call_openai_extract(
                 telemetry["openai_requests"] = telemetry.get("openai_requests", 0) + 1
             async with httpx.AsyncClient(timeout=35.0) as client:
                 res = await client.post(
-                    "https://api.openai.com/v1/chat/completions",
+                    'data:,mirax-legacy-provider-removed',
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                     json={
                         "model": model,
@@ -842,13 +1044,21 @@ async def _call_anthropic_extract(
     chunk_total: int,
     telemetry: Optional[Dict[str, int]] = None,
 ) -> Optional[List[Dict[str, Any]]]:
+    if not _env_bool("ANTHROPIC_EXTRACT_ENABLED", False):
+        logger.info("Anthropic extract disabled by ANTHROPIC_EXTRACT_ENABLED")
+        return None
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return None
     if telemetry is not None:
         telemetry["anthropic_requests"] = telemetry.get("anthropic_requests", 0) + 1
 
-    model = os.getenv("UQE_ANTHROPIC_MODEL") or os.getenv("SEMANTIC_MODEL") or "claude-sonnet-4-20250514"
+    model = (
+        os.getenv("UQE_ANTHROPIC_MODEL")
+        or os.getenv("ANTHROPIC_MODEL")
+        or os.getenv("SEMANTIC_MODEL")
+        or "claude-sonnet-5"
+    )
     user_content = _extraction_user_prompt(plan, source_url, chunk, chunk_index, chunk_total)
 
     try:
@@ -863,7 +1073,6 @@ async def _call_anthropic_extract(
                 json={
                     "model": model,
                     "max_tokens": 1500,
-                    "temperature": 0,
                     "system": SYSTEM_PROMPT,
                     "tools": [_tool_schema_anthropic()],
                     "tool_choice": {"type": "tool", "name": TOOL_NAME},
@@ -898,6 +1107,7 @@ async def _llm_extract_companies(
     chunk_total: int,
     *,
     telemetry: Optional[Dict[str, int]] = None,
+    cost_governor: Optional[ResearchCostGovernor] = None,
 ) -> List[Dict[str, Any]]:
     from .extraction_cache import get_extraction_cache
 
@@ -911,16 +1121,98 @@ async def _llm_extract_companies(
     if telemetry is not None:
         telemetry["cache_misses"] = telemetry.get("cache_misses", 0) + 1
 
-    companies = await _call_openai_extract(
-        plan, source_url, chunk, chunk_index, chunk_total, telemetry=telemetry
-    )
-    if companies is None:
-        companies = await _call_anthropic_extract(
-            plan, source_url, chunk, chunk_index, chunk_total, telemetry=telemetry
+    companies: Optional[List[Dict[str, Any]]] = None
+    if telemetry is None or _llm_budget_allows_next_call(telemetry):
+        anthropic_enabled = _env_bool("ANTHROPIC_EXTRACT_ENABLED", False) and bool(
+            os.getenv("ANTHROPIC_API_KEY", "").strip()
         )
+        reservation_key: Optional[str] = None
+        token_before = (
+            int((telemetry or {}).get("input_tokens") or 0),
+            int((telemetry or {}).get("output_tokens") or 0),
+        )
+        if anthropic_enabled:
+            if cost_governor is None:
+                raise ResearchBudgetExceeded("Anthropic extraction requires an atomic cost governor")
+            model = (
+                os.getenv("UQE_ANTHROPIC_MODEL")
+                or os.getenv("ANTHROPIC_MODEL")
+                or os.getenv("SEMANTIC_MODEL")
+                or "claude-sonnet-5"
+            ).replace("\\r", "").replace("\\n", "").strip()
+            digest = hashlib.sha256(
+                f"{cache_key}:{chunk_index}:{chunk_total}".encode("utf-8", "ignore")
+            ).hexdigest()[:32]
+            candidate_reservation_key = f"llm-extract:{digest}"
+            reservation = cost_governor.reserve(
+                candidate_reservation_key,
+                "llm_extract",
+                _usd_to_eur(_env_float("MIRAX_LLM_RESERVED_USD_PER_CALL", 0.015, 0.0, 1000.0)),
+                provider="anthropic",
+                model=model,
+                source_class="web_page",
+                units=1,
+                metadata={"source_url": source_url[:500], "chunk_index": chunk_index},
+            )
+            if reservation.status == "reserved":
+                reservation_key = candidate_reservation_key
+            else:
+                anthropic_enabled = False
+                logger.info("LLM extraction idempotency hit status=%s", reservation.status)
+        try:
+            if anthropic_enabled:
+                companies = await _call_anthropic_extract(
+                    plan, source_url, chunk, chunk_index, chunk_total, telemetry=telemetry
+                )
+        except Exception:
+            if reservation_key:
+                # Delivery is uncertain after a transport exception: settle the
+                # conservative reservation instead of pretending it was free.
+                cost_governor.settle(
+                    reservation_key,
+                    _usd_to_eur(_env_float("MIRAX_LLM_RESERVED_USD_PER_CALL", 0.015, 0.0, 1000.0)),
+                    metadata={"outcome": "provider_delivery_uncertain"},
+                )
+            raise
+        if reservation_key:
+            input_delta = max(0, int((telemetry or {}).get("input_tokens") or 0) - token_before[0])
+            output_delta = max(0, int((telemetry or {}).get("output_tokens") or 0) - token_before[1])
+            actual_usd = (
+                input_delta * _env_float("MIRAX_LLM_INPUT_USD_PER_M", 3.0, 0.0, 1000.0)
+                + output_delta * _env_float("MIRAX_LLM_OUTPUT_USD_PER_M", 15.0, 0.0, 1000.0)
+            ) / 1_000_000
+            # No usage in a failed/ambiguous response is not proof of zero cost.
+            actual_eur = _usd_to_eur(actual_usd) if (input_delta or output_delta) else _usd_to_eur(
+                _env_float("MIRAX_LLM_RESERVED_USD_PER_CALL", 0.015, 0.0, 1000.0)
+            )
+            cost_governor.settle(
+                reservation_key,
+                actual_eur,
+                metadata={
+                    "outcome": "success" if companies is not None else "provider_failure",
+                    "input_tokens": input_delta,
+                    "output_tokens": output_delta,
+                },
+            )
+        # OpenAI extraction is intentionally retired from the production lead
+        # path. If Anthropic is disabled/rate-limited/unavailable, MIRAX falls
+        # back to the deterministic zero-cost extractor rather than silently
+        # switching provider and burning budget.
+    else:
+        logger.warning(
+            "LLM extraction budget exhausted — using zero-cost heuristic fallback url=%s",
+            source_url[:100],
+        )
+
     if companies is None:
+        if _plan_requires_marketing_signal(plan):
+            logger.warning(
+                "strict marketing signal mode: heuristic fallback disabled url=%s",
+                source_url[:100],
+            )
+            return []
         companies = _heuristic_extract_companies(plan, source_url, chunk)
-    elif not companies and _is_official_source_url(source_url):
+    elif not companies and _is_official_source_url(source_url) and not _plan_requires_marketing_signal(plan):
         companies = _heuristic_extract_companies(plan, source_url, chunk)
     if not companies:
         return []

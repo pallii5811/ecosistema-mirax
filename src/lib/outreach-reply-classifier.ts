@@ -142,7 +142,7 @@ export async function classifyReplyWithAI(
   const rules = classifyReplyRules(trimmed)
   if (rules && rules.confidence >= 85) return rules
 
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = (['1','true','yes','on'].includes(String(process.env.UQE_OPENAI_ENABLED || '').toLowerCase()) ? '' : '')
   if (!apiKey) {
     return rules || buildResult('unknown', 45, 'Classificazione euristica — verifica manuale consigliata.', 'rules-v1')
   }
@@ -174,7 +174,7 @@ Rispondi SOLO con JSON valido:
 }`
 
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res = await fetch('data:,mirax-legacy-provider-removed', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,

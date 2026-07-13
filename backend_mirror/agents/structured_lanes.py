@@ -27,6 +27,12 @@ def infer_hiring_roles(plan: Dict[str, Any]) -> List[str]:
         roles = [str(value).strip() for value in explicit if str(value).strip()]
         if roles:
             return roles[:5]
+    hypothesis = plan.get("commercial_hypothesis") if isinstance(plan.get("commercial_hypothesis"), dict) else {}
+    hypothesis_roles = hypothesis.get("hiring_roles")
+    if isinstance(hypothesis_roles, list):
+        roles = [str(value).strip() for value in hypothesis_roles if str(value).strip()]
+        if roles:
+            return roles[:5]
     query = str(plan.get("original_query") or "")
     for pattern in _HIRING_ROLE_PATTERNS:
         match = re.search(pattern, query, re.I)
@@ -111,11 +117,15 @@ async def discover_hiring_companies(plan: Dict[str, Any], limit: int) -> List[Di
     role = roles[0] if roles else str(plan.get("sector") or "personale").strip()
     location = str(plan.get("location") or "Italia").strip()
     sector = str(plan.get("sector") or "").strip()
-    queries = [
-        f'"{role}" "{location}" (site:indeed.it OR site:infojobs.it OR site:linkedin.com/jobs)',
-        f'"{role}" "lavora con noi" {sector} {location}',
-        f'"{role}" (careers OR posizioni aperte) {sector} {location}',
-    ]
+    role_pool = roles[:5] if roles else [role]
+    queries: List[str] = []
+    for current_role in role_pool:
+        queries.extend(
+            [
+                f'"{current_role}" "{location}" (site:indeed.it OR site:infojobs.it OR site:linkedin.com/jobs)',
+                f'"{current_role}" ("lavora con noi" OR careers OR "posizioni aperte") {sector} {location}',
+            ]
+        )
     urls: List[str] = []
     seen_urls: set[str] = set()
     per_query = max(15, min(60, limit * 2))
@@ -168,7 +178,7 @@ async def discover_structured_leads(plan: Dict[str, Any], limit: int) -> List[Di
                 )
             )
         )
-    if "hiring" in signals:
+    if "hiring" in signals or any(signal.startswith("hiring_") for signal in signals):
         tasks.append(asyncio.create_task(discover_hiring_companies(plan, min(limit, 500))))
     if not tasks:
         return []

@@ -1,16 +1,26 @@
 'use server'
 
-import { createClient } from '@/utils/supabase/server'
+import { createClient, createServiceRoleClient } from '@/utils/supabase/server'
 import type { CommercialIntent } from '@/lib/signal-intent/commercial-intent'
 import { executeCommercialUniverseSearch } from '@/lib/universe/agentic-search'
-import { requestAgenticWorkerJob, requestIncrementalScrape } from '@/lib/search-cache'
+import {
+  cancelAgenticPlanningJob,
+  createAgenticPlanningJob,
+  requestAgenticWorkerJob,
+  requestIncrementalScrape,
+} from '@/lib/search-cache'
+import { PersistentResearchCostGovernor } from '@/lib/research/persistent-cost-governor'
 import {
   clampSearchMaxLeads,
   AGENTIC_NICHE_USER_MESSAGE,
 } from '@/lib/search-job-payload'
 import { filterLeadsForQuery } from '@/lib/lead-relevance'
 import { hasLeadContact } from '@/lib/search-contact-quality'
-import { buildMiraxQueryPlan, buildHeuristicMiraxQueryPlan } from '@/lib/uqe/mirax-query-planner'
+import {
+  buildMiraxQueryPlan,
+  buildHeuristicMiraxQueryPlan,
+  isSellerAbstractQuery,
+} from '@/lib/uqe/mirax-query-planner'
 import {
   enrichCommercialIntentFromSellerQuery,
   inferSellerBuyerProfile,
@@ -23,6 +33,12 @@ import {
 } from '@/lib/signal-intent/marketing-investment'
 
 const UNIFIED_SEARCH_TIMEOUT_MS = 50_000
+const SEARCH_DISABLED_MESSAGE =
+  'Ricerca temporaneamente in modalità sicurezza: stiamo validando i quality gate prima di riattivare i worker. Nessun credito è stato scalato.'
+
+function envFlag(name: string): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase())
+}
 
 const withTimeout = async <T,>(promise: Promise<T>, ms: number) => {
   let timeoutId: ReturnType<typeof setTimeout> | undefined
@@ -49,6 +65,42 @@ export type UnifiedSearchResponse = {
 
 const GRAPH_SUFFICIENCY_MIN = 5
 const GRAPH_MIN_WITH_CONTACT = 3
+const SELLER_LEADGEN_TARGET_CATEGORY = 'PMI B2B con team commerciale in espansione'
+const SELLER_LEADGEN_TARGET_LOCATION = 'Italia'
+
+function hasLeadGenerationOffer(query: string): boolean {
+  return /\b(lead\s*generation|generazione\s+lead|sales\s*intelligence|prospect(?:ing)?|outreach|scouting|appointment\s*setting)\b/i.test(
+    query,
+  )
+}
+
+function isSellerLeadGenerationTarget(query: string, plan: MiraxQueryPlan): boolean {
+  return Boolean(plan.commercial_hypothesis) || (isSellerAbstractQuery(query) && hasLeadGenerationOffer(query))
+}
+
+function normalizeSellerLeadGenerationPlan(plan: MiraxQueryPlan, query: string): MiraxQueryPlan {
+  if (!isSellerLeadGenerationTarget(query, plan)) return plan
+  const signals = new Set(plan.required_signals || [])
+  signals.add('hiring')
+  signals.add('expansion')
+  return {
+    ...plan,
+    search_strategy: 'organic_web_search',
+    sector: SELLER_LEADGEN_TARGET_CATEGORY,
+    location: SELLER_LEADGEN_TARGET_LOCATION,
+    required_signals: Array.from(signals),
+    intent_summary:
+      plan.intent_summary ||
+      'PMI italiane B2B con investimento commerciale verificato: SDR/BDR, outbound, prospecting o sviluppo nuovi clienti.',
+    research_questions: plan.research_questions?.length
+      ? plan.research_questions
+      : [
+          'Quali PMI italiane stanno investendo adesso in sviluppo commerciale o outbound?',
+          'Quale annuncio o fonte prova SDR, BDR, prospecting, pipeline o acquisizione nuovi clienti?',
+          'Quanto e recente il segnale e chi guida Sales/Revenue nell azienda?',
+        ],
+  }
+}
 
 function countLeadsWithContact(leads: Record<string, unknown>[]): number {
   return leads.filter((l) => hasLeadContact(l)).length
@@ -167,6 +219,17 @@ export async function unifiedSearchAction(
   userQuery: string,
   options?: { maxLeads?: number; plan?: MiraxQueryPlan },
 ): Promise<UnifiedSearchResponse> {
+  if (envFlag('MIRAX_SEARCH_DISABLED') || envFlag('MIRAX_WORKER_DISABLED')) {
+    return {
+      results: [],
+      status: 'completed',
+      user_message: SEARCH_DISABLED_MESSAGE,
+      ai_debug: {
+        mode: 'safe_disabled',
+        search_disabled: true,
+      },
+    }
+  }
   try {
     return await withTimeout(unifiedSearchActionCore(userQuery, options), UNIFIED_SEARCH_TIMEOUT_MS)
   } catch (err) {
@@ -203,10 +266,8 @@ async function unifiedSearchActionCore(
     return { results: [], status: 'completed', ai_debug: { error: 'QUERY_EMPTY' } }
   }
 
-  const plan = options?.plan ?? (await buildMiraxQueryPlan(query))
-
-  const supabase = await createClient()
   const desiredMax = clampSearchMaxLeads(options?.maxLeads ?? 10)
+  const supabase = await createClient()
 
   let userId: string | undefined
   try {
@@ -218,6 +279,31 @@ async function unifiedSearchActionCore(
     userId = undefined
   }
 
+  let planningSearchId: string | null = null
+  let rawPlan: MiraxQueryPlan
+  if (options?.plan) {
+    rawPlan = options.plan
+  } else {
+    planningSearchId = await createAgenticPlanningJob(supabase, {
+      query,
+      maxLeads: desiredMax,
+      userId,
+    })
+    try {
+      const costMeter = new PersistentResearchCostGovernor(createServiceRoleClient())
+      await costMeter.initialize(planningSearchId, desiredMax)
+      rawPlan = await buildMiraxQueryPlan(query, {
+        requestedLeadCount: desiredMax,
+        searchId: planningSearchId,
+        costMeter,
+      })
+    } catch (error) {
+      await cancelAgenticPlanningJob(supabase, planningSearchId, 'planning_failed')
+      throw error
+    }
+  }
+  const plan = normalizeSellerLeadGenerationPlan(rawPlan, query)
+
   const aiDebug = planAiDebug(plan, desiredMax)
 
   const filters: Record<string, unknown> = {
@@ -226,6 +312,9 @@ async function unifiedSearchActionCore(
   }
 
   if (plan.search_strategy === 'fallback') {
+    if (planningSearchId) {
+      await cancelAgenticPlanningJob(supabase, planningSearchId, 'intent_fallback')
+    }
     return {
       results: [],
       status: 'completed',
@@ -241,7 +330,9 @@ async function unifiedSearchActionCore(
   const workerPayload = workerIntentPayload(intent, query, plan)
 
   if (plan.search_strategy === 'organic_web_search') {
-    const agenticJob = await requestAgenticWorkerJob(supabase, {
+    let agenticJob
+    try {
+      agenticJob = await requestAgenticWorkerJob(supabase, {
       query,
       maxLeads: desiredMax,
       userId,
@@ -267,7 +358,14 @@ async function unifiedSearchActionCore(
          commercial_hypothesis: plan.commercial_hypothesis,
          ranking_policy: plan.ranking_policy,
        },
-    })
+      existingSearchId: planningSearchId,
+      })
+    } catch (error) {
+      if (planningSearchId) {
+        await cancelAgenticPlanningJob(supabase, planningSearchId, 'worker_activation_failed')
+      }
+      throw error
+    }
 
     return {
       results: [],
@@ -303,6 +401,10 @@ async function unifiedSearchActionCore(
         intent: workerPayload,
       })
 
+      if (planningSearchId) {
+        await cancelAgenticPlanningJob(supabase, planningSearchId, 'planning_transferred_to_maps_job')
+      }
+
       return {
         results: [],
         status: 'pending',
@@ -323,6 +425,9 @@ async function unifiedSearchActionCore(
         },
       }
     } catch (e) {
+      if (planningSearchId) {
+        await cancelAgenticPlanningJob(supabase, planningSearchId, 'maps_activation_failed')
+      }
       const err = e instanceof Error ? e.message : String(e)
       return {
         results: [],

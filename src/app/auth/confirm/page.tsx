@@ -1,6 +1,11 @@
 import { Suspense } from 'react'
 import ConfirmClient from './ConfirmClient'
 import { Card } from '@/components/ui/card'
+
+// OTP confirmation is request-specific and must never be emitted as a reusable
+// static artifact. This also gives Vercel an explicit server function boundary.
+export const dynamic = 'force-dynamic'
+
 export default function AuthConfirmPage() {
   return (
     <Suspense

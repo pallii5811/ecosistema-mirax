@@ -1,0 +1,17 @@
+{
+  "rehearsal_id": "20260712_rollback_rehearsal_v5b",
+  "performed_at": "2026-07-12",
+  "target_host": "116.203.137.39",
+  "failure_point": "ASGI startup after immutable directory swap",
+  "failure_injection": "worker_supabase app imports successfully but raises during startup",
+  "activation_exit_code": 3,
+  "automatic_rollback_triggered": true,
+  "restored_backend_release_id": "20260712_201500_v4",
+  "restored_staging_release_id": "20260712_201500_v4",
+  "audit_api_healthy_after_rollback": true,
+  "search_worker_processes_after_rollback": 0,
+  "paid_provider_calls": 0,
+  "customer_searches_started": 0,
+  "passed": true,
+  "note": "An initial fixture targeting unused main.py did not trigger failure; v4 was immediately restored manually. The corrected v5b fixture exercised the real worker_supabase:app startup and automatic rollback path successfully."
+}

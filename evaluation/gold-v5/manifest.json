@@ -1,0 +1,42 @@
+{
+  "dataset_version": "mirax-gold-v5",
+  "release_id": "2026-07-13-complete-signal-lane-coverage-v5-11",
+  "status": "erp_crm_quarantined_complete_signal_lane_coverage_fixed_offline",
+  "ground_truth_policy": "Human judgments only. MIRAX, Anthropic and source providers may generate candidates but never expected labels.",
+  "final_judgments": 200,
+  "composition": {
+    "v5_output_target": 160,
+    "legacy_baseline_target": 25,
+    "adversarial_target": 15
+  },
+  "legacy_baseline": {
+    "dataset_version": "mirax-gold-v1",
+    "minimum_initial_judgments": 20,
+    "maximum_final_judgments": 30,
+    "purpose": "calibration_and_regression_only",
+    "may_certify_v5_precision": false
+  },
+  "v5_generation": {
+    "shadow_only": true,
+    "customer_visible": false,
+    "general_workers_enabled": false,
+    "production_brake_required": true,
+    "verticals": 10,
+    "required_provenance": [
+      "source_id", "source_url", "publisher", "observation_date",
+      "extraction_method", "cost_eur", "selection_reason"
+    ]
+  },
+  "source_classes_expected_when_applicable": [
+    "official_company_website", "company_careers", "job_board",
+    "public_procurement_portal", "municipal_register", "recognized_local_news",
+    "official_registry", "official_social_profile", "technology_audit",
+    "ad_transparency_library", "search_snippet"
+  ],
+  "final_metric_policy": {
+    "v5_outputs_must_be_majority": true,
+    "legacy_reported_separately": true,
+    "adversarial_reported_separately": true,
+    "mixed_precision_without_cohort_breakdown_forbidden": true
+  }
+}

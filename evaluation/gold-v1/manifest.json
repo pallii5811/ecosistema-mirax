@@ -1,0 +1,32 @@
+{
+  "dataset_version": "mirax-gold-v1",
+  "status": "slots_created_labels_pending_human_review",
+  "ground_truth_policy": "No production-model decision may be used as ground truth. A human must provide every expected label and may override prior judgments.",
+  "cases_per_vertical": 20,
+  "positive_target_per_vertical": 10,
+  "negative_target_per_vertical": 10,
+  "total_planned_judgments": 200,
+  "required_case_fields": [
+    "candidate_snapshot",
+    "provenance",
+    "explicit_evidence",
+    "official_domain",
+    "company_size_class",
+    "signal_date",
+    "reason",
+    "expected_source_policy",
+    "buyer_fit_range"
+  ],
+  "verticals": [
+    { "id": "accountant", "seller": "Commercialista" },
+    { "id": "insurance_broker", "seller": "Broker assicurativo" },
+    { "id": "local_web_agency", "seller": "Agenzia web locale" },
+    { "id": "software_house", "seller": "Software house" },
+    { "id": "hr_recruitment", "seller": "Consulente HR e recruiting" },
+    { "id": "solar_energy", "seller": "Fornitore solare ed energia" },
+    { "id": "cybersecurity", "seller": "Provider cybersecurity" },
+    { "id": "erp_crm", "seller": "Provider ERP/CRM" },
+    { "id": "workplace_safety", "seller": "Consulente sicurezza sul lavoro" },
+    { "id": "industrial_water_treatment", "seller": "Fornitore trattamento acque industriali (unseen)" }
+  ]
+}

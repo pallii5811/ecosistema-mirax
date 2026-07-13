@@ -1,5 +1,6 @@
 import { leadMatchesSignalIntent } from '@/lib/signal-intent/match-lead'
 import type { SignalIntentSpec } from '@/lib/signal-intent/types'
+import { shouldRejectEnterpriseLead } from '@/lib/lead-enterprise-guard'
 
 export type LeadVisibilityOpts = {
   finalize: boolean
@@ -8,18 +9,29 @@ export type LeadVisibilityOpts = {
 
 /**
  * Gate riga tabella risultati rispetto al signal intent.
- * Con segnali attivi: mostra SEMPRE tutte le aziende (badge viola/giallo/grigio).
- * Filtro strict solo via "Solo con segnale" in ResultsTable.
+ *
+ * Durante lo streaming lascia visibili i lead pending, cosi' l'utente vede il
+ * flusso live. A risultato finale, invece, restano solo lead con evidenza
+ * confermata per il segnale richiesto. Questo evita liste "complete" ma fuori
+ * target per query come "aziende che investono in marketing".
  */
 export function shouldShowLeadForSignalIntent(
   lead: unknown,
   intent: SignalIntentSpec | null | undefined,
-  _opts: LeadVisibilityOpts,
+  opts: LeadVisibilityOpts,
 ): boolean {
   if (!intent?.required_signals?.length) return true
-  // Non nascondere lead in attesa di arricchimento — la colonna intent mostra lo stato.
-  void lead
-  return true
+  if (opts.scraping && !opts.finalize) return true
+  if (
+    lead &&
+    typeof lead === 'object' &&
+    shouldRejectEnterpriseLead(lead as Record<string, unknown>, intent.intent_summary || '', {
+      signalFocused: true,
+    })
+  ) {
+    return false
+  }
+  return leadMatchesSignalIntent(lead, intent)
 }
 
 export function countLeadsMatchingSignalIntent(
@@ -55,6 +67,6 @@ export function resultsSummaryForIntent(
   intent: SignalIntentSpec | null | undefined,
 ): string {
   if (!isSignalFocusedIntent(intent)) return `Trovati ${total} risultati.`
-  if (matched > 0) return `${total} aziende trovate · ${matched} con segnale confermato.`
-  return `${total} aziende trovate · verifica segnali nella colonna dedicata.`
+  if (matched > 0) return `${total} aziende trovate - ${matched} con segnale confermato.`
+  return `${total} aziende trovate - nessun segnale confermato.`
 }

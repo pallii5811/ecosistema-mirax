@@ -1,0 +1,24 @@
+{
+  "fixture_version": "1.0.0",
+  "vertical": "erp_crm",
+  "run_id": "eb7f4cb4-d3b9-43f4-b0fe-42edb474e82d",
+  "canary_id": "ab6cdcf8-67ef-4490-8f08-de63f3cc19e8",
+  "search_id": "0a1ee150-2e18-42a9-93cd-2d3b729e1a43",
+  "release_id": "2026-07-13-source-signal-projection-v5-10",
+  "required_signals": ["hiring", "technology_migration", "new_location"],
+  "covered_signals_before_fix": ["hiring"],
+  "seller_offer_before_fix": "software CRM",
+  "explicit_seller_offer": "ERP e CRM",
+  "root_causes": [
+    "preferred source selection stopped after covering only one of multiple required signals",
+    "technology_audit exposed the legacy alias tech_migration but not the canonical technology_migration id",
+    "catalog inference overrode the explicit composite seller clause"
+  ],
+  "expected_fix": "every required signal has a compatible executable source lane and the explicit Vendo clause is authoritative",
+  "source_queries_executed": 0,
+  "candidates_produced": 0,
+  "customer_publications": 0,
+  "customer_charges": 0,
+  "compiler_cost_eur": 0.05,
+  "quarantined": true
+}

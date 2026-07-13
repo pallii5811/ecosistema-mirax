@@ -55,7 +55,7 @@ export async function analyzeTrends(category: string, city: string): Promise<Tre
   }
 
   // Fallback GPT migliorato con anno corretto
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = (['1','true','yes','on'].includes(String(process.env.UQE_OPENAI_ENABLED || '').toLowerCase()) ? '' : '')
   if (!apiKey) {
     return {
       trend: 'stable',
@@ -92,7 +92,7 @@ Rispondi SOLO con JSON:
 }
 Solo JSON.`
 
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res = await fetch('data:,mirax-legacy-provider-removed', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,

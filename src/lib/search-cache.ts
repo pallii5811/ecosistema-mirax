@@ -206,6 +206,18 @@ export async function requestIncrementalScrape(
   const maxLeads = Math.min(MAX_LEADS_PER_SEARCH, Math.max(10, Math.round(opts.maxLeads || 10)))
   const originalQuery =
     String(opts.originalQuery ?? opts.intent?.query ?? '').trim() || null
+  const intentWithTarget: Record<string, unknown> | null = opts.intent
+    ? {
+        ...opts.intent,
+        max_leads: maxLeads,
+        requested_leads: maxLeads,
+        lead_target: maxLeads,
+      }
+    : {
+        max_leads: maxLeads,
+        requested_leads: maxLeads,
+        lead_target: maxLeads,
+      }
 
   const cache = await loadMergedSearchCache(supabase, {
     category,
@@ -228,7 +240,7 @@ export async function requestIncrementalScrape(
       results: [],
     }
     if (zone) resetPayload.zone = zone
-    if (opts.intent) resetPayload.intent = opts.intent
+    if (intentWithTarget) resetPayload.intent = intentWithTarget
     await supabase.from('searches').update(resetPayload).eq('id', cache.canonicalJobId)
     return {
       jobId: cache.canonicalJobId,
@@ -249,7 +261,7 @@ export async function requestIncrementalScrape(
       location,
     }
     if (zone) updatePayload.zone = zone
-    if (opts.intent) updatePayload.intent = opts.intent
+    if (intentWithTarget) updatePayload.intent = intentWithTarget
 
     if (isActive) {
       await supabase.from('searches').update(updatePayload).eq('id', cache.canonicalJobId)
@@ -279,7 +291,7 @@ export async function requestIncrementalScrape(
         category,
         location,
         maxLeads,
-        intent: opts.intent,
+        intent: intentWithTarget,
       }),
     )
     .select('id')
@@ -313,10 +325,17 @@ export async function requestIncrementalScrape(
           .update({
             status: 'pending',
             ...(zone ? { zone } : {}),
+            ...(intentWithTarget ? { intent: intentWithTarget } : {}),
           })
           .eq('id', dupRow.id)
-      } else if (zone) {
-        await supabase.from('searches').update({ zone }).eq('id', dupRow.id)
+      } else if (zone || intentWithTarget) {
+        await supabase
+          .from('searches')
+          .update({
+            ...(zone ? { zone } : {}),
+            ...(intentWithTarget ? { intent: intentWithTarget } : {}),
+          })
+          .eq('id', dupRow.id)
       }
 
       const parsed = parseSearchResults(dupRow.results)
@@ -338,6 +357,48 @@ export type AgenticWorkerJobResult = {
   reused: boolean
 }
 
+export async function createAgenticPlanningJob(
+  supabase: SupabaseClient,
+  opts: { query: string; maxLeads: number; userId?: string | null },
+): Promise<string> {
+  const maxLeads = clampSearchMaxLeads(opts.maxLeads)
+  const { data, error } = await supabase
+    .from('searches')
+    .insert({
+      category: 'Planning',
+      location: 'Italia',
+      status: 'planning',
+      results: [],
+      created_at: new Date().toISOString(),
+      ...(opts.userId ? { user_id: opts.userId } : {}),
+      zone: encodeMaxLeadsZone(maxLeads),
+      intent: {
+        original_query: String(opts.query || '').trim(),
+        query: String(opts.query || '').trim(),
+        requested_leads: maxLeads,
+        max_leads: maxLeads,
+        lead_target: maxLeads,
+        lifecycle_stage: 'planning',
+      },
+    })
+    .select('id')
+    .single()
+  if (error || !data?.id) throw new Error(error?.message || 'Impossibile inizializzare la ricerca')
+  return String(data.id)
+}
+
+export async function cancelAgenticPlanningJob(
+  supabase: SupabaseClient,
+  searchId: string,
+  reason: string,
+): Promise<void> {
+  await supabase
+    .from('searches')
+    .update({ status: 'cancelled', progress: { stop_reason: reason }, results: [] })
+    .eq('id', searchId)
+    .eq('status', 'planning')
+}
+
 /**
  * Crea job worker in modalità agentic-only (no Maps).
  * Il worker Python esegue WebResearcher + DataExtractor con streaming incrementale.
@@ -352,6 +413,7 @@ export async function requestAgenticWorkerJob(
     sector?: string | null
     intent?: Record<string, unknown> | null
     plan?: Record<string, unknown> | null
+    existingSearchId?: string | null
   },
 ): Promise<AgenticWorkerJobResult> {
   const query = String(opts.query || '').trim()
@@ -365,22 +427,23 @@ export async function requestAgenticWorkerJob(
     search_strategy: 'organic_web_search',
     original_query: query,
     query,
+    max_leads: maxLeads,
+    requested_leads: maxLeads,
+    lead_target: maxLeads,
     ...(opts.plan && typeof opts.plan === 'object' ? { uqe_plan: opts.plan } : {}),
   }
 
-  const { data: insertData, error: insertError } = await supabase
-    .from('searches')
-    .insert(
-      buildPendingSearchInsert({
+  const pendingRow = buildPendingSearchInsert({
         userId: opts.userId,
         category: sector,
         location,
         maxLeads,
         intent,
-      }),
-    )
-    .select('id')
-    .single()
+      })
+  const mutation = opts.existingSearchId
+    ? supabase.from('searches').update(pendingRow).eq('id', opts.existingSearchId).eq('status', 'planning')
+    : supabase.from('searches').insert(pendingRow)
+  const { data: insertData, error: insertError } = await mutation.select('id').single()
 
   if (!insertError && insertData?.id) {
     return {

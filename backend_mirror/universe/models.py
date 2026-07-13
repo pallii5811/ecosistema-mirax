@@ -57,6 +57,7 @@ class UniverseObservation:
     observed_at: Optional[str] = None
     confidence: float = 1.0
     metadata: Dict[str, Any] = field(default_factory=dict)
+    dedup_key: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -67,6 +68,7 @@ class UniverseObservation:
             "source": self.source,
             "confidence": self.confidence,
             "metadata": self.metadata,
+            "dedup_key": self.dedup_key,
         }
 
 
@@ -99,6 +101,7 @@ class UniverseEvent:
     source: str
     entity_id: Optional[str] = None
     occurred_at: Optional[str] = None
+    dedup_key: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -109,7 +112,78 @@ class UniverseEvent:
             "source": self.source,
             "processed": False,
             "error_count": 0,
+            "dedup_key": self.dedup_key,
         }
+
+
+UNIVERSE_EVENT_TYPES = frozenset(
+    {
+        "new_hiring",
+        "registry_change",
+        "funding_received",
+        "website_changed",
+        "pixel_installed",
+        "pixel_removed",
+        "ads_started",
+        "crm_installed",
+        "crm_change",
+        "new_director",
+        "tender_won",
+        "sector_investment",
+        "revenue_changed",
+        "employees_changed",
+        "supplier_sought",
+        "expansion_started",
+        "new_product_launched",
+        "market_entered",
+        "executive_change",
+        "partnership_announced",
+    }
+)
+
+UNIVERSE_ENTITY_TYPES = frozenset(
+    {
+        "company",
+        "person",
+        "website",
+        "technology",
+        "job",
+        "event",
+        "document",
+        "product",
+        "location",
+        "tender",
+        "investor",
+        "product_category",
+    }
+)
+
+UNIVERSE_RELATIONSHIP_TYPES = frozenset(
+    {
+        "owns",
+        "uses",
+        "hires",
+        "has",
+        "receives",
+        "buys",
+        "competes_with",
+        "located_in",
+        "related_to",
+        "mentioned_in",
+        "supplies",
+        "supplied_by",
+        "sells_to",
+        "buys_from",
+        "partner_of",
+        "invested_in",
+        "received_investment_from",
+        "customer_of",
+        "has_customer",
+        "awarded_to",
+        "awarded_by",
+        "competed_for",
+    }
+)
 
 
 @dataclass

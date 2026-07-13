@@ -19,6 +19,7 @@ import {
   applyStreamingDisplay,
   normalizeStreamingBatch,
 } from '@/lib/search-streaming/display-results'
+import { shouldUseAgenticSearchUi } from '@/lib/search-ui-mode'
 import { useResumeAudits } from '@/components/dashboard/hooks/useResumeAudits'
 import type { DashboardState } from '@/components/dashboard/hooks/useDashboardState'
 import type { useCredits } from '@/components/dashboard/hooks/useCredits'
@@ -70,6 +71,7 @@ export function useSearchJob(
   const activeJobIdRef = useRef<string | null>(null)
   const activeFiltersRef = useRef(activeFilters)
   const applyInFlightRef = useRef(false)
+  const chargedLeadCountRef = useRef(0)
 
   useEffect(() => {
     queryRef.current = query
@@ -125,8 +127,9 @@ export function useSearchJob(
 
       const cap = clampSearchMaxLeads(maxLeads, creditsRef.current)
       const display = filtered.slice(0, cap)
-      const newCount = Math.max(0, display.length - resultsCountRef.current)
-      if (newCount > 0) await deductCredits(newCount)
+      const newCount = Math.max(0, display.length - chargedLeadCountRef.current)
+      if (newCount > 0) await deductCredits(newCount, activeJobIdRef.current)
+      chargedLeadCountRef.current = Math.max(chargedLeadCountRef.current, display.length)
       commitDisplay(display)
 
       if (finalize) {
@@ -157,14 +160,28 @@ export function useSearchJob(
       // Legacy: durante streaming, ignora batch vuoti
       if (!finalized && incoming.length === 0) return
 
-      const { display, newCount } = applyStreamingDisplay(current, incoming, {
+      let { display } = applyStreamingDisplay(current, incoming, {
         ...batchOpts(scraping || !finalized),
         allowShrink: false,
       })
 
       if (!finalized && display.length === current.length && incoming.length === 0) return
 
-      if (newCount > 0) await deductCredits(newCount)
+      const intent = signalIntentRef.current
+      const signalFocused = isSignalFocusedIntent(intent)
+      const completed = status === 'completed'
+      if (finalized && signalFocused) {
+        display = display.filter((lead) =>
+          shouldShowLeadForSignalIntent(lead, intent, { finalize: true, scraping: false }),
+        )
+      }
+
+      const shouldCharge = completed || (!signalFocused && !finalized)
+      if (shouldCharge) {
+        const newCount = Math.max(0, display.length - chargedLeadCountRef.current)
+        if (newCount > 0) await deductCredits(newCount, activeJobIdRef.current)
+        chargedLeadCountRef.current = Math.max(chargedLeadCountRef.current, display.length)
+      }
       commitDisplay(display)
 
       if (!finalized) {
@@ -326,6 +343,7 @@ export function useSearchJob(
       activeSearchQueryRef.current = q
       queryRef.current = q
       agenticSearchRef.current = false
+      chargedLeadCountRef.current = 0
       completionMessageRef.current = null
 
       const parsedIntent = parseSignalIntentOffline(q)
@@ -345,23 +363,20 @@ export function useSearchJob(
         const sid = (response as Record<string, unknown>)?.searchId ?? jobId ?? null
         const filters = (response as Record<string, unknown>)?.filters
         const ai_debug = (response as Record<string, unknown>)?.ai_debug
+        const userMessage =
+          typeof (response as Record<string, unknown>)?.user_message === 'string'
+            ? String((response as Record<string, unknown>).user_message)
+            : ''
 
-        const searchStrategy = String((ai_debug as Record<string, unknown>)?.search_strategy ?? '')
-        const isAgentic =
-          searchStrategy === 'organic_web_search' ||
-          String((ai_debug as Record<string, unknown>)?.source ?? '').includes('agentic')
-        const isMapsDiscovery =
-          searchStrategy === 'maps' ||
-          searchStrategy === 'hybrid' ||
-          String((ai_debug as Record<string, unknown>)?.source ?? '').includes('maps')
-        agenticSearchRef.current = isAgentic && !isMapsDiscovery
+        const useAgenticUi = shouldUseAgenticSearchUi(ai_debug, parsedIntent)
+        agenticSearchRef.current = useAgenticUi
 
         if (status === 'pending' && jobId) {
           setIsLoading(false)
           setIsScraping(true)
           isScrapingRef.current = true
           setLoadingMessage(
-            isAgentic && !isMapsDiscovery
+            useAgenticUi
               ? "Avvio Agente AI — ricerca B2B sul web…"
               : 'Avvio discovery Maps — lead e audit in arrivo…',
           )
@@ -381,7 +396,10 @@ export function useSearchJob(
         const raw = Array.isArray((response as { results?: unknown[] })?.results)
           ? (response as { results: unknown[] }).results
           : []
-        await applyInstantLeads(raw, true)
+        const display = await applyInstantLeads(raw, true)
+        if (userMessage && display.length === 0) {
+          toastInfo(userMessage, 'Ricerca in sicurezza')
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Errore ricerca'
         setError(message)

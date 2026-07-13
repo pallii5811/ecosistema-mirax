@@ -8,6 +8,7 @@ import {
   Save, FolderOpen, Trash2, AlertTriangle, FileText, Rocket, X, ListChecks
 } from 'lucide-react'
 import Link from 'next/link'
+import { useToast } from '@/components/ToastProvider'
 
 type EmailStep = {
   step: number
@@ -89,6 +90,7 @@ function EmailCard({ email, index, onEdit }: { email: EmailStep; index: number; 
 
 function SequencesContent() {
   const searchParams = useSearchParams()
+  const { success: toastSuccess, error: toastError } = useToast()
   const [companyName, setCompanyName] = useState('')
   const [website, setWebsite] = useState('')
   const [service, setService] = useState('')
@@ -223,11 +225,12 @@ function SequencesContent() {
       if (data?.ok) {
         setSaved((prev) => prev.filter((s) => s.id !== id))
         if (currentId === id) setCurrentId(null)
+        toastSuccess('Sequenza eliminata', 'Sequenze')
       } else {
-        alert(data?.error || 'Errore eliminazione')
+        toastError(data?.error || 'Errore eliminazione', 'Sequenze')
       }
     } catch (e: any) {
-      alert(e?.message || 'Errore di rete')
+      toastError(e?.message || 'Errore di rete', 'Sequenze')
     }
   }
 

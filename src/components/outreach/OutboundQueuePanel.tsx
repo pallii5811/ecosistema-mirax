@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { CheckCircle2, Loader2, Mail, Sparkles, XCircle } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { useToast } from '@/components/ToastProvider'
 
 export type OutboundQueueItem = {
   id: string
@@ -28,6 +29,7 @@ type Props = {
 
 export function OutboundQueuePanel({ senderEmail = '', senderName = '' }: Props) {
   const [items, setItems] = useState<OutboundQueueItem[]>([])
+  const { success: toastSuccess, error: toastError } = useToast()
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [selected, setSelected] = useState<Record<string, string>>({})
@@ -70,8 +72,9 @@ export function OutboundQueuePanel({ senderEmail = '', senderName = '' }: Props)
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Approvazione fallita')
       await load()
+      toastSuccess('Proposta approvata e messa in invio', 'Outbound')
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Errore approvazione')
+      toastError(e instanceof Error ? e.message : 'Errore approvazione', 'Outbound')
     } finally {
       setBusyId(null)
     }
@@ -84,8 +87,9 @@ export function OutboundQueuePanel({ senderEmail = '', senderName = '' }: Props)
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Rifiuto fallito')
       await load()
+      toastSuccess('Proposta rifiutata', 'Outbound')
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Errore')
+      toastError(e instanceof Error ? e.message : 'Errore', 'Outbound')
     } finally {
       setBusyId(null)
     }

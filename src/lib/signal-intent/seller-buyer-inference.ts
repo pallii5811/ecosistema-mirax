@@ -10,13 +10,13 @@ export type SellerBuyerProfile = {
 }
 
 const SELLER_QUERY =
-  /\b(mi\s+servono\s+clienti|trov\w+\s+clienti|clienti\s+per|cerco\s+clienti|potenziali\s+clienti|vendere\s+(?:il\s+mio|i\s+miei|la\s+mia|un\s+mio|una\s+mia)|chi\s+(?:comprerebbe|acquista|potrebbe\s+comprare)|promuovere\s+(?:il\s+mio|i\s+miei)|lead\s+per\s+vendere|sono\s+(?:un|una)\b|potrebbero\s+aver\s+bisogno|che\s+potrebbero\s+aver\s+bisogno|freelanc\w*|libero\s+profession\w*)\b/i
+  /\b(mi\s+servono\s+clienti|trov\w+\s+clienti|clienti\s+per|cerco\s+clienti|potenziali\s+clienti|vendere\s+(?:il\s+mio|i\s+miei|la\s+mia|un\s+mio|una\s+mia)|chi\s+(?:comprerebbe|acquista|potrebbe\s+comprare)|promuovere\s+(?:il\s+mio|i\s+miei)|lead\s+per\s+vendere|sono\s+(?:un['’]?\s*|una\s+)|potrebbero\s+aver\s+bisogno|che\s+potrebbero\s+aver\s+bisogno|freelanc\w*|libero\s+profession\w*)/i
 
 /** Cosa vende l'utente — estrazione leggera dal testo. */
 function extractUserService(query: string): string | null {
   const q = query.trim()
   const patterns: RegExp[] = [
-    /\bsono\s+(?:un|una)\s+(.+?)(?:\s*,|\s+trov|\s+cerc|\s+che|\.$)/i,
+    /\bsono\s+(?:un['’]?\s*|una\s+)(.+?)(?:\s*,|\s+trov|\s+cerc|\s+che|\.$)/i,
     /\bvendere\s+(?:il\s+mio|i\s+miei|la\s+mia|un\s+mio|una\s+mia)\s+(.+?)(?:\.|$)/i,
     /\bclienti\s+per\s+(?:vendere\s+)?(?:il\s+mio|i\s+miei|la\s+mia|un\s+mio|una\s+mia)?\s*(.+?)(?:\.|$)/i,
     /\bsoftware\s+(?:di|per)\s+(.+?)(?:\.|$)/i,
@@ -25,7 +25,7 @@ function extractUserService(query: string): string | null {
   ]
   for (const re of patterns) {
     const m = q.match(re)
-    if (m?.[1]?.trim()) return m[1].trim().slice(0, 120)
+    if (m?.[1]?.trim()) return m[1].trim().replace(/[,:;]+$/, '').trim().slice(0, 120)
   }
   if (/\blead\s*gen/i.test(q)) return 'software di lead generation'
   if (/\bmarketing\s+digitale\b/i.test(q)) return 'servizi di marketing digitale'
@@ -40,6 +40,21 @@ type BuyerRule = {
 }
 
 const BUYER_RULES: BuyerRule[] = [
+  {
+    patterns: [/commercialist/i, /ragionier/i, /contabil/i, /fiscal/i, /paghe/i, /payroll/i, /bilancio/i],
+    industries: ['nuove societa', 'pmi in crescita', 'startup', 'retail', 'ecommerce'],
+    maps_category: 'Aziende',
+  },
+  {
+    patterns: [/broker\s+assicur/i, /assicurazion/i, /polizze?/i, /rischi?\s+aziendal/i, /welfare/i, /infortuni/i],
+    industries: ['logistica', 'edilizia', 'produzione', 'servizi operativi', 'pmi con dipendenti'],
+    maps_category: 'Aziende',
+  },
+  {
+    patterns: [/web\s*agency/i, /agenzia\s+web/i, /rifare\s+il\s+sito/i, /sito\s+web/i, /ecommerce/i, /shopify/i],
+    industries: ['retail', 'ristorazione', 'hotel', 'servizi locali', 'pmi'],
+    maps_category: 'Aziende',
+  },
   {
     patterns: [/\bpython\b/i, /\bprogrammatore\b/i, /\bdeveloper\b/i, /\bsviluppat\w*\b/i, /\bfull[\s-]?stack\b/i],
     industries: ['software', 'tech', 'pmi'],

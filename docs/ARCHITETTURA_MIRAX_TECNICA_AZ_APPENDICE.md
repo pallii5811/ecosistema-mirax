@@ -313,7 +313,7 @@ flowchart LR
 ### G.1 Vercel (ecosistema-mirax)
 
 - [ ] `NEXT_PUBLIC_SUPABASE_URL` + keys
-- [ ] `OPENAI_API_KEY`
+- [ ] `ANTHROPIC_API_KEY`
 - [ ] `ANTHROPIC_API_KEY`
 - [ ] `CLAUDE_ENRICH_MODEL=claude-sonnet-4-6`
 - [ ] `BACKEND_URL=http://116.203.137.39:8002`

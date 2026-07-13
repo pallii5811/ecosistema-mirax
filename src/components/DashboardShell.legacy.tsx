@@ -486,38 +486,6 @@ export default function DashboardShell() {
     setSignalIntent(null)
   }
 
-  const mergeEnrichedHiringLeads = useCallback((patch: unknown[]) => {
-    if (!Array.isArray(patch) || patch.length === 0) return
-    const byKey = new Map<string, Record<string, unknown>>()
-    for (const item of patch) {
-      if (!item || typeof item !== 'object') continue
-      const row = item as Record<string, unknown>
-      const site = String(row.sito || row.website || row.url || '')
-        .trim()
-        .toLowerCase()
-        .replace(/\/+$/, '')
-      const key = site || `name:${String(row.azienda || row.nome || row.name || '').trim().toLowerCase()}`
-      if (key && key !== 'name:') byKey.set(key, row)
-    }
-    if (byKey.size === 0) return
-    setResults((prev) => {
-      if (!Array.isArray(prev)) return prev
-      return prev.map((item) => {
-        if (!item || typeof item !== 'object') return item
-        const row = item as Record<string, unknown>
-        const site = String(row.sito || row.website || row.url || '')
-          .trim()
-          .toLowerCase()
-          .replace(/\/+$/, '')
-        const key = site || `name:${String(row.azienda || row.nome || row.name || '').trim().toLowerCase()}`
-        const enriched = byKey.get(key)
-        return enriched ? { ...row, ...enriched } : item
-      })
-    })
-  }, [])
-
-  const hiringEnrichBusyRef = useRef(false)
-
   // Helper: deduct N credits via API and update state/ref
   const deductCredits = async (amount: number): Promise<number> => {
     if (amount <= 0) return creditsRef.current
@@ -755,51 +723,6 @@ export default function DashboardShell() {
 
     return unsubscribe
   }, [authUserId, isRestored, supabase, toastInfo, toastSuccess, maybeAutoSyncCrm])
-
-  // Claude — arricchisce ogni lead Maps con il dato richiesto dall'utente (Sonnet)
-  useEffect(() => {
-    if (!signalIntent?.required_signals?.length && !signalIntent?.reasoning) return
-    if (!query.trim() || !Array.isArray(results) || results.length === 0) return
-    if (hiringEnrichBusyRef.current) return
-
-    const pending = results
-      .filter((item) => item && typeof item === 'object')
-      .map((item) => item as Record<string, unknown>)
-      .filter((row) => !row.claude_enrichment)
-      .slice(0, 15)
-
-    if (pending.length === 0) return
-
-    hiringEnrichBusyRef.current = true
-    let cancelled = false
-
-    ;(async () => {
-      try {
-        const res = await fetch('/api/claude-enrich-batch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            user_query: query.trim(),
-            signal_intent: signalIntent,
-            leads: pending,
-            max_leads: 15,
-          }),
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!cancelled && res.ok && Array.isArray(data?.leads)) {
-          mergeEnrichedHiringLeads(data.leads)
-        }
-      } catch {
-        /* retry on next results update */
-      } finally {
-        if (!cancelled) hiringEnrichBusyRef.current = false
-      }
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [signalIntent, results, query, mergeEnrichedHiringLeads])
 
   useEffect(() => {
     if (!isRestored) return

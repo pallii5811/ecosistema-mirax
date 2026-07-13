@@ -1,0 +1,18 @@
+{
+  "fixture_version": "1.0.0",
+  "vertical": "cybersecurity",
+  "run_id": "6d5cafab-12a4-4fa8-825e-780c7c00bbf9",
+  "canary_id": "47e0dfb1-d391-4cd4-9b10-d61f9e040b2f",
+  "search_id": "3d633183-7403-43b6-b2b6-f1d9527b34dc",
+  "release_id": "2026-07-13-semantic-source-lane-gate-v5-9",
+  "query_shape": "Vendo <offer>: trovami <buyer criteria>",
+  "expected_signal": "cybersecurity_exposure",
+  "failure": "provider returned an empty commercial_hypotheses array and the explicit Vendo offer was not available to deterministic causal completion",
+  "expected_fix": "extract the explicit seller offer after Vendo/Offro/Fornisco and complete ontology-backed hypotheses without a paid repair call",
+  "source_queries_executed": 0,
+  "candidates_produced": 0,
+  "customer_publications": 0,
+  "customer_charges": 0,
+  "compiler_cost_eur": 0.05,
+  "quarantined": true
+}

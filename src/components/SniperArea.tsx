@@ -8,11 +8,15 @@ import { useDashboard } from '@/components/DashboardContext'
 import { searchLocaleHint, t } from '@/lib/i18n'
 import type { SearchSource } from '@/lib/search-source'
 
-const BASE_LEAD_OPTIONS = [10, 25, 50, 100, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000]
+const BASE_LEAD_OPTIONS = [10, 25, 50, 100, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000]
 
 function buildLeadOptions(credits: number): number[] {
-  const cap = Math.min(MAX_LEADS_PER_SEARCH, Math.max(10, credits))
-  return BASE_LEAD_OPTIONS.filter((n) => n <= cap)
+  const cap = Math.min(MAX_LEADS_PER_SEARCH, Math.max(10, Math.floor(credits)))
+  const options = new Set(BASE_LEAD_OPTIONS.filter((n) => n <= cap))
+  // If the user has a non-round credit balance (e.g. 4679), expose that exact
+  // number so the selected target can always match the real available budget.
+  if (cap >= 10) options.add(cap)
+  return Array.from(options).sort((a, b) => a - b)
 }
 
 type SniperAreaProps = {
@@ -210,8 +214,8 @@ const SniperArea = ({
       {isLoading && aiDebug ? (
         <p className="text-[11px] text-violet-600 font-medium animate-pulse text-center mt-1">
           {(() => {
-            const d = aiDebug as any
-            return `Cercando: ${d?.category || '—'} in ${d?.city || '—'}...`
+            const d = aiDebug as Record<string, unknown>
+            return `Cercando: ${String(d?.category || '—')} in ${String(d?.city || '—')}...`
           })()}
         </p>
       ) : null}

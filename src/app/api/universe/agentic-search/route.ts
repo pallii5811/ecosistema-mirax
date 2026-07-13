@@ -21,12 +21,16 @@ import {
   isUniverseCacheEnabled,
   setQueryCache,
 } from '@/lib/universe/query-cache'
-import { parseSignalIntent } from '@/lib/signal-intent/parse-semantic'
+import { parseSignalIntentOffline } from '@/lib/signal-intent/parse-semantic'
 import { coerceSignalIntent } from '@/lib/signal-intent/parse-heuristic'
-import { parseCommercialIntent } from '@/lib/signal-intent/parse-commercial-intent'
+import { parseCommercialIntentOffline } from '@/lib/signal-intent/parse-commercial-intent'
 import { commercialIntentKey, type CommercialIntent } from '@/lib/signal-intent/commercial-intent'
-import { buildFeedbackPromptExamples } from '@/lib/universe/feedback'
-import { requestAgenticWorkerJob } from '@/lib/search-cache'
+import {
+  cancelAgenticPlanningJob,
+  createAgenticPlanningJob,
+  requestAgenticWorkerJob,
+} from '@/lib/search-cache'
+import { PersistentResearchCostGovernor } from '@/lib/research/persistent-cost-governor'
 import { clampSearchMaxLeads } from '@/lib/search-job-payload'
 import { buildMiraxQueryPlan } from '@/lib/uqe/mirax-query-planner'
 import type { SignalIntentSpec } from '@/lib/signal-intent/types'
@@ -37,7 +41,17 @@ type AgenticSearchMode = 'commercial' | 'signal' | 'worker_agentic'
 type CommercialSearchResult = Awaited<ReturnType<typeof executeCommercialUniverseSearch>>
 type SignalSearchResult = Awaited<ReturnType<typeof executeAgenticUniverseSearch>>
 
+const searchDisabled = () => /^(1|true|yes|on)$/i.test(String(process.env.MIRAX_SEARCH_DISABLED || ''))
+
 export async function POST(req: NextRequest) {
+  // This route used to bypass the dashboard brake and could still invoke paid
+  // semantic/search providers. Keep the global kill switch at the outer boundary.
+  if (searchDisabled()) {
+    return NextResponse.json(
+      { error: 'SEARCH_TEMPORARILY_DISABLED', status: 'disabled' },
+      { status: 503, headers: { 'Retry-After': '300' } },
+    )
+  }
   const auth = await requireUniverseAuth()
   if (!auth.ok) {
     return NextResponse.json({ error: auth.error }, { status: auth.status })
@@ -64,8 +78,25 @@ export async function POST(req: NextRequest) {
       const t0 = Date.now()
       const authClient = await createClient()
       const userId = auth.userId
-      const plan = await buildMiraxQueryPlan(userQuery)
       const agenticMax = clampSearchMaxLeads(limit)
+      const planningSearchId = await createAgenticPlanningJob(authClient, {
+        query: userQuery,
+        maxLeads: agenticMax,
+        userId,
+      })
+      let plan: Awaited<ReturnType<typeof buildMiraxQueryPlan>>
+      try {
+        const costMeter = new PersistentResearchCostGovernor(createServiceRoleClient())
+        await costMeter.initialize(planningSearchId, agenticMax)
+        plan = await buildMiraxQueryPlan(userQuery, {
+          requestedLeadCount: agenticMax,
+          searchId: planningSearchId,
+          costMeter,
+        })
+      } catch (error) {
+        await cancelAgenticPlanningJob(authClient, planningSearchId, 'planning_failed')
+        throw error
+      }
       const effectiveCity = city || plan.location || 'Italia'
       const sector = plan.sector || 'Agentic AI'
 
@@ -93,6 +124,7 @@ export async function POST(req: NextRequest) {
           extraction_schema: plan.extraction_schema,
           intent_summary: plan.intent_summary,
         },
+        existingSearchId: planningSearchId,
       })
 
       return NextResponse.json({
@@ -131,9 +163,9 @@ export async function POST(req: NextRequest) {
     let cache_hit = false
 
     if (mode === 'commercial') {
-      const feedbackExamples =
-        userId && userQuery ? await buildFeedbackPromptExamples(authClient, userId, 6) : []
-      commercialIntent = await parseCommercialIntent(userQuery, feedbackExamples)
+      // Graph-only mode has no search lifecycle/ledger. Keep it deterministic;
+      // all paid intent compilation belongs to worker_agentic after budget init.
+      commercialIntent = parseCommercialIntentOffline(userQuery)
       const effectiveCity = city || commercialIntent.target_profile.locations?.[0] || undefined
 
       const cachePayload = {
@@ -167,7 +199,7 @@ export async function POST(req: NextRequest) {
       signalIntent =
         body.signal_intent && typeof body.signal_intent === 'object'
           ? coerceSignalIntent(body.signal_intent)
-          : await parseSignalIntent(userQuery)
+          : parseSignalIntentOffline(userQuery)
       const effectiveCity = city || signalIntent.location || undefined
 
       const cachePayload = {

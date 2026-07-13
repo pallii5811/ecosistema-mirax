@@ -77,16 +77,15 @@ function patchLeadFromAds(lead: Record<string, unknown>, analysis: AdsPresence):
 
 /**
  * Arricchimento segnali d'acquisto post-discovery:
- * - Claude batch (ricerca web + evidenze per la query)
- * - Meta Ad Library quando la query chiede investimento marketing
+ * - Meta Ad Library quando la query chiede investimento marketing.
+ * L'arricchimento LLM avviene nel worker governato, non nel browser.
  */
 export function useSignalIntentEnrich(
   results: unknown[],
-  query: string,
+  _query: string,
   signalIntent: SignalIntentSpec | null | undefined,
   setResults: Dispatch<SetStateAction<unknown[]>>,
 ) {
-  const claudeBusyRef = useRef(false)
   const adsBusyRef = useRef(false)
 
   const mergeEnrichedLeads = useCallback(
@@ -113,53 +112,6 @@ export function useSignalIntentEnrich(
   )
 
   const wantsMarketingSpend = Boolean(signalIntent?.required_signals?.includes('investing_marketing'))
-  const wantsSignalEnrich = Boolean(signalIntent?.required_signals?.length || signalIntent?.reasoning)
-
-  // Claude — evidenze verificabili per la richiesta utente
-  useEffect(() => {
-    if (!wantsSignalEnrich || !query.trim()) return
-    if (!Array.isArray(results) || results.length === 0) return
-    if (claudeBusyRef.current) return
-
-    const pending = results
-      .filter((item) => item && typeof item === 'object')
-      .map((item) => item as Record<string, unknown>)
-      .filter((row) => !row.claude_enrichment && !isAuditPendingLead(row))
-      .slice(0, 15)
-
-    if (pending.length === 0) return
-
-    claudeBusyRef.current = true
-    let cancelled = false
-
-    ;(async () => {
-      try {
-        const res = await fetch('/api/claude-enrich-batch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            user_query: query.trim(),
-            signal_intent: signalIntent,
-            leads: pending,
-            max_leads: 15,
-          }),
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!cancelled && res.ok && Array.isArray(data?.leads)) {
-          mergeEnrichedLeads(data.leads)
-        }
-      } catch {
-        /* retry on next results tick */
-      } finally {
-        if (!cancelled) claudeBusyRef.current = false
-      }
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [wantsSignalEnrich, query, signalIntent, results, mergeEnrichedLeads])
-
   // Meta Ad Library — prova ufficiale di budget ads attivo
   useEffect(() => {
     if (!wantsMarketingSpend) return

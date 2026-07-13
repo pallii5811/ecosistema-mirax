@@ -1,0 +1,26 @@
+{
+  "fixture_version": "1.0.0",
+  "vertical": "solar_energy",
+  "run_id": "c13be85f-3cc6-479d-a09e-f35170a46a35",
+  "canary_id": "8ce36925-404a-473d-917e-d23f452eee6c",
+  "search_id": "e86abe46-b34e-4880-adba-89e39ca7c08d",
+  "release_id": "2026-07-13-source-execution-seller-scope-v5-8",
+  "expected_signal": "production_expansion",
+  "failed_lane": {
+    "source_class": "municipal_register",
+    "legacy_lane": "public_procurement",
+    "incompatible_query_terms": [
+      "appalto aggiudicato",
+      "gara aggiudicata",
+      "contratto affidato"
+    ]
+  },
+  "root_cause": "municipal_register was classified as procurement and inherited a tender template unrelated to production expansion",
+  "expected_fix": "municipal_register uses the regulatory permit lane and every production-expansion template contains plant, facility or capacity evidence terms",
+  "source_queries_executed": 0,
+  "candidates_produced": 0,
+  "customer_publications": 0,
+  "customer_charges": 0,
+  "compiler_cost_eur": 0.05,
+  "quarantined": true
+}

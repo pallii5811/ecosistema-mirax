@@ -7,6 +7,7 @@ import {
   filterOutMarketingAgencies,
   isBuyerMarketingInvestmentQuery,
 } from '@/lib/signal-intent/marketing-investment'
+import { shouldRejectEnterpriseLead } from '@/lib/lead-enterprise-guard'
 
 export type LeadLike = Record<string, unknown>
 
@@ -124,16 +125,16 @@ function leadText(lead: LeadLike): string {
 export function inferQueryCategoryKey(query: string): string | null {
   const q = (query || '').trim()
   if (!q) return null
-  if (isBuyerMarketingInvestmentQuery(q)) return null
   for (const [re, key] of CATEGORY_PATTERNS) {
     if (re.test(q)) return key
   }
+  if (isBuyerMarketingInvestmentQuery(q)) return null
   return null
 }
 
 /** Esclude lead chiaramente fuori categoria rispetto alla query. */
 export function filterLeadsDeterministic(leads: LeadLike[], query: string): LeadLike[] {
-  let filtered = filterOutMarketingAgencies(leads, query)
+  let filtered = filterOutMarketingAgencies(leads, query).filter((lead) => !shouldRejectEnterpriseLead(lead, query))
   const categoryKey = inferQueryCategoryKey(query)
   if (!categoryKey) return filtered
 
@@ -204,10 +205,10 @@ Rispondi SOLO con array JSON degli indici pertinenti.
 Esempio: [0,1,3,5]
 Zero testo aggiuntivo. Solo l'array.`
 
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = (['1','true','yes','on'].includes(String(process.env.UQE_OPENAI_ENABLED || '').toLowerCase()) ? '' : '')
   if (!apiKey) return batch
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const response = await fetch('data:,mirax-legacy-provider-removed', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,

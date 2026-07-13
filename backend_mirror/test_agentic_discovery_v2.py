@@ -1,6 +1,8 @@
 """Deterministic regression tests for the scalable agentic discovery core."""
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from agents.agentic_gap_fill import (
     AGENTIC_MAX_SCRAPE_PAGES,
     build_agentic_completion_message,
@@ -8,6 +10,7 @@ from agents.agentic_gap_fill import (
     decode_agentic_checkpoint,
     encode_agentic_checkpoint,
     extracted_to_lead_stub,
+    prepare_agentic_extracted_item,
     _satisfied_required_signals,
 )
 from agents.portal_blacklist import (
@@ -15,6 +18,8 @@ from agents.portal_blacklist import (
     is_extraction_blocked_source,
 )
 from agents.search_serp import _extract_links_from_html
+from agents.search_serp import _dedupe_urls, search_urls_http
+from agents.data_extractor import _heuristic_extract_companies
 from agents.web_researcher import (
     WebResearcher,
     _heuristic_search_queries,
@@ -27,6 +32,10 @@ def test_evidence_source_is_not_target_domain() -> None:
     assert is_blacklisted_domain("startupitalia.eu") is True
     assert is_extraction_blocked_source("https://startupitalia.eu/news/acme-round") is False
     assert is_blacklisted_domain("indeed.it") is True
+    assert is_blacklisted_domain("jobeka.com") is True
+    assert is_blacklisted_domain("fortune.com") is True
+    assert is_blacklisted_domain("salesforce.com") is True
+    assert is_blacklisted_domain("hubspot.com") is True
     assert is_extraction_blocked_source("https://indeed.it/jobs?q=python") is False
     assert is_extraction_blocked_source("https://github.com/acme/repo") is True
 
@@ -41,6 +50,118 @@ def test_serp_keeps_multiple_evidence_pages_per_host() -> None:
     found = _extract_links_from_html(links, "https://search.example", seen, counts)
     assert len(found) == 4
     assert len(set(found)) == 4
+
+
+def test_search_provider_prefers_api_and_blocks_code_hosts() -> None:
+    assert _dedupe_urls(
+        [
+            "https://azienda.example/jobs?utm_source=openai",
+            "https://azienda.example/careers/](https://azienda.example/careers/",
+            "https://github.com/acme/repo",
+            "https://example.com/bando.pdf?utm_source=openai",
+        ],
+        10,
+    ) == ["https://azienda.example/jobs", "https://azienda.example/careers/"]
+    api_urls = [f"https://azienda.example/jobs-{i}" for i in range(5)]
+    with patch(
+        "agents.search_serp._search_openai_web",
+        return_value=api_urls,
+    ), patch("agents.search_serp._ddg_pages", side_effect=AssertionError("html fallback should not run")):
+        assert search_urls_http("Business Developer Italia", 5) == api_urls
+
+
+def test_extractor_has_evidence_first_fallback_for_rate_limits() -> None:
+    plan = {
+        "required_signals": ["hiring"],
+        "commercial_hypothesis": {
+            "hiring_roles": ["Business Development Representative", "Inside Sales"],
+        },
+    }
+    portal_text = "ToolsGroup is seeking a motivated Business Development Representative to support outbound prospecting."
+    extracted = _heuristic_extract_companies(plan, "https://it.jobeka.com/lavoro-bdr-lecco", portal_text)
+    assert extracted
+    assert extracted[0]["name"] == "ToolsGroup"
+    assert extracted[0]["website"] == ""
+    assert extracted[0]["matched_signals"] == ["hiring"]
+
+    official = _heuristic_extract_companies(
+        plan,
+        "https://www.acme-sales.it/careers",
+        "Lavora con noi: ricerchiamo Inside Sales per sviluppo nuovi clienti e prospecting.",
+    )
+    assert official
+    assert official[0]["website"] == "https://www.acme-sales.it/"
+
+    generic = _heuristic_extract_companies(
+        plan,
+        "https://www.generic-pmi.it/lavora-con-noi",
+        "Lavora con noi: cerchiamo persone motivate e professionali.",
+    )
+    assert generic == []
+
+
+def test_portal_evidence_must_match_company_name() -> None:
+    mismatched = {
+        "name": "Rhiag Group Italia",
+        "website": "",
+        "source_url": "https://it.jobeka.com/lavoro-professional-sales-representative-saronno",
+        "evidence": "Errebian Spa ricerca 5 Sales Representative per la Lombardia.",
+        "matched_signals": ["hiring"],
+        "_required_signals": ["hiring"],
+    }
+    assert prepare_agentic_extracted_item(mismatched, location="Italia") is None
+
+
+def test_quality_contract_rejects_non_target_and_keeps_verified_pmi() -> None:
+    public_entity = {
+        "name": "Comune di Milano",
+        "website": "https://www.comune.milano.it",
+        "source_url": "https://www.comune.milano.it/bando",
+        "evidence": "Comune di Milano pubblica un nuovo bando.",
+        "matched_signals": ["tender_won"],
+        "_required_signals": ["tender_won"],
+    }
+    assert prepare_agentic_extracted_item(public_entity, location="Milano") is None
+
+    generic_role = {
+        "name": "Sales Development Representative",
+        "website": "",
+        "source_url": "https://it.jobeka.com/lavoro-sdr-milano",
+        "evidence": "Acme Srl ricerca Sales Development Representative per prospecting outbound.",
+        "matched_signals": ["hiring"],
+        "_required_signals": ["hiring"],
+    }
+    assert prepare_agentic_extracted_item(generic_role, location="Milano") is None
+
+    pmi = {
+        "name": "Acme Sales Srl",
+        "website": "https://acme-sales.it",
+        "source_url": "https://acme-sales.it/lavora-con-noi",
+        "evidence": "Acme Sales Srl ricerca un Business Development Representative per outbound e sviluppo nuovi clienti.",
+        "matched_signals": ["hiring"],
+        "_required_signals": ["hiring"],
+    }
+    with patch(
+        "agents.domain_resolver.resolve_company_identity",
+        return_value={"url": "https://acme-sales.it", "status": "verified", "confidence": 0.96},
+    ):
+        prepared = prepare_agentic_extracted_item(pmi, location="Milano")
+    assert prepared is not None
+    assert prepared["lead_quality_contract"]["score"] >= 80
+    assert prepared["lead_quality_contract"]["satisfied_signals"] == ["hiring"]
+    stub = extracted_to_lead_stub(prepared, category="PMI B2B", location="Milano")
+    assert stub["lead_quality_contract"]["official_domain_present"] is True
+    assert stub["lead_temperature"] in {"hot", "warm"}
+
+
+def test_web_researcher_respects_total_url_budget() -> None:
+    researcher = WebResearcher(
+        {"original_query": "aziende che assumono commerciali", "_max_total_urls": 7},
+        max_queries=12,
+        max_urls_per_query=40,
+    )
+    assert researcher.max_total_urls == 7
+    assert min(researcher.max_total_urls, researcher.max_queries * researcher.max_urls_per_query) == 7
 
 
 def test_rounds_are_distinct() -> None:
@@ -124,6 +245,70 @@ def test_source_plan_drives_long_tail_queries() -> None:
     assert "registroimprese" in queries[1]
 
 
+def test_accountant_source_plan_does_not_degrade_to_hiring_or_retail_careers() -> None:
+    plan = {
+        "original_query": "Sono un commercialista: trovami PMI italiane con nuova apertura o cambi societari",
+        "sector": "company",
+        "location": "Italia",
+        "required_signals": ["registry_change", "company_formation", "geographic_expansion"],
+        "source_plan": [
+            {"lane": "public_registry", "priority": 100, "query_templates": []},
+            {"lane": "web_evidence", "priority": 90, "query_templates": []},
+            {"lane": "news", "priority": 80, "query_templates": []},
+        ],
+    }
+    queries = _heuristic_search_queries(plan)
+    assert queries
+    assert "registroimprese" in queries[0]
+    joined = "\n".join(queries).lower()
+    assert "indeed" not in joined
+    assert "infojobs" not in joined
+    assert "lavora con noi" not in joined
+    assert "careers" not in joined
+
+
+def test_high_value_source_lanes_generate_goldmine_queries() -> None:
+    plan = {
+        "original_query": "PMI che spendono in pubblicita e cercano nuovi clienti",
+        "sector": "PMI B2B",
+        "location": "Italia",
+        "required_signals": ["investing_marketing", "seeking_supplier", "market_entry"],
+        "source_plan": [
+            {
+                "lane": "ads",
+                "priority": 100,
+                "query_templates": ["{sector} campagne attive {location}"],
+            },
+            {
+                "lane": "partnerships",
+                "priority": 90,
+                "query_templates": ["{sector} nuova partnership {location}"],
+            },
+            {
+                "lane": "events",
+                "priority": 80,
+                "query_templates": ["{sector} fiera nuovi clienti {location}"],
+            },
+            {
+                "lane": "reviews",
+                "priority": 70,
+                "query_templates": ["{sector} recensioni problemi {location}"],
+            },
+        ],
+    }
+    source_queries = _source_plan_queries(plan)
+    assert any("Meta Ad Library" in query or "Google Ads" in query for query in source_queries)
+    assert any("nuova partnership" in query or "accordo commerciale" in query for query in source_queries)
+    assert any("fiera" in query or "webinar" in query for query in source_queries)
+    assert any("Trustpilot" in query or "recensioni" in query for query in source_queries)
+
+    heuristic_queries = _heuristic_search_queries(plan)
+    joined = "\n".join(heuristic_queries)
+    assert "landing page" in joined or "campagne Meta" in joined
+    assert "albo fornitori" in joined
+    assert "nuovo mercato" in joined or "nuova partnership" in joined
+
+
 def test_query_match_score_uses_evidence_and_domain() -> None:
     extracted = {
         "name": "Acme Srl",
@@ -169,7 +354,9 @@ def test_signal_query_cannot_be_crowded_out_and_override_is_reused() -> None:
         ],
     }
     queries = _heuristic_search_queries(plan)
-    assert "indeed.it" in queries[0]
+    assert "site:.it" in queries[0]
+    assert "lavora con noi" in queries[0]
+    assert "developer" in queries[0]
     researcher = WebResearcher({**plan, "_discovery_round": 2, "_search_queries_override": queries})
     reused = __import__("asyncio").run(researcher.generate_search_queries())
     assert researcher.generated_base_queries
@@ -177,14 +364,43 @@ def test_signal_query_cannot_be_crowded_out_and_override_is_reused() -> None:
     assert all("ultimo anno" in query or "comunicato stampa" in query for query in reused)
 
 
+def test_generic_hr_hiring_never_defaults_to_developer_or_generic_seller_noise() -> None:
+    plan = {
+        "original_query": "Sono un consulente HR: trovami PMI con ruoli difficili aperti e assunzioni recenti",
+        "sector": "company",
+        "location": "Italia",
+        "required_signals": ["hiring"],
+        "source_plan": [{
+            "lane": "job_market",
+            "priority": 100,
+            "query_templates": [
+                'site:.it ("lavora con noi" OR careers OR "posizioni aperte") ("Srl" OR "PMI") {location}'
+            ],
+        }],
+    }
+    queries = _heuristic_search_queries(plan)
+    assert queries
+    assert "site:.it" in queries[0]
+    joined = "\n".join(queries).lower()
+    assert "sviluppatore" not in joined
+    assert "startupitalia" not in joined
+    assert "in crescita assume" not in joined
+
+
 if __name__ == "__main__":
     test_evidence_source_is_not_target_domain()
     test_serp_keeps_multiple_evidence_pages_per_host()
+    test_search_provider_prefers_api_and_blocks_code_hosts()
+    test_extractor_has_evidence_first_fallback_for_rate_limits()
+    test_portal_evidence_must_match_company_name()
+    test_quality_contract_rejects_non_target_and_keeps_verified_pmi()
+    test_web_researcher_respects_total_url_budget()
     test_rounds_are_distinct()
     test_page_budget_scales_with_requested_target()
     test_completion_language_is_honest()
     test_checkpoint_roundtrip_and_query_isolation()
     test_source_plan_drives_long_tail_queries()
+    test_high_value_source_lanes_generate_goldmine_queries()
     test_query_match_score_uses_evidence_and_domain()
     test_signal_query_cannot_be_crowded_out_and_override_is_reused()
-    print("test_agentic_discovery_v2: 9/9 OK")
+    print("test_agentic_discovery_v2: 15/15 OK")

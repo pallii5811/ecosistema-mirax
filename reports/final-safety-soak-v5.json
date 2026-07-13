@@ -1,0 +1,105 @@
+{
+  "release_id": "2026-07-12-final-hardening-v5",
+  "started_at": "2026-07-12T20:45:31.593Z",
+  "completed_at": "2026-07-12T20:52:04.997Z",
+  "checkpointed_at": "2026-07-12T20:52:04.997Z",
+  "iterations_requested": 5,
+  "checks_executed": 17,
+  "failures": [],
+  "passed": true,
+  "interrupted_or_running": false,
+  "invariants": {
+    "paid_providers_called": false,
+    "workers_started": false,
+    "customer_publications_created": false,
+    "validators_use_transaction_rollback": true
+  },
+  "elapsed_ms": 393404,
+  "samples": [
+    {
+      "label": "python_failure_suite",
+      "exit_code": 0,
+      "elapsed_ms": 2395
+    },
+    {
+      "label": "paid_operation_static_guard",
+      "exit_code": 0,
+      "elapsed_ms": 322
+    },
+    {
+      "label": "cost_atomic_1",
+      "exit_code": 0,
+      "elapsed_ms": 21961
+    },
+    {
+      "label": "cost_concurrency_1",
+      "exit_code": 0,
+      "elapsed_ms": 22901
+    },
+    {
+      "label": "credit_ledger_1",
+      "exit_code": 0,
+      "elapsed_ms": 13152
+    },
+    {
+      "label": "cost_atomic_2",
+      "exit_code": 0,
+      "elapsed_ms": 30140
+    },
+    {
+      "label": "cost_concurrency_2",
+      "exit_code": 0,
+      "elapsed_ms": 24244
+    },
+    {
+      "label": "credit_ledger_2",
+      "exit_code": 0,
+      "elapsed_ms": 23589
+    },
+    {
+      "label": "cost_atomic_3",
+      "exit_code": 0,
+      "elapsed_ms": 26752
+    },
+    {
+      "label": "cost_concurrency_3",
+      "exit_code": 0,
+      "elapsed_ms": 15228
+    },
+    {
+      "label": "credit_ledger_3",
+      "exit_code": 0,
+      "elapsed_ms": 22355
+    },
+    {
+      "label": "cost_atomic_4",
+      "exit_code": 0,
+      "elapsed_ms": 29083
+    },
+    {
+      "label": "cost_concurrency_4",
+      "exit_code": 0,
+      "elapsed_ms": 47047
+    },
+    {
+      "label": "credit_ledger_4",
+      "exit_code": 0,
+      "elapsed_ms": 23514
+    },
+    {
+      "label": "cost_atomic_5",
+      "exit_code": 0,
+      "elapsed_ms": 35274
+    },
+    {
+      "label": "cost_concurrency_5",
+      "exit_code": 0,
+      "elapsed_ms": 33703
+    },
+    {
+      "label": "credit_ledger_5",
+      "exit_code": 0,
+      "elapsed_ms": 21729
+    }
+  ]
+}

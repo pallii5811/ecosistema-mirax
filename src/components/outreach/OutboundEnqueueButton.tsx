@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useToast } from '@/components/ToastProvider'
 
 type LeadPayload = {
   id?: string
@@ -22,6 +23,7 @@ type Props = {
 
 export function OutboundEnqueueButton({ lead, onEnqueued }: Props) {
   const [busy, setBusy] = useState(false)
+  const { success: toastSuccess, error: toastError } = useToast()
 
   const enqueue = async () => {
     setBusy(true)
@@ -45,9 +47,9 @@ export function OutboundEnqueueButton({ lead, onEnqueued }: Props) {
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Impossibile generare proposta outbound')
       onEnqueued?.()
-      alert(`Proposta outbound in coda (${data.sequence?.name || data.sequence?.key || 'sequenza'})`)
+      toastSuccess(`Proposta in coda: ${data.sequence?.name || data.sequence?.key || 'sequenza'}`, 'Outbound')
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Errore generazione proposta')
+      toastError(e instanceof Error ? e.message : 'Errore generazione proposta', 'Outbound')
     } finally {
       setBusy(false)
     }

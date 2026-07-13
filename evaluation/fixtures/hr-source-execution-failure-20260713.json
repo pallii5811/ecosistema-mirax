@@ -1,0 +1,27 @@
+{
+  "fixture_version": "1.0.0",
+  "vertical": "hr_recruitment",
+  "run_id": "193c4bb0-9d66-4d83-b4dd-a3ed0ac1ca68",
+  "search_id": "7d1798e2-f887-470a-80a8-b933a6f2aca1",
+  "query": "Sono un consulente HR: trovami PMI italiane con ruoli difficili aperti e assunzioni recenti su fonti verificabili",
+  "outcome": {
+    "cost_eur": 0.106891,
+    "pages_scraped": 15,
+    "llm_extractions": 2,
+    "raw_candidates": 1,
+    "qualified_candidates": 0,
+    "customer_publications": 0
+  },
+  "root_causes": [
+    "canonical source plan emitted empty query_templates",
+    "unspecified hiring role silently defaulted to developer",
+    "generic seller fallback query introduced unrelated growth/blog noise",
+    "job-board category pages were eligible for paid extraction"
+  ],
+  "required_regressions": [
+    "every canonical source lane has executable query templates",
+    "generic HR hiring never defaults to a technology role",
+    "official company careers precede generic job-board surfaces",
+    "job-board category/search pages are blocked before LLM extraction"
+  ]
+}

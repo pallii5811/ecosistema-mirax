@@ -19,6 +19,7 @@ import {
   Calendar,
   Inbox,
 } from 'lucide-react'
+import { useToast } from '@/components/ToastProvider'
 
 type NextScheduled = { scheduled_at: string; step_index: number; subject: string }
 
@@ -71,6 +72,7 @@ function relativeFuture(iso: string): string {
 }
 
 export default function CampaignsPage() {
+  const { success: toastSuccess, error: toastError } = useToast()
   const [runs, setRuns] = useState<Run[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -138,13 +140,14 @@ export default function CampaignsPage() {
       })
       const data = await res.json().catch(() => null)
       if (!data?.ok) {
-        alert(data?.error || 'Errore azione')
+        toastError(data?.error || 'Errore azione', 'Campagne')
       } else {
         // Aggiorna in place
         setRuns((prev) => prev.map((r) => (r.id === runId ? { ...r, ...data.run } : r)))
+        toastSuccess('Campagna aggiornata', 'Campagne')
       }
     } catch (e: any) {
-      alert(e?.message || 'Errore di rete')
+      toastError(e?.message || 'Errore di rete', 'Campagne')
     } finally {
       setActionLoadingId(null)
     }
@@ -157,16 +160,17 @@ export default function CampaignsPage() {
       const res = await fetch(`/api/sequences/runs/${runId}`, { method: 'DELETE' })
       const data = await res.json().catch(() => null)
       if (!data?.ok) {
-        alert(data?.error || 'Errore eliminazione')
+        toastError(data?.error || 'Errore eliminazione', 'Campagne')
         return
       }
       setRuns((prev) => prev.filter((r) => r.id !== runId))
+      toastSuccess('Campagna eliminata', 'Campagne')
       if (openRunId === runId) {
         setOpenRunId(null)
         setOpenRunEmails([])
       }
     } catch (e: any) {
-      alert(e?.message || 'Errore di rete')
+      toastError(e?.message || 'Errore di rete', 'Campagne')
     } finally {
       setActionLoadingId(null)
     }

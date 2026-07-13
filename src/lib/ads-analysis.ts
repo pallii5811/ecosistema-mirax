@@ -70,7 +70,7 @@ export async function analyzeAdsPresence(
   }
 
   // GPT: SOLO spunti commerciali testuali, basati sui fatti reali. Niente invenzione di ads/budget.
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = (['1','true','yes','on'].includes(String(process.env.UQE_OPENAI_ENABLED || '').toLowerCase()) ? '' : '')
   let opportunities: string[] = []
   let competitorContext = ''
 
@@ -97,7 +97,7 @@ Rispondi SOLO con JSON valido:
   "competitorContext": "1 frase sul contesto competitivo del settore in questa città"
 }`
 
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      const res = await fetch('data:,mirax-legacy-provider-removed', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,

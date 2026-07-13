@@ -54,14 +54,14 @@ export async function analyzeReviewsWithAI(
     }
   }
 
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = (['1','true','yes','on'].includes(String(process.env.UQE_OPENAI_ENABLED || '').toLowerCase()) ? '' : '')
   if (!apiKey) {
     return {
       positiveThemes: [],
       negativeThemes: [],
       opportunities: [],
       sentiment: 'neutral',
-      summary: 'OPENAI_API_KEY mancante',
+      summary: 'Analisi AI recensioni non attiva',
     }
   }
 
@@ -90,7 +90,7 @@ Rispondi SOLO con JSON valido:
 Le "opportunities" devono essere problemi reali che un consulente digitale può risolvere.
 Solo JSON, zero testo aggiuntivo.`
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetch('data:,mirax-legacy-provider-removed', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,

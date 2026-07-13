@@ -35,6 +35,8 @@ for _p in (_REPO_ROOT, _BACKEND_DIR):
         sys.path.insert(0, _p)
 
 from job_leases import build_claim_payload, is_processing_job_stale
+from url_safety import assert_safe_public_url, install_playwright_ssrf_guard
+from adaptive_audit import AdaptiveAuditCache, adaptive_modules, module_payload
 
 
 def _runtime_release_id() -> str:
@@ -146,6 +148,127 @@ _FAKE_EMAIL_MARKERS = (
     "sample.com", "placeholder.com",
 )
 
+_GLOBAL_BRAND_DOMAINS = (
+    "nike.com",
+    "ferrari.com",
+    "uniqlo.com",
+    "primark.com",
+    "urbanoutfitters.com",
+    "ikea.com",
+    "zara.com",
+    "hm.com",
+    "apple.com",
+    "microsoft.com",
+    "google.com",
+    "amazon.",
+    "mediaset.it",
+    "iliad.it",
+    "acer.com",
+)
+
+_GLOBAL_BRAND_PATTERNS = (
+    (re.compile(r"\buniqlo\b", re.I), "uniqlo"),
+    (re.compile(r"\bprimark\b", re.I), "primark"),
+    (re.compile(r"\burban\s+outfitters\b", re.I), "urban outfitters"),
+    (re.compile(r"\bnike(?:\s+(?:milano|roma|store|flagship|retail|shop))?\b", re.I), "nike"),
+    (re.compile(r"\bferrari\s+(?:flagship|store|official|milano|roma)\b", re.I), "ferrari"),
+    (re.compile(r"\bikea\b", re.I), "ikea"),
+    (re.compile(r"\bzara\b", re.I), "zara"),
+    (re.compile(r"\bh\s*&\s*m\b|\bhm\s+(?:store|milano|roma)\b", re.I), "h&m"),
+    (re.compile(r"\bapple\s+store\b", re.I), "apple"),
+    (re.compile(r"\bgalleria\s+vittorio\s+emanuele\b", re.I), "galleria vittorio emanuele"),
+)
+
+_SMB_SIGNAL_CONTEXT_RE = re.compile(
+    r"\b(pmi|piccol[aeio]?|medie?\s+imprese?|local[ei]|non\s+famose?|lead\s+cald|"
+    r"a\s+cui\s+vendere|prospect|sales\s+intelligence|lead\s+generation|outreach|"
+    r"segnal[ei]\s+d.?acquisto|invest\w*\s+in\s+marketing|budget\s+marketing|ads\s+attiv[ei])\b",
+    re.I,
+)
+
+
+def _enterprise_lead_reason(lead: Dict[str, Any]) -> Optional[str]:
+    domain_raw = str(lead.get("sito") or lead.get("website") or "").strip().lower()
+    domain = re.sub(r"^https?://", "", domain_raw)
+    domain = re.sub(r"^www\.", "", domain)
+    domain = domain.split("/", 1)[0].strip()
+    if domain:
+        for blocked in _GLOBAL_BRAND_DOMAINS:
+            if domain == blocked or domain.endswith(f".{blocked}") or blocked in domain:
+                return f"global-brand-domain:{blocked}"
+
+    haystack = " ".join(
+        str(lead.get(key) or "").strip()
+        for key in ("azienda", "nome", "business_name", "name", "categoria", "category", "sito", "website")
+        if str(lead.get(key) or "").strip()
+    )
+    for pattern, label in _GLOBAL_BRAND_PATTERNS:
+        if pattern.search(haystack):
+            return f"global-brand-name:{label}"
+    return None
+
+
+def _enterprise_guard_context(intent: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(intent, dict):
+        return ""
+    parts: List[str] = []
+    for key in ("original_query", "query", "user_query", "intent_summary", "category", "categoria"):
+        value = intent.get(key)
+        if value:
+            parts.append(str(value))
+    for value in intent.get("required_signals") or []:
+        parts.append(str(value))
+    hypothesis = intent.get("commercial_hypothesis")
+    if isinstance(hypothesis, dict):
+        for key in ("offer", "target_profile", "buyer_pains", "buying_signals", "disqualifiers"):
+            value = hypothesis.get(key)
+            if isinstance(value, list):
+                parts.extend(str(item) for item in value)
+            elif value:
+                parts.append(str(value))
+    return " ".join(parts)
+
+
+def _should_reject_enterprise_lead(lead: Dict[str, Any], intent: Optional[Dict[str, Any]]) -> bool:
+    reason = _enterprise_lead_reason(lead)
+    if not reason:
+        return False
+    context = _enterprise_guard_context(intent)
+    required = set(_required_signals_from_intent(intent))
+    if required or not context.strip() or _SMB_SIGNAL_CONTEXT_RE.search(context):
+        return True
+    return False
+
+
+def _non_target_lead_reason(lead: Dict[str, Any]) -> Optional[str]:
+    """Reject source portals, universities/blogs and known non-target entities as leads."""
+    if not isinstance(lead, dict):
+        return "invalid-lead"
+    name = str(
+        lead.get("azienda")
+        or lead.get("nome")
+        or lead.get("business_name")
+        or lead.get("name")
+        or ""
+    ).strip()
+    website = str(lead.get("sito") or lead.get("website") or "").strip()
+    try:
+        from agents.portal_blacklist import is_blacklisted_domain, is_blacklisted_name, normalize_domain
+
+        domain = normalize_domain(website)
+        if domain and is_blacklisted_domain(domain):
+            return f"blacklisted-domain:{domain}"
+        if name and is_blacklisted_name(name):
+            # Keep local legal-entity homonyms alive when they have their own
+            # non-blacklisted official domain; enterprise patterns handle the
+            # famous-brand cases separately.
+            local_legal_entity = bool(re.search(r"\b(srl|s\.r\.l\.|spa|s\.p\.a\.|snc|sas|societa|societ[aà])\b", name, re.I))
+            if not (domain and local_legal_entity):
+                return f"blacklisted-name:{name[:60]}"
+    except Exception:
+        return None
+    return None
+
 
 def _is_real_business_email(value: Optional[str]) -> bool:
     email = str(value or "").strip().lower()
@@ -196,7 +319,13 @@ def _extract_phone_from_html_any(html: Optional[str]) -> Optional[str]:
 
 
 async def _scrape_site_contacts_light(url: str, html_home: Optional[str] = None) -> Dict[str, Optional[str]]:
-    out: Dict[str, Optional[str]] = {"email": _extract_real_email_from_html(html_home), "phone": _extract_phone_from_html_any(html_home)}
+    out: Dict[str, Optional[str]] = {
+        "email": _extract_real_email_from_html(html_home),
+        "phone": _extract_phone_from_html_any(html_home),
+        "instagram": _extract_first_social_link(html_home, "instagram"),
+        "facebook": _extract_first_social_link(html_home, "facebook"),
+        "linkedin": _extract_first_social_link(html_home, "linkedin"),
+    }
     if out.get("email") and out.get("phone"):
         return out
     try:
@@ -222,6 +351,12 @@ async def _scrape_site_contacts_light(url: str, html_home: Optional[str] = None)
                         out["email"] = _extract_real_email_from_html(html)
                     if not out.get("phone"):
                         out["phone"] = _extract_phone_from_html_any(html)
+                    if not out.get("instagram"):
+                        out["instagram"] = _extract_first_social_link(html, "instagram")
+                    if not out.get("facebook"):
+                        out["facebook"] = _extract_first_social_link(html, "facebook")
+                    if not out.get("linkedin"):
+                        out["linkedin"] = _extract_first_social_link(html, "linkedin")
                     if out.get("email") and out.get("phone"):
                         return out
                 except Exception:
@@ -263,6 +398,7 @@ async def process_single_url(url: str) -> Dict[str, Any]:
     )
     from backend.audit_engine import run_technical_audit
     
+    assert_safe_public_url(url)
     result = {
         "nome": None, "sito": url, "telefono": None, "email": None,
         "indirizzo": None, "citta": None, "categoria": None,
@@ -277,6 +413,7 @@ async def process_single_url(url: str) -> Dict[str, Any]:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
+            await install_playwright_ssrf_guard(page)
             
             pixel_found = False
             gtm_found = False
@@ -396,6 +533,12 @@ async def process_single_url(url: str) -> Dict[str, Any]:
             instagram = _extract_first_social_link(html, "instagram")
             facebook = _extract_first_social_link(html, "facebook")
             linkedin = _extract_first_social_link(html, "linkedin")
+            if not (instagram and facebook and linkedin):
+                if light_contacts is None:
+                    light_contacts = await _scrape_site_contacts_light(url, html)
+                instagram = instagram or light_contacts.get("instagram")
+                facebook = facebook or light_contacts.get("facebook")
+                linkedin = linkedin or light_contacts.get("linkedin")
             result["instagram"] = instagram
             result["facebook"] = facebook
             result["linkedin"] = linkedin
@@ -1207,6 +1350,11 @@ def _sync_neo4j_leads_safe(results: Any) -> None:
         print(f"[worker_supabase] neo4j sync skipped: {exc}", flush=True)
 
 
+def _should_sync_graph_for_publish_status(status: Any) -> bool:
+    """Only terminal, qualified publication may mutate the commercial graph."""
+    return str(status or "").strip().lower() == "completed"
+
+
 def _sync_neo4j_universe_safe(supabase: Any, results: Any) -> None:
     """Mirror rich Universe edges to Neo4j after authoritative Postgres ingest."""
     if supabase is None or not isinstance(results, list) or not results:
@@ -1234,6 +1382,45 @@ def _sync_neo4j_universe_safe(supabase: Any, results: Any) -> None:
         print(f"[worker_supabase] neo4j universe mirror skipped: {exc}", flush=True)
 
 
+def _sync_cost_ledger_safe(supabase: Any, search_id: Any, cost_snapshot: Any) -> None:
+    """Persist idempotent operation reservations/settlements for resumable jobs."""
+    if supabase is None or not search_id or not isinstance(cost_snapshot, dict):
+        return
+    for operation in cost_snapshot.get("operations") or []:
+        if not isinstance(operation, dict):
+            continue
+        key = str(operation.get("idempotency_key") or "").strip()
+        if not key or key == "prior-resume-cost":
+            continue
+        status = str(operation.get("status") or "reserved").strip().lower()
+        estimated = max(0.0, float(operation.get("estimated_cost_eur") or 0.0))
+        actual_raw = operation.get("actual_cost_eur")
+        actual = max(0.0, float(actual_raw)) if actual_raw is not None else estimated
+        try:
+            if status in {"released", "failed"}:
+                supabase.rpc(
+                    "release_search_cost",
+                    {
+                        "p_search_id": str(search_id),
+                        "p_idempotency_key": key,
+                        "p_status": status,
+                        "p_error_code": "WORKER_OPERATION_FAILED" if status == "failed" else None,
+                    },
+                ).execute()
+            else:
+                supabase.rpc(
+                    "settle_search_cost",
+                    {
+                        "p_search_id": str(search_id),
+                        "p_idempotency_key": key,
+                        "p_actual_cost_eur": actual,
+                        "p_metadata": {"accounting": "atomic_cost_governor_v2"},
+                    },
+                ).execute()
+        except Exception as exc:
+            print(f"[worker_supabase] cost ledger sync skipped key={key[:40]}: {exc}", flush=True)
+
+
 def _lead_has_agentic_value(lead: Dict[str, Any]) -> bool:
     """Contatto valido o tech stack auditato — criterio ammissione lead agentic."""
     phone = str(lead.get("telefono") or lead.get("phone") or "").strip()
@@ -1253,6 +1440,99 @@ def _lead_has_agentic_value(lead: Dict[str, Any]) -> bool:
     return has_phone or has_email or (has_site and has_real_tech)
 
 
+def _lead_satisfies_confirmed_required_signals(lead: Dict[str, Any]) -> bool:
+    """UI publish gate: required buying signals must be confirmed in payload."""
+    if not isinstance(lead, dict):
+        return False
+    required = {
+        str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        for value in (lead.get("required_signals") or [])
+        if str(value or "").strip()
+    }
+    if not required:
+        return True
+    signals = lead.get("business_signals") or []
+    confirmed = set()
+    equivalents = {
+        "investing_marketing": {"investing_marketing", "meta_ads_started", "google_ads_started"},
+        "sector_investment": {"sector_investment", "funding_received", "expansion"},
+        "expansion": {"expansion", "new_location", "new_company"},
+    }
+    for signal in signals if isinstance(signals, list) else []:
+        if not isinstance(signal, dict):
+            continue
+        status = str(signal.get("status") or "confirmed").strip().lower()
+        if status not in {"confirmed", "verified"}:
+            continue
+        typ = str(signal.get("type") or signal.get("signalType") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if typ:
+            confirmed.add(typ)
+    for req in required:
+        if not confirmed.intersection(equivalents.get(req, {req})):
+            return False
+    return True
+
+
+def _required_signals_from_intent(intent: Optional[Dict[str, Any]]) -> List[str]:
+    if not isinstance(intent, dict):
+        return []
+    values: List[str] = []
+    for raw in intent.get("required_signals") or []:
+        value = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if value and value not in values:
+            values.append(value)
+    for signal in intent.get("signals") or []:
+        if isinstance(signal, dict):
+            value = str(signal.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_")
+            if value and value not in values:
+                values.append(value)
+    return values
+
+
+def _filter_results_by_confirmed_required_signals(
+    results: Any,
+    intent: Optional[Dict[str, Any]],
+    *,
+    stage: str,
+) -> List[Dict[str, Any]]:
+    rows = [dict(item) for item in results if isinstance(item, dict)] if isinstance(results, list) else []
+    required = _required_signals_from_intent(intent)
+    out: List[Dict[str, Any]] = []
+    for lead in rows:
+        non_target_reason = _non_target_lead_reason(lead)
+        if non_target_reason:
+            print(
+                f"[worker_supabase] quality gate drop ({stage}): "
+                f"{str(lead.get('azienda') or lead.get('nome') or '')[:60]} "
+                f"{non_target_reason}",
+                flush=True,
+            )
+            continue
+        if _should_reject_enterprise_lead(lead, intent):
+            print(
+                f"[worker_supabase] quality gate drop ({stage}): "
+                f"{str(lead.get('azienda') or lead.get('nome') or '')[:60]} "
+                "enterprise/global brand rejected for SMB/signal query",
+                flush=True,
+            )
+            continue
+        if not required:
+            out.append(lead)
+            continue
+        if not lead.get("required_signals"):
+            lead["required_signals"] = list(required)
+        if _lead_satisfies_confirmed_required_signals(lead):
+            out.append(lead)
+        else:
+            print(
+                f"[worker_supabase] quality gate drop ({stage}): "
+                f"{str(lead.get('azienda') or lead.get('nome') or '')[:60]} "
+                f"missing confirmed signals={required}",
+                flush=True,
+            )
+    return out
+
+
 def _is_agentic_only_job(intent: Optional[Dict[str, Any]]) -> bool:
     if not isinstance(intent, dict):
         return False
@@ -1261,6 +1541,208 @@ def _is_agentic_only_job(intent: Optional[Dict[str, Any]]) -> bool:
     if str(intent.get("search_strategy") or "").strip().lower() == "organic_web_search":
         return True
     return False
+
+
+_SELLER_LEADGEN_CATEGORY = "PMI B2B con team commerciale in espansione"
+_SELLER_LEADGEN_LOCATION = "Italia"
+
+
+def _looks_like_seller_leadgen_query(text: str) -> bool:
+    q = str(text or "").lower()
+    seller = re.search(
+        r"\b(a\s+cui\s+vendere|vendere\s+(?:il|la|i|le|un|una|mio|mia)|trov\w+\s+lead|lead\s+cald|clienti\s+per|prospect)\b",
+        q,
+    )
+    offer = re.search(
+        r"\b(lead\s*generation|generazione\s+lead|sales\s*intelligence|prospect(?:ing)?|outreach|scouting)\b",
+        q,
+    )
+    return bool(seller and offer)
+
+
+def _looks_like_buyer_marketing_investment_query(text: str) -> bool:
+    q = str(text or "").lower()
+    return bool(
+        re.search(r"\b(aziende|imprese|pmi|attivit[aà]|negozi|business)\b", q)
+        and re.search(r"\b(invest\w*|spend\w*|budget|campagne?|ads|pubblicit[aà]|marketing)\b", q)
+        and re.search(r"\b(marketing|ads|pubblicit[aà]|meta|facebook|google)\b", q)
+    )
+
+
+def _canonicalize_marketing_investment_job(
+    category: str,
+    location: str,
+    intent: Optional[Dict[str, Any]],
+    job: Dict[str, Any],
+) -> tuple[str, str, Optional[Dict[str, Any]], bool]:
+    """Signal-buying query: never let Maps return famous retail brands."""
+    intent_obj: Dict[str, Any] = dict(intent) if isinstance(intent, dict) else {}
+    candidates: List[str] = []
+    for key in ("original_query", "query", "user_query"):
+        value = intent_obj.get(key)
+        if value:
+            candidates.append(str(value))
+    for key in ("query", "text", "search_query", "original_query"):
+        value = job.get(key)
+        if value:
+            candidates.append(str(value))
+    signal_types = {
+        str(item.get("type") or "").strip().lower()
+        for item in (intent_obj.get("signals") or [])
+        if isinstance(item, dict)
+    }
+    required = {str(value).strip().lower() for value in (intent_obj.get("required_signals") or [])}
+    looks_like = any(_looks_like_buyer_marketing_investment_query(value) for value in candidates)
+    has_signal = bool({"investing_marketing", "meta_ads_started", "google_ads_started"} & (signal_types | required))
+    if not (looks_like or has_signal):
+        return category, location, intent, False
+
+    signals = intent_obj.get("signals")
+    if not isinstance(signals, list):
+        signals = []
+    if "investing_marketing" not in signal_types:
+        signals.append({"type": "investing_marketing", "params": {}})
+    original_query = next((value for value in candidates if _looks_like_buyer_marketing_investment_query(value)), None)
+    if original_query and not intent_obj.get("original_query"):
+        intent_obj["original_query"] = original_query
+    if original_query and not intent_obj.get("query"):
+        intent_obj["query"] = original_query
+    intent_obj.update(
+        {
+            "search_mode": "agentic_only",
+            "search_strategy": "organic_web_search",
+            "signals": signals,
+            "required_signals": ["investing_marketing"],
+            "commercial_hypothesis": intent_obj.get("commercial_hypothesis")
+            or {
+                "offer": "Servizi o software per marketing, advertising e crescita commerciale",
+                "target_profile": [
+                    "PMI e aziende locali/non famose con evidenza verificabile di investimento marketing",
+                    "aziende con campagne ads, landing page, funnel o iniziative di acquisizione attive",
+                ],
+                "buyer_pains": [
+                    "spesa marketing da trasformare in lead/clienti misurabili",
+                    "campagne attive senza sufficiente conversione o tracciamento",
+                ],
+                "buying_signals": [
+                    "Meta Ads o Google Ads attivi",
+                    "landing page o campagne con CTA commerciale",
+                    "nuove iniziative di marketing, lancio prodotto, evento o crescita canali",
+                ],
+                "decision_maker_roles": ["Founder", "CEO", "Responsabile Marketing", "Marketing Manager", "Titolare"],
+                "disqualifiers": [
+                    "brand globale o catena famosa",
+                    "negozio retail enterprise senza prova di budget ads locale",
+                    "risultato Maps senza evidenza marketing verificabile",
+                ],
+            },
+            "ranking_policy": {
+                **(intent_obj.get("ranking_policy") if isinstance(intent_obj.get("ranking_policy"), dict) else {}),
+                "signal_match_mode": "all",
+                "max_signal_age_days": 120,
+            },
+        }
+    )
+    return (
+        "PMI che investono in marketing",
+        location or str(intent_obj.get("location") or "").strip() or "Italia",
+        intent_obj,
+        True,
+    )
+
+
+def _canonicalize_seller_leadgen_job(
+    category: str,
+    location: str,
+    intent: Optional[Dict[str, Any]],
+    job: Dict[str, Any],
+) -> tuple[str, str, Optional[Dict[str, Any]], bool]:
+    """Server-side guard for stale UI deployments that mis-route seller queries as Software/Cui."""
+    intent_obj: Dict[str, Any] = dict(intent) if isinstance(intent, dict) else {}
+    candidates: List[str] = []
+    for key in ("original_query", "query", "user_query"):
+        value = intent_obj.get(key)
+        if value:
+            candidates.append(str(value))
+    for key in ("query", "text", "search_query", "original_query"):
+        value = job.get(key)
+        if value:
+            candidates.append(str(value))
+
+    degraded_software_cui = category.strip().lower() == "software" and location.strip().lower() == "cui"
+    seller_query = any(_looks_like_seller_leadgen_query(value) for value in candidates)
+    if not (seller_query or degraded_software_cui):
+        return category, location, intent, False
+
+    signals = intent_obj.get("signals")
+    if not isinstance(signals, list):
+        signals = []
+    signal_types = {
+        str(item.get("type") or "").strip().lower()
+        for item in signals
+        if isinstance(item, dict)
+    }
+    for signal_type in ("hiring", "expansion"):
+        if signal_type not in signal_types:
+            signals.append({"type": signal_type, "params": {}})
+            signal_types.add(signal_type)
+
+    original_query = next((value for value in candidates if _looks_like_seller_leadgen_query(value)), None)
+    if original_query and not intent_obj.get("original_query"):
+        intent_obj["original_query"] = original_query
+    if original_query and not intent_obj.get("query"):
+        intent_obj["query"] = original_query
+    intent_obj.update(
+        {
+            "search_mode": "agentic_only",
+            "search_strategy": "organic_web_search",
+            "signals": signals,
+            "required_signals": ["hiring", "expansion"],
+            "commercial_hypothesis": intent_obj.get("commercial_hypothesis")
+            or {
+                "offer": "Software di lead generation e Sales Intelligence",
+                "target_profile": [
+                    "PMI italiane B2B con processo commerciale attivo",
+                    "aziende che stanno costruendo o ampliando il team new business",
+                ],
+                "buyer_pains": [
+                    "prospecting e ricerca account manuali",
+                    "pipeline insufficiente o costosa da alimentare",
+                ],
+                "buying_signals": [
+                    "assunzione recente di SDR, BDR, Inside Sales o Business Developer",
+                    "annuncio che cita outbound, prospecting, lead generation o sviluppo nuovi clienti",
+                    "potenziamento rete commerciale o ingresso in nuovi mercati",
+                ],
+                "hiring_roles": [
+                    "Sales Development Representative",
+                    "Business Development Representative",
+                    "Inside Sales",
+                    "Business Developer",
+                    "Sales Account New Business",
+                    "Lead Generation Specialist",
+                ],
+                "decision_maker_roles": ["CEO", "Founder", "Head of Sales", "Sales Director", "Revenue Operations"],
+                "disqualifiers": [
+                    "azienda enterprise famosa o multinazionale",
+                    "segnale senza URL o prova testuale",
+                    "ruolo retail/customer care senza new business",
+                ],
+            },
+        }
+    )
+    uqe_plan = intent_obj.get("uqe_plan")
+    if isinstance(uqe_plan, dict):
+        uqe_plan.update(
+            {
+                "search_strategy": "organic_web_search",
+                "sector": _SELLER_LEADGEN_CATEGORY,
+                "location": _SELLER_LEADGEN_LOCATION,
+                "required_signals": ["hiring", "expansion"],
+                "commercial_hypothesis": intent_obj.get("commercial_hypothesis"),
+            }
+        )
+    return _SELLER_LEADGEN_CATEGORY, _SELLER_LEADGEN_LOCATION, intent_obj, True
 
 
 def _upsert_single_search_lead_safe(
@@ -1341,6 +1823,50 @@ def _agentic_apply_contact_fallback(stub: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _agentic_should_defer_publish_until_audit(stub: Dict[str, Any]) -> bool:
+    """Signal-led jobs must not expose unaudited/pending leads to UI or search_leads."""
+    if not isinstance(stub, dict):
+        return False
+    return any(str(value or "").strip() for value in (stub.get("required_signals") or []))
+
+
+def _validate_canonical_plan_in_intent(intent: Any) -> Any:
+    """Validate a declared v1 plan before a worker can spend or claim the job."""
+    if not isinstance(intent, dict):
+        return intent
+    normalized = dict(intent)
+    uqe_plan = normalized.get("uqe_plan")
+    canonical_plan = uqe_plan.get("canonical_plan") if isinstance(uqe_plan, dict) else None
+    if canonical_plan is None:
+        canonical_plan = normalized.get("canonical_plan")
+    if canonical_plan is None:
+        return normalized
+
+    from contracts.commercial_search_plan import validate_commercial_search_plan
+    from contracts.signal_ontology import validate_plan_signals
+    from contracts.source_registry import validate_plan_source_policy
+
+    validated = validate_commercial_search_plan(canonical_plan).model_dump(mode="json")
+    validate_plan_signals(validated)
+    validate_plan_source_policy(validated)
+    if isinstance(uqe_plan, dict):
+        normalized_uqe = dict(uqe_plan)
+        normalized_uqe["canonical_plan"] = validated
+        normalized["uqe_plan"] = normalized_uqe
+    else:
+        normalized["canonical_plan"] = validated
+    return normalized
+
+
+def _canonical_plan_from_intent(intent: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(intent, dict):
+        return None
+    uqe_plan = intent.get("uqe_plan")
+    if isinstance(uqe_plan, dict) and isinstance(uqe_plan.get("canonical_plan"), dict):
+        return uqe_plan["canonical_plan"]
+    return intent.get("canonical_plan") if isinstance(intent.get("canonical_plan"), dict) else None
+
+
 def _agentic_stream_one_lead(
     item: Dict[str, Any],
     *,
@@ -1352,6 +1878,7 @@ def _agentic_stream_one_lead(
     supabase: Any,
     search_id: Optional[str],
     user_id: Optional[str],
+    defer_publish_until_audit: bool = False,
 ) -> bool:
     """
     Streaming 1-a-1: publish pre-audit → audit → update riga.
@@ -1368,6 +1895,40 @@ def _agentic_stream_one_lead(
         return False
 
     stub = extracted_to_lead_stub(prepared, category=category, location=location)
+    stub_required = {
+        str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        for value in (stub.get("required_signals") or [])
+        if str(value or "").strip()
+    }
+    if "investing_marketing" in stub_required:
+        marketing_non_buyer = re.search(
+            r"\b(festival|evento|eventi|arte\s+e\s+natura|turismo|tourism|destination|"
+            r"portale|directory|marketplace)\b",
+            " ".join(str(stub.get(k) or "") for k in ("azienda", "nome", "categoria", "category", "sito", "website")),
+            re.I,
+        )
+        if marketing_non_buyer:
+            print(
+                f"[worker_supabase] agentic skip (marketing non-buyer): "
+                f"{str(stub.get('azienda') or '')[:50]}",
+                flush=True,
+            )
+            return False
+    non_target_reason = _non_target_lead_reason(stub)
+    if non_target_reason:
+        print(
+            f"[worker_supabase] agentic skip (non-target): "
+            f"{str(stub.get('azienda') or '')[:50]} {non_target_reason}",
+            flush=True,
+        )
+        return False
+    if not _lead_satisfies_confirmed_required_signals(stub):
+        print(
+            f"[worker_supabase] agentic skip (unconfirmed required signal) "
+            f"name={str(stub.get('azienda') or '')[:50]}",
+            flush=True,
+        )
+        return False
     key = lead_dedupe_key(
         str(stub.get("nome") or ""),
         str(stub.get("sito") or stub.get("website") or ""),
@@ -1377,7 +1938,7 @@ def _agentic_stream_one_lead(
         return False
     if key in seen:
         accumulated[:] = _merge_formatted_results(accumulated, [stub])
-        if publish_cb:
+        if publish_cb and not defer_publish_until_audit:
             try:
                 publish_cb(list(accumulated), status="running")
             except TypeError:
@@ -1396,6 +1957,14 @@ def _agentic_stream_one_lead(
     seen.add(key)
     position = len(accumulated)
     accumulated.append(pending)
+
+    if defer_publish_until_audit or _agentic_should_defer_publish_until_audit(pending):
+        print(
+            f"[worker_supabase] agentic defer pending until audit: {str(pending.get('azienda') or '')[:50]} "
+            f"pos={position} url={site[:60]}",
+            flush=True,
+        )
+        return True
 
     print(
         f"[worker_supabase] agentic publish pending: {str(pending.get('azienda') or '')[:50]} "
@@ -1429,6 +1998,7 @@ def _agentic_raw_to_stubs(
     supabase: Any = None,
     search_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    defer_publish_until_audit: bool = False,
 ) -> List[Dict[str, Any]]:
     """Legacy batch wrapper — delega a streaming 1-a-1 (muta formatted in-place)."""
     accumulated = formatted
@@ -1448,6 +2018,7 @@ def _agentic_raw_to_stubs(
             supabase=supabase,
             search_id=search_id,
             user_id=user_id,
+            defer_publish_until_audit=defer_publish_until_audit,
         ):
             new_leads.append(accumulated[-1])
     return new_leads
@@ -1509,16 +2080,17 @@ def _agentic_gap_fill_safe(
         total_new = 0
         discovery_stats: Dict[str, Any] = {}
         intent_state: Dict[str, Any] = intent if isinstance(intent, dict) else {}
+        defer_publish_until_audit = bool(plan.get("required_signals") or [])
 
         def _on_checkpoint(checkpoint_data: Dict[str, Any]) -> None:
             intent_state["agentic_checkpoint"] = checkpoint_data
             if supabase is not None and search_id:
                 supabase.table("searches").update({"intent": intent_state}).eq("id", search_id).execute()
 
-        def _on_batch(raw_batch: List[Dict[str, Any]]) -> None:
+        def _on_batch(raw_batch: List[Dict[str, Any]]) -> int:
             nonlocal accumulated, total_new
             if not raw_batch:
-                return
+                return 0
             still_need = max(0, remaining_target - total_new)
             contextual_batch = [
                 {
@@ -1546,19 +2118,21 @@ def _agentic_gap_fill_safe(
                 supabase=supabase,
                 search_id=search_id,
                 user_id=user_id,
+                defer_publish_until_audit=defer_publish_until_audit,
             )
             if not stubs:
-                return
+                return 0
             total_new += len(stubs)
             print(
                 f"[worker_supabase] Agentic stream batch: +{len(stubs)} (totale {len(accumulated)})",
                 flush=True,
             )
-            if publish_cb:
+            if publish_cb and not defer_publish_until_audit:
                 try:
                     publish_cb(accumulated, status="running")
                 except TypeError:
                     publish_cb(accumulated)
+            return len(stubs)
 
         timeout_sec = float(AGENTIC_TIMEOUT_SEC)
         _coro = run_agentic_discovery_streaming(
@@ -1570,11 +2144,20 @@ def _agentic_gap_fill_safe(
             stats_out=discovery_stats,
             checkpoint=intent_state.get("agentic_checkpoint"),
             on_checkpoint=_on_checkpoint,
+            cost_client=supabase,
+            search_id=search_id,
         )
         if timeout_sec > 0:
             asyncio.run(asyncio.wait_for(_coro, timeout=timeout_sec))
         else:
             asyncio.run(_coro)
+        if len(accumulated) < int(job_max or len(accumulated)) and discovery_stats.get("stop_reason") == "target_reached":
+            discovery_stats["stop_reason"] = "round_complete"
+            checkpoint_state = intent_state.get("agentic_checkpoint")
+            if isinstance(checkpoint_state, dict):
+                checkpoint_state["stop_reason"] = "round_complete"
+        discovery_stats["found"] = len(accumulated)
+        discovery_stats["target"] = int(job_max or len(accumulated))
         intent_state["agentic_stats"] = discovery_stats
         if supabase is not None and search_id:
             try:
@@ -1635,6 +2218,23 @@ def _lead_has_pending_audit(lead: Any) -> bool:
     if isinstance(tr, dict) and tr:
         return False
     return not tech or (isinstance(tech, list) and len(tech) == 0)
+
+
+def _lead_has_contact_channel(lead: Any) -> bool:
+    if not isinstance(lead, dict):
+        return False
+    phone = str(lead.get("telefono") or lead.get("phone") or "").strip()
+    email = str(lead.get("email") or "").strip()
+    bad = {"", "N/D", "N/A", "N.D.", "None", "none", "null", "-", "—"}
+    if phone not in bad and len(re.sub(r"\D+", "", phone)) >= 8:
+        return True
+    if _is_real_business_email(email):
+        return True
+    for key in ("linkedin", "instagram", "facebook"):
+        value = str(lead.get(key) or "").strip().lower()
+        if value.startswith("http") and key in value:
+            return True
+    return False
 
 
 def _apply_audit_url_payload_to_lead(lead: Dict[str, Any], audit: Dict[str, Any]) -> Dict[str, Any]:
@@ -1727,7 +2327,11 @@ def _apply_audit_url_payload_to_lead(lead: Dict[str, Any], audit: Dict[str, Any]
     return updated
 
 
-async def _finish_pending_audits(formatted: List[Dict[str, Any]], publish_cb=None) -> List[Dict[str, Any]]:
+async def _finish_pending_audits(
+    formatted: List[Dict[str, Any]],
+    publish_cb=None,
+    audit_policy: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = [dict(x) if isinstance(x, dict) else x for x in formatted]
     pending_idxs = [i for i, l in enumerate(out) if isinstance(l, dict) and _lead_has_pending_audit(l)]
     if not pending_idxs:
@@ -1738,6 +2342,7 @@ async def _finish_pending_audits(formatted: List[Dict[str, Any]], publish_cb=Non
     except ValueError:
         audit_workers = 8
     sem = asyncio.Semaphore(audit_workers)
+    audit_cache = AdaptiveAuditCache()
 
     async def _audit_one(i: int) -> None:
         async with sem:
@@ -1761,11 +2366,34 @@ async def _finish_pending_audits(formatted: List[Dict[str, Any]], publish_cb=Non
                 return
             url = site if site.startswith("http") else f"https://{site}"
             try:
+                modules = adaptive_modules(audit_policy, lead)
+                cached_modules = audit_cache.get_many(url, modules)
+                if modules and modules.issubset(cached_modules):
+                    cached_payload: Dict[str, Any] = {}
+                    for module in sorted(modules):
+                        cached_payload.update(cached_modules[module])
+                    updated = _apply_audit_url_payload_to_lead(lead, cached_payload)
+                    report = dict(updated.get("technical_report") or {})
+                    report["audit_status"] = "complete"
+                    report["audit_cache_hit"] = True
+                    report["audit_modules"] = sorted(modules)
+                    updated["technical_report"] = report
+                    out[i] = _agentic_apply_contact_fallback(updated)
+                    if publish_cb:
+                        try:
+                            publish_cb(out)
+                        except Exception:
+                            pass
+                    return
                 audit = await asyncio.wait_for(process_single_url(url), timeout=45.0)
                 if isinstance(audit, dict):
+                    for module in modules:
+                        audit_cache.put(url, module, module_payload(module, audit))
                     updated = _apply_audit_url_payload_to_lead(lead, audit)
                     report = dict(updated.get("technical_report") or {})
                     report["audit_status"] = "complete"
+                    report["audit_cache_hit"] = False
+                    report["audit_modules"] = sorted(modules)
                     updated["technical_report"] = report
                     out[i] = _agentic_apply_contact_fallback(updated)
                     if publish_cb:
@@ -1789,6 +2417,17 @@ async def _finish_pending_audits(formatted: List[Dict[str, Any]], publish_cb=Non
 
     await asyncio.gather(*[_audit_one(i) for i in pending_idxs])
     return out
+
+
+def _canonical_audit_policy(intent: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(intent, dict):
+        return {}
+    uqe = intent.get("uqe_plan") if isinstance(intent.get("uqe_plan"), dict) else {}
+    canonical = uqe.get("canonical_plan") if isinstance(uqe.get("canonical_plan"), dict) else {}
+    if not canonical and isinstance(intent.get("canonical_plan"), dict):
+        canonical = intent["canonical_plan"]
+    policy = canonical.get("audit_policy") if isinstance(canonical.get("audit_policy"), dict) else {}
+    return dict(policy)
 
 
 def _organic_env_int(name: str, default: int, min_value: int, max_value: int) -> int:
@@ -2532,7 +3171,7 @@ def _cap_search_results(
         cap = max(1, int(max_results))
     except (TypeError, ValueError):
         cap = 1
-    valid = [item for item in (results or []) if isinstance(item, dict)]
+    valid = _drop_blacklisted_formatted_leads(results)
     merged = _merge_formatted_results([], valid)
     if prioritize_hot:
         merged.sort(
@@ -2545,6 +3184,24 @@ def _cap_search_results(
             reverse=True,
         )
     return merged[:cap]
+
+
+def _drop_blacklisted_formatted_leads(results: Any) -> List[Dict[str, Any]]:
+    try:
+        from agents.portal_blacklist import is_blacklisted_domain, is_blacklisted_name, normalize_domain
+    except Exception:
+        return [item for item in (results or []) if isinstance(item, dict)]
+    out: List[Dict[str, Any]] = []
+    for item in results or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("azienda") or item.get("nome") or item.get("business_name") or "").strip()
+        site = str(item.get("sito") or item.get("website") or "").strip()
+        if is_blacklisted_name(name) or is_blacklisted_domain(normalize_domain(site)):
+            print(f"[worker_supabase] Drop blacklisted lead: {name[:80]} {site[:80]}", flush=True)
+            continue
+        out.append(item)
+    return out
 
 
 def _build_meta_ads_library_url(facebook_url: Optional[str], website_url: Optional[str]) -> Optional[str]:
@@ -3400,6 +4057,10 @@ def main() -> None:
 
     args, _unknown = parser.parse_known_args()
 
+    if os.getenv("MIRAX_WORKER_DISABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
+        print("[worker_supabase] MIRAX_WORKER_DISABLED=1 — worker spento in modo sicuro.", flush=True)
+        return
+
     # Re-audit worker mode (runs independently from the normal polling loop)
     if bool(getattr(args, "reaudit", False)):
         try:
@@ -3625,12 +4286,73 @@ def main() -> None:
                     intent = json.loads(intent)
                 except Exception:
                     intent = None
+            # Canonical-plan boundary: legacy jobs remain compatible, but once a
+            # canonical contract is present the worker must validate it before
+            # claiming the job or spending on any external operation.
+            had_canonical_plan = bool(
+                isinstance(intent, dict)
+                and (
+                    intent.get("canonical_plan") is not None
+                    or (
+                        isinstance(intent.get("uqe_plan"), dict)
+                        and intent["uqe_plan"].get("canonical_plan") is not None
+                    )
+                )
+            )
+            try:
+                intent = _validate_canonical_plan_in_intent(intent)
+            except Exception as contract_error:
+                if had_canonical_plan:
+                    print(
+                        f"[worker_supabase] Reject invalid canonical plan job={job_id}: "
+                        f"{contract_error.__class__.__name__}",
+                        flush=True,
+                    )
+                    supabase.table("searches").update(
+                        {
+                            "status": "error",
+                            "results": [],
+                            "progress": {
+                                "stop_reason": "INVALID_COMMERCIAL_SEARCH_PLAN",
+                                "stage": "contract_validation",
+                                "updated_at": _utc_now_iso(),
+                            },
+                            "updated_at": _utc_now_iso(),
+                        }
+                    ).eq("id", job_id).eq("status", expected_pending_status).execute()
+                    time.sleep(1)
+                    continue
+                raise
             intent_signals = []
             if isinstance(intent, dict):
                 intent_signals = intent.get("signals") or []
                 if intent_signals:
                     signal_types = [s.get("type") for s in intent_signals if isinstance(s, dict)]
                     print(f"[worker_supabase] Job intent signals: {signal_types}", flush=True)
+
+            category, location, intent, canonicalized_marketing_job = _canonicalize_marketing_investment_job(
+                category,
+                location,
+                intent if isinstance(intent, dict) else None,
+                job if isinstance(job, dict) else {},
+            )
+            category, location, intent, canonicalized_seller_job = _canonicalize_seller_leadgen_job(
+                category,
+                location,
+                intent if isinstance(intent, dict) else None,
+                job if isinstance(job, dict) else {},
+            )
+            if canonicalized_seller_job or canonicalized_marketing_job:
+                print(
+                    f"[worker_supabase] Canonicalized signal job {job_id}: {category} @ {location}",
+                    flush=True,
+                )
+                try:
+                    supabase.table("searches").update(
+                        {"category": category, "location": location, "intent": intent}
+                    ).eq("id", job_id).eq("status", expected_pending_status).execute()
+                except Exception as canon_error:
+                    print(f"[worker_supabase] canonicalize update skipped: {canon_error}", flush=True)
 
             job_user_id = str(job.get("user_id") or "").strip() or None
 
@@ -3665,6 +4387,16 @@ def main() -> None:
                     job_max = min(10000, max(5, int(z.strip())))
                 elif isinstance(z, dict) and z.get("max_results"):
                     job_max = min(10000, max(5, int(z.get("max_results") or default_max)))
+                elif isinstance(intent, dict):
+                    for target_key in ("max_leads", "requested_leads", "lead_target", "target"):
+                        raw_target = intent.get(target_key)
+                        if raw_target is None:
+                            continue
+                        try:
+                            job_max = min(10000, max(5, int(str(raw_target).strip())))
+                            break
+                        except Exception:
+                            continue
                 os.environ["DEMO_MAX_RESULTS"] = str(job_max)
                 print(f"[worker_supabase] Job max_results={job_max}", flush=True)
             except Exception:
@@ -3748,16 +4480,48 @@ def main() -> None:
                     return []
 
             def _publish_job_results_safe(new_results, status=None):
+                canonical_lifecycle_plan = _canonical_plan_from_intent(intent)
+                current: List[Dict[str, Any]] = []
                 try:
                     current = _load_current_job_results_safe()
                     merged = _merge_formatted_results(current, new_results if isinstance(new_results, list) else [])
                     filtered = _filter_non_domestic_refrigeration_results(category, merged)
-                    if current and not filtered:
+                    requires_confirmed_signals = bool(_required_signals_from_intent(intent if isinstance(intent, dict) else None))
+                    if requires_confirmed_signals:
+                        filtered = _filter_results_by_confirmed_required_signals(
+                            filtered,
+                            intent if isinstance(intent, dict) else None,
+                            stage="publish",
+                        )
+                    if current and not filtered and not requires_confirmed_signals:
                         print(f"[worker_supabase] Safe publish preserved current results because filter returned empty: current={len(current)}", flush=True)
                         filtered = current
                     uqe_ctx = intent.get("uqe_plan") if isinstance(intent, dict) and isinstance(intent.get("uqe_plan"), dict) else {}
                     prioritize_hot = _is_agentic_only_job(intent) or bool(uqe_ctx.get("commercial_hypothesis"))
                     merged = _cap_search_results(filtered, job_max, prioritize_hot=prioritize_hot)
+                    if canonical_lifecycle_plan is not None:
+                        from commercial_lifecycle import persist_and_publish_candidates
+
+                        lifecycle_shadow_mode = bool(
+                            isinstance(intent, dict)
+                            and intent.get("customer_visible") is False
+                            and str(intent.get("lifecycle_stage") or "") == "v5_shadow"
+                        )
+
+                        lifecycle_published = persist_and_publish_candidates(
+                            supabase,
+                            search_id=str(job_id),
+                            user_id=str(job.get("user_id") or "").strip() or None,
+                            leads=merged,
+                            canonical_plan=canonical_lifecycle_plan,
+                            shadow_mode=lifecycle_shadow_mode,
+                        )
+                        # Preserve previously published rows, never intermediate candidates.
+                        merged = _cap_search_results(
+                            _merge_formatted_results(current, lifecycle_published),
+                            job_max,
+                            prioritize_hot=prioritize_hot,
+                        )
                     with _rt_lock:
                         _rt_results.clear()
                         _rt_results.extend(merged)
@@ -3783,6 +4547,11 @@ def main() -> None:
                                 "cache_hits": extraction_stats.get("cache_hits"),
                                 "estimated_llm_cost_usd": extraction_stats.get("estimated_llm_cost_usd"),
                             }
+                            _sync_cost_ledger_safe(
+                                supabase,
+                                job_id,
+                                runtime_stats.get("cost_governor"),
+                            )
                         payload.update(
                             {
                                 "worker_id": None if terminal or requeued else _worker_id,
@@ -3802,12 +4571,15 @@ def main() -> None:
                         _job_uid = str(job.get("user_id") or "").strip() or None
                     except Exception:
                         _job_uid = None
-                    _sync_search_leads_safe(supabase, job_id, _job_uid, merged)
-                    _sync_neo4j_leads_safe(merged)
                     supabase.table("searches").update(payload).eq("id", job_id).execute()
+                    _sync_search_leads_safe(supabase, job_id, _job_uid, merged)
+                    if _should_sync_graph_for_publish_status(status):
+                        _sync_neo4j_leads_safe(merged)
                     return merged
                 except Exception as e:
                     print(f"[worker_supabase] Safe publish skipped: {e}", flush=True)
+                    if canonical_lifecycle_plan is not None:
+                        return current
                     return new_results if isinstance(new_results, list) else []
 
             def _publish_progressive_organic():
@@ -4003,6 +4775,7 @@ def main() -> None:
             # Google Maps can return a page-sized batch larger than requested.
             # Apply the contract before any expensive audit/enrichment stage.
             formatted = _cap_search_results(formatted, job_max, prioritize_hot=_agentic_only)
+            formatted = _filter_results_by_confirmed_required_signals(formatted, intent if isinstance(intent, dict) else None, stage="pre-audit")
 
             try:
                 if formatted:
@@ -4015,7 +4788,14 @@ def main() -> None:
             print(f"[worker_supabase] Job {job_id} completato. Risultati: {len(formatted)}")
 
             try:
-                formatted = asyncio.run(_finish_pending_audits(formatted, publish_cb=lambda snap: _publish_job_results_safe(snap)))
+                _strict_signal_publish = bool(_required_signals_from_intent(intent if isinstance(intent, dict) else None))
+                formatted = asyncio.run(
+                    _finish_pending_audits(
+                        formatted,
+                        publish_cb=None if _strict_signal_publish else (lambda snap: _publish_job_results_safe(snap)),
+                        audit_policy=_canonical_audit_policy(intent if isinstance(intent, dict) else None),
+                    )
+                )
             except Exception as e:
                 print(f"[worker_supabase] completion-pass skipped: {e}", flush=True)
 
@@ -4057,18 +4837,43 @@ def main() -> None:
                 agentic_exhaustion_msg = None
 
             formatted = _cap_search_results(formatted, job_max, prioritize_hot=_agentic_only)
+            formatted = _filter_results_by_confirmed_required_signals(formatted, intent if isinstance(intent, dict) else None, stage="post-agentic")
 
-            # Agentic discovery publishes immediately; audit/contact extraction
-            # then runs as a bounded concurrent completion stage.
+            # Agentic-only must not complete with empty contacts/socials. Run
+            # the same website audit pass before final status, then drop
+            # no-contact leads and let the job auto-resume if target is short.
             try:
+                _strict_signal_publish = bool(_required_signals_from_intent(intent if isinstance(intent, dict) else None))
                 formatted = asyncio.run(
                     _finish_pending_audits(
                         formatted if isinstance(formatted, list) else [],
-                        publish_cb=lambda snap: _publish_job_results_safe(snap, status="running"),
+                        publish_cb=None
+                        if _strict_signal_publish
+                        else (lambda snap: _publish_job_results_safe(snap, status="running")),
+                        audit_policy=_canonical_audit_policy(intent if isinstance(intent, dict) else None),
                     )
                 )
             except Exception as e:
                 print(f"[worker_supabase] post-agentic audit pass skipped: {e}", flush=True)
+
+            if _agentic_only and isinstance(formatted, list):
+                before_contact_filter = len(formatted)
+                formatted = [lead for lead in formatted if _lead_has_contact_channel(lead)]
+                dropped_no_contact = before_contact_filter - len(formatted)
+                if dropped_no_contact > 0:
+                    print(
+                        f"[worker_supabase] Agentic contact gate dropped {dropped_no_contact} no-contact leads",
+                        flush=True,
+                    )
+                    if isinstance(intent, dict):
+                        checkpoint = intent.get("agentic_checkpoint")
+                        if isinstance(checkpoint, dict):
+                            checkpoint["stop_reason"] = "round_complete"
+                        intent["agentic_checkpoint"] = checkpoint or {"stop_reason": "round_complete"}
+                        try:
+                            supabase.table("searches").update({"intent": intent}).eq("id", job_id).execute()
+                        except Exception as _contact_gate_stats_err:
+                            print(f"[worker_supabase] contact-gate intent update skipped: {_contact_gate_stats_err}", flush=True)
 
             agentic_count = len(formatted) if isinstance(formatted, list) else 0
             checkpoint_state = (
@@ -4117,6 +4922,7 @@ def main() -> None:
                     print(f"[worker_supabase] Maps fallback failed: {fb_e}", flush=True)
 
             formatted = _cap_search_results(formatted, job_max, prioritize_hot=_agentic_only)
+            formatted = _filter_results_by_confirmed_required_signals(formatted, intent if isinstance(intent, dict) else None, stage="final")
             pending_left = sum(1 for l in formatted if isinstance(l, dict) and _lead_has_pending_audit(l))
             # Maps scrape finished → mark completed so UI stops spinner; resume-audits finishes light audits.
             final_status = "pending" if agentic_resume_needed else "completed"
@@ -4190,6 +4996,7 @@ def main() -> None:
                                 payload = {"results": new_results if isinstance(new_results, list) else []}
                                 if status:
                                     payload["status"] = status
+                                sb_bg.table("searches").update(payload).eq("id", job_id).execute()
                                 _sync_search_leads_safe(
                                     sb_bg,
                                     job_id,
@@ -4197,7 +5004,6 @@ def main() -> None:
                                     new_results if isinstance(new_results, list) else [],
                                 )
                                 _sync_neo4j_leads_safe(new_results if isinstance(new_results, list) else [])
-                                sb_bg.table("searches").update(payload).eq("id", job_id).execute()
                             except Exception as e:
                                 print(f"[worker_supabase] bg publish skipped: {e}", flush=True)
 
@@ -4274,13 +5080,6 @@ def main() -> None:
                             1 for l in current_results if isinstance(l, dict) and _lead_has_pending_audit(l)
                         )
                         err_status = "completed"
-                        _sync_search_leads_safe(
-                            supabase,
-                            locals().get("job_id"),
-                            str(job.get("user_id") or "").strip() if "job" in locals() and isinstance(job, dict) else None,
-                            current_results,
-                        )
-                        _sync_neo4j_leads_safe(current_results)
                         error_payload: Dict[str, Any] = {"status": err_status, "results": current_results}
                         if _lease_supported:
                             error_payload.update(
@@ -4298,6 +5097,13 @@ def main() -> None:
                                 }
                             )
                         supabase.table("searches").update(error_payload).eq("id", locals()["job_id"]).execute()
+                        _sync_search_leads_safe(
+                            supabase,
+                            locals().get("job_id"),
+                            str(job.get("user_id") or "").strip() if "job" in locals() and isinstance(job, dict) else None,
+                            current_results,
+                        )
+                        _sync_neo4j_leads_safe(current_results)
                     else:
                         error_payload = {
                             "status": "error",
@@ -4483,9 +5289,9 @@ def run_reaudit_worker(max_leads: int = 20) -> None:
 
             if changed and job_id:
                 try:
+                    supabase.table("searches").update({"results": updated_results}).eq("id", job_id).execute()
                     _sync_search_leads_safe(supabase, job_id, None, updated_results)
                     _sync_neo4j_leads_safe(updated_results)
-                    supabase.table("searches").update({"results": updated_results}).eq("id", job_id).execute()
                     try:
                         logger.info(f"[reaudit] Job {job_id} aggiornato")
                     except Exception:

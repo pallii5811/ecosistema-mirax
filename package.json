@@ -8,6 +8,17 @@
     "start": "next start",
     "lint": "eslint",
     "check:staging-env": "node scripts/check-staging-env.mjs",
+    "preflight:canary": "node scripts/preflight-canary.mjs",
+    "test:release-dossier": "node scripts/validate-release-dossier.mjs",
+    "test:commercial-contract": "npx tsx scripts/test-commercial-search-plan-contract.ts && npx tsx scripts/test-intent-compiler-normalization.ts && npx tsx scripts/test-evaluation-review-security.ts && python -m pytest -q backend_mirror/test_commercial_search_plan_contract.py",
+    "evaluation:report": "node scripts/report-gold-evaluation.mjs --allow-incomplete",
+    "evaluation:sources": "node scripts/report-v5-source-performance.mjs",
+    "test:commercial-lifecycle": "node scripts/test-commercial-lifecycle-schema.mjs",
+    "test:research-cost-governor": "npx tsx scripts/test-research-cost-governor.ts",
+    "test:atomic-cost-governor": "node scripts/test-atomic-cost-governor.mjs",
+    "test:commercial-runtime": "python -m pytest -q backend_mirror/test_atomic_paid_operations.py backend_mirror/test_cost_governor.py backend_mirror/test_commercial_lifecycle.py backend_mirror/test_commercial_search_plan_contract.py backend_mirror/test_cost_quality_guards.py && node scripts/test-paid-operation-guards.mjs",
+    "test:final-failure-injection": "python -m pytest -q backend_mirror/test_atomic_paid_operations.py backend_mirror/test_final_failure_injection.py backend_mirror/test_job_leases.py backend_mirror/test_url_safety_adaptive_audit.py && node scripts/test-paid-operation-guards.mjs && node scripts/validate-atomic-cost-governor-db.mjs && node scripts/test-cost-governor-concurrency-db.mjs",
+    "test:commercial-matrix": "npx tsx scripts/test-commercial-query-matrix.ts && node scripts/validate-multivertical-canary-manifest.mjs",
     "db:generate-schema": "node scripts/generate-schema-from-openapi.mjs",
     "db:apply-dev": "node scripts/apply-dev-database.mjs",
     "db:apply-mirax": "node scripts/apply-mirax-migrations.mjs",
@@ -88,7 +99,8 @@
     "react-dom": "19.2.3",
     "resend": "^6.9.3",
     "stripe": "^20.4.1",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -101,6 +113,7 @@
     "pg": "^8.22.0",
     "shadcn": "^3.8.5",
     "tailwindcss": "^4",
+    "tsx": "^4.23.0",
     "tw-animate-css": "^1.4.0",
     "typescript": "^5"
   }

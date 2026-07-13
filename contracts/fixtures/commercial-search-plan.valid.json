@@ -1,0 +1,97 @@
+{
+  "schema_version": "1.0.0",
+  "search_id": "contract-fixture-001",
+  "raw_query": "Sono un broker assicurativo: trovami PMI lombarde con rischio operativo in aumento",
+  "language": "it",
+  "seller": {
+    "offer_category": "insurance_brokerage",
+    "offer_description": "Coperture assicurative per rischi operativi delle PMI",
+    "products_or_services": ["assicurazione aziendale", "risk assessment"],
+    "problems_solved": ["esposizione operativa non coperta", "crescita del rischio"],
+    "sales_motion": "consultative_outbound",
+    "preferred_buyer_roles": ["titolare", "CFO", "responsabile operations"]
+  },
+  "target": {
+    "entity_types": ["company"],
+    "industries": ["logistica", "edilizia", "produzione"],
+    "company_sizes": ["micro", "small", "medium"],
+    "employee_range": { "min": 5, "max": 249 },
+    "revenue_range": { "max": 50000000, "currency": "EUR" },
+    "geographies": ["Lombardia"],
+    "local_business_preference": true,
+    "required_attributes": ["attività operativa"],
+    "excluded_attributes": ["grande impresa", "brand globale"],
+    "excluded_entities": []
+  },
+  "commercial_hypotheses": [
+    {
+      "id": "risk-growth",
+      "buyer_problem": "L'espansione operativa può aver reso obsolete le coperture esistenti",
+      "triggering_events": ["assunzioni operative", "nuovo cantiere", "appalto aggiudicato"],
+      "signals": ["hiring_operational", "tender_won", "fleet_expansion"],
+      "implied_need": "Revisione delle coperture e dei massimali",
+      "relevance_to_offer": "Il broker può riallineare le coperture al rischio osservato",
+      "confidence": 0.84
+    }
+  ],
+  "signal_policy": {
+    "required_signals": ["hiring_operational"],
+    "optional_signals": ["tender_won", "fleet_expansion"],
+    "negative_signals": ["business_closed"],
+    "maximum_age_days_by_signal": {
+      "hiring_operational": 120,
+      "tender_won": 365,
+      "fleet_expansion": 365
+    },
+    "minimum_signal_confidence": 0.75
+  },
+  "source_policy": {
+    "preferred_source_classes": ["company_careers", "public_procurement_portal"],
+    "allowed_source_classes": ["official_company_website", "company_careers", "public_procurement_portal", "recognized_local_news"],
+    "excluded_source_classes": ["generic_blog", "directory", "search_snippet"],
+    "minimum_independent_sources": 1,
+    "primary_source_required_for": ["tender_won"]
+  },
+  "evidence_policy": {
+    "require_official_domain": true,
+    "require_source_url": true,
+    "require_observed_at": true,
+    "minimum_evidence_confidence": 0.75,
+    "corroboration_required_above_risk": 0.65
+  },
+  "audit_policy": {
+    "modules": ["contacts", "social_profiles", "company_identity", "commercial_signals"],
+    "crawl_depth": 1,
+    "maximum_pages": 8,
+    "collect_contacts": true,
+    "collect_social_profiles": true,
+    "detect_technologies": false,
+    "detect_commercial_signals": true
+  },
+  "ranking_policy": {
+    "weight_buyer_fit": 0.25,
+    "weight_signal_strength": 0.25,
+    "weight_freshness": 0.15,
+    "weight_evidence_confidence": 0.2,
+    "weight_contactability": 0.1,
+    "weight_need_gap": 0.05
+  },
+  "budget_policy": {
+    "target_cost_eur": 0.105,
+    "hard_cost_eur": 0.125,
+    "maximum_search_calls": 8,
+    "maximum_pages_opened": 25,
+    "maximum_llm_evaluations": 3
+  },
+  "ambiguity": {
+    "score": 0.12,
+    "assumptions": ["PMI interpretata come meno di 250 dipendenti"],
+    "unresolved_fields": []
+  },
+  "planner_metadata": {
+    "planner": "llm",
+    "prompt_version": "commercial-intent-v1",
+    "model": "fixture-model",
+    "generated_at": "2026-07-11T00:00:00Z"
+  }
+}

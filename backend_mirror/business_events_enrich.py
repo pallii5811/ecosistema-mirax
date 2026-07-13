@@ -964,7 +964,7 @@ def apply_signals_to_lead(lead: Dict[str, Any], signals: List[Dict[str, Any]]) -
                 "authority": sig.get("authority"),
                 "region": sig.get("region"),
                 "province": sig.get("province"),
-                "status": sig.get("status"),
+                "status": sig.get("tender_status") or sig.get("status"),
                 "source_url": sig.get("source_url"),
             }
             lead["business_tender_hits"] = [hit]

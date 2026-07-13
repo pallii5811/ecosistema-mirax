@@ -18,12 +18,14 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { createClient } from '@/utils/supabase/client'
+import { useToast } from '@/components/ToastProvider'
 
 type TestState = { status: 'idle' | 'testing' | 'success' | 'error'; message: string | null }
 
 export default function CrmIntegrationsPage() {
   const supabase = createClient()
   const searchParams = useSearchParams()
+  const { success: toastSuccess, error: toastError } = useToast()
 
   const [integrations, setIntegrations] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -191,12 +193,13 @@ export default function CrmIntegrationsPage() {
       })
       const data = await res.json().catch(() => null)
       if (!data?.ok) {
-        alert(data?.error || 'Errore disconnessione.')
+        toastError(data?.error || 'Errore disconnessione.', 'CRM')
       } else {
         await loadIntegrations()
+        toastSuccess('Integrazione disconnessa', 'CRM')
       }
     } catch (e: any) {
-      alert(e?.message || 'Errore di rete.')
+      toastError(e?.message || 'Errore di rete.', 'CRM')
     } finally {
       setDisconnectingId(null)
     }
@@ -216,11 +219,12 @@ export default function CrmIntegrationsPage() {
       const data = await res.json().catch(() => null)
       if (data?.ok && data.integration) {
         setIntegrations((prev) => prev.map((i) => (i.id === id ? { ...i, ...data.integration } : i)))
+        toastSuccess('Impostazioni salvate', 'CRM')
       } else {
-        alert(data?.error || 'Errore salvataggio impostazioni.')
+        toastError(data?.error || 'Errore salvataggio impostazioni.', 'CRM')
       }
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Errore di rete.')
+      toastError(e instanceof Error ? e.message : 'Errore di rete.', 'CRM')
     } finally {
       setSyncSavingId(null)
     }

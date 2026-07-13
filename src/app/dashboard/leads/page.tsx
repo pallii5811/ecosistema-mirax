@@ -31,6 +31,7 @@ import { OutreachLauncher } from '@/components/OutreachLauncher'
 import { useOutreachStatus } from '@/hooks/useOutreachStatus'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
+import { useToast } from '@/components/ToastProvider'
 
 type Lead = {
   id: string
@@ -139,6 +140,7 @@ function isEmailString(s: string | null | undefined) {
 
 export default function LeadsPage() {
   const outreach = useOutreachStatus()
+  const { success: toastSuccess, error: toastError, info: toastInfo } = useToast()
   const [lists, setLists] = useState<DomainList[]>([])
   const [totalLeads, setTotalLeads] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -155,6 +157,9 @@ export default function LeadsPage() {
   const [bulkResult, setBulkResult] = useState<{ success: number; failed: number; total: number } | null>(null)
   const [bulkError, setBulkError] = useState<string | null>(null)
   const [deletingListId, setDeletingListId] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [renameSaving, setRenameSaving] = useState(false)
 
   const openListView = useCallback(async (listId: string, listName: string) => {
     setViewListId(listId)
@@ -245,10 +250,19 @@ export default function LeadsPage() {
     }
   }, [activeCRM, selectedIds, viewLeads])
 
-  const renameList = useCallback(async (listId: string, currentName: string) => {
-    const nextName = window.prompt('Nuovo nome della lista:', currentName)?.trim()
+  const renameList = useCallback((listId: string, currentName: string) => {
+    setRenaming({ id: listId, name: currentName })
+    setRenameValue(currentName)
+  }, [])
+
+  const saveRenameList = useCallback(async () => {
+    if (!renaming) return
+    const listId = renaming.id
+    const currentName = renaming.name
+    const nextName = renameValue.trim()
     if (!nextName || nextName === currentName) return
 
+    setRenameSaving(true)
     try {
       const res = await fetch(`/api/lists/${listId}`, {
         method: 'PATCH',
@@ -261,10 +275,17 @@ export default function LeadsPage() {
       }
       setLists((prev) => prev.map((l) => (l.id === listId ? { ...l, name: nextName } : l)))
       if (viewListId === listId) setViewListName(nextName)
+      setRenaming(null)
+      setRenameValue('')
+      toastSuccess('Lista rinominata', 'Liste')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Errore durante la rinomina.')
+      const message = e instanceof Error ? e.message : 'Errore durante la rinomina.'
+      setError(message)
+      toastError(message, 'Liste')
+    } finally {
+      setRenameSaving(false)
     }
-  }, [viewListId])
+  }, [renameValue, renaming, toastError, toastSuccess, viewListId])
 
   const deleteList = useCallback(async (listId: string, listName: string) => {
     const confirmed = window.confirm(
@@ -295,20 +316,25 @@ export default function LeadsPage() {
         setViewListName('')
         setViewLeads([])
       }
+      toastSuccess('Lista eliminata', 'Liste')
     } catch (e) {
       const raw = e instanceof Error ? e.message : 'Errore durante l\'eliminazione.'
       setError(raw)
+      toastError(raw, 'Liste')
     } finally {
       setDeletingListId(null)
     }
-  }, [viewListId])
+  }, [toastError, toastSuccess, viewListId])
 
   const exportCsv = useCallback(async (listId: string, listName: string) => {
     try {
       const res = await fetch(`/api/lists/${listId}/leads`, { cache: 'no-store' })
       const data = await res.json().catch(() => null)
       const leads: Lead[] = Array.isArray(data?.leads) ? data.leads : []
-      if (leads.length === 0) { alert('Nessun lead da esportare.'); return }
+      if (leads.length === 0) {
+        toastInfo('Nessun lead da esportare.', 'Export CSV')
+        return
+      }
       const headers = ['Nome', 'Email', 'Telefono', 'Sito', 'Città', 'Categoria', 'Score']
       const rows = leads.map(l => [
         l.name || '', l.email || '', l.phone || '', l.website || '',
@@ -320,8 +346,11 @@ export default function LeadsPage() {
       const a = document.createElement('a')
       a.href = url; a.download = `${listName.replace(/[^a-zA-Z0-9]/g, '_')}_leads.csv`
       a.click(); URL.revokeObjectURL(url)
-    } catch { alert('Errore durante l\'esportazione.') }
-  }, [])
+      toastSuccess('CSV esportato', 'Export CSV')
+    } catch {
+      toastError('Errore durante l\'esportazione.', 'Export CSV')
+    }
+  }, [toastError, toastInfo, toastSuccess])
 
   useEffect(() => {
     const run = async () => {
@@ -809,6 +838,48 @@ export default function LeadsPage() {
                   })}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renaming && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+            <h3 className="text-base font-semibold text-slate-900">Rinomina lista</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Usa un nome chiaro per ritrovare velocemente il segmento commerciale.
+            </p>
+            <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Nome lista
+            </label>
+            <input
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              autoFocus
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+              placeholder="Es. PMI calde Torino"
+            />
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setRenaming(null)
+                  setRenameValue('')
+                }}
+                disabled={renameSaving}
+              >
+                Annulla
+              </Button>
+              <Button
+                type="button"
+                onClick={saveRenameList}
+                disabled={renameSaving || !renameValue.trim()}
+                className="bg-slate-900 text-white hover:bg-slate-800"
+              >
+                {renameSaving ? 'Salvataggio…' : 'Salva'}
+              </Button>
             </div>
           </div>
         </div>

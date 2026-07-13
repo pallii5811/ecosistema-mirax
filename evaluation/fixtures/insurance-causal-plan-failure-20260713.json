@@ -1,0 +1,18 @@
+{
+  "fixture_version": "mirax-v5-systemic-failure-v1",
+  "captured_at": "2026-07-13T02:20:56.564Z",
+  "run_id": "2d2600f5-28e3-473b-a9bd-f21969c40719",
+  "canary_id": "1196fd3a-fdc3-46f2-92ab-fc059192972b",
+  "search_id": "427aafaa-83ab-4c39-8c45-53b4eba9166c",
+  "classification": "SYSTEMIC",
+  "paid_stage": "intent_compilation_only",
+  "source_queries_executed": 0,
+  "customer_publications": 0,
+  "cost_eur": 0.05,
+  "failed_gate_codes": [
+    "TRIGGERING_EVENT_MISSING",
+    "GENERIC_COMMERCIAL_HYPOTHESIS"
+  ],
+  "root_cause": "The model supplied usable seller fields but omitted a causal commercial hypothesis; structural normalization previously created a placeholder.",
+  "expected_behavior": "Use the versioned signal ontology to construct research hypotheses only; never create observed facts, companies, evidence or contacts."
+}

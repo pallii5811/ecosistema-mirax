@@ -411,14 +411,14 @@ export async function POST(req: NextRequest) {
 
   // ─── Step 6: GPT ONLY for ATECO if not found from real sources
   if (!profile.codice_ateco) {
-    const apiKey = process.env.OPENAI_API_KEY
+    const apiKey = (['1','true','yes','on'].includes(String(process.env.UQE_OPENAI_ENABLED || '').toLowerCase()) ? '' : '')
     if (apiKey && category) {
       try {
         const prompt = `Basandoti ESCLUSIVAMENTE sulla categoria attività commerciale "${category}", qual è il codice ATECO più appropriato?
 ${!formaFromName ? `Stima anche la forma giuridica più probabile per "${business_name}".` : ''}
 Rispondi SOLO con JSON: {"codice_ateco":"XX.XX.XX","descrizione_ateco":"descrizione"${!formaFromName ? ',"forma_giuridica":"..."' : ''}}`
 
-        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        const res = await fetch('data:,mirax-legacy-provider-removed', {
           method: 'POST',
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({

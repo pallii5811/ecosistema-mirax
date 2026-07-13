@@ -13,13 +13,13 @@ export function useCredits() {
   }, [credits])
 
   const deductCredits = useCallback(
-    async (amount: number): Promise<number> => {
+    async (amount: number, searchId?: string | null): Promise<number> => {
       if (amount <= 0) return creditsRef.current
       try {
         const res = await fetch('/api/use-credits', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount }),
+          body: JSON.stringify(searchId ? { search_id: searchId, limit: amount } : { amount }),
         })
         const data = await res.json()
         if (res.ok && typeof data.credits === 'number') {

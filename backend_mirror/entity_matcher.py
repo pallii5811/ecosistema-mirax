@@ -113,16 +113,91 @@ def lead_name(lead: Dict[str, Any]) -> str:
     return ""
 
 
+ITALIAN_REGIONS: frozenset[str] = frozenset(
+    {
+        "lombardia",
+        "lazio",
+        "campania",
+        "sicilia",
+        "veneto",
+        "emilia-romagna",
+        "emilia romagna",
+        "piemonte",
+        "puglia",
+        "toscana",
+        "calabria",
+        "sardegna",
+        "liguria",
+        "marche",
+        "abruzzo",
+        "friuli-venezia giulia",
+        "friuli venezia giulia",
+        "trentino-alto adige",
+        "umbria",
+        "basilicata",
+        "molise",
+        "valle d'aosta",
+        "valle d aosta",
+        "italia",
+        "italy",
+    }
+)
+
+
+def is_italian_region(name: str) -> bool:
+    n = normalize_text(name or "")
+    if not n:
+        return False
+    return n in ITALIAN_REGIONS
+
+
+def city_from_address(address: str) -> str:
+    addr = (address or "").strip()
+    if not addr:
+        return ""
+    m = re.search(r"\b(\d{5})\s+([A-Za-zÀ-ÿ'\-\s]+?)(?:\s+\([A-Z]{2}\)|\s+[A-Z]{2})?\b", addr)
+    if m:
+        candidate = m.group(2).strip()
+        if candidate and not is_italian_region(candidate):
+            return candidate.title()
+    parts = [p.strip() for p in addr.split(",") if p.strip()]
+    for part in reversed(parts):
+        cleaned = re.sub(r"^\d{5}\s*", "", part).strip()
+        cleaned = re.sub(r"\s+[A-Z]{2}$", "", cleaned).strip()
+        if cleaned and len(cleaned) > 2 and not is_italian_region(cleaned) and not re.fullmatch(r"\d+", cleaned):
+            return cleaned.title()
+    return ""
+
+
+def resolve_lead_city(
+    city: Optional[str] = None,
+    address: Optional[str] = None,
+    search_location: Optional[str] = None,
+) -> str:
+    """Non usare la regione (es. Lombardia) come città — estrai dal CAP/indirizzo."""
+    parsed = city_from_address(address or "")
+    if parsed:
+        return parsed
+    c = (city or "").strip()
+    if c and not is_italian_region(c):
+        return c.split(",")[0].strip()
+    loc = (search_location or "").strip()
+    if loc and not is_italian_region(loc):
+        return loc.split(",")[0].strip()
+    return "N/A"
+
+
 def lead_city(lead: Dict[str, Any]) -> str:
-    for key in ("city", "citta", "comune", "location", "localita"):
+    parsed = city_from_address(str(lead.get("indirizzo") or lead.get("address") or ""))
+    if parsed:
+        return parsed
+    for key in ("city", "citta", "comune", "localita"):
         val = str(lead.get(key) or "").strip()
-        if val:
+        if val and not is_italian_region(val):
             return val.split(",")[0].strip()
-    addr = str(lead.get("indirizzo") or lead.get("address") or "")
-    if addr:
-        parts = [p.strip() for p in addr.split(",") if p.strip()]
-        if parts:
-            return parts[-1]
+    loc = str(lead.get("location") or "").strip()
+    if loc and not is_italian_region(loc):
+        return loc.split(",")[0].strip()
     return ""
 
 

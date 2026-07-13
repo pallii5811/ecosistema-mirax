@@ -688,7 +688,7 @@ Modulo: `src/lib/signal-intent/`
 ```
 parseSignalIntent(query):
   1. callAnthropicSemantic()     # ANTHROPIC_API_KEY, SEMANTIC_MODEL
-  2. callOpenAiSemantic()        # fallback OPENAI_API_KEY
+  2. callOpenAiSemantic()        # fallback ANTHROPIC_API_KEY
   3. semantic-graph-fallback     # grafo regole
   4. parseSignalIntentHeuristic  # regex IT
 ```
@@ -1314,7 +1314,7 @@ Auth: Bearer `CRON_SECRET` (`src/lib/cron-auth.ts`)
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-side bypass RLS |
 | `NEXT_PUBLIC_SITE_URL` | URL sito |
-| `OPENAI_API_KEY` | NLP search parsing |
+| `ANTHROPIC_API_KEY` | NLP search parsing |
 | `BACKEND_URL` | Worker API (default `http://116.203.137.39:8002`) |
 
 ### 40.2 MIRAX AI

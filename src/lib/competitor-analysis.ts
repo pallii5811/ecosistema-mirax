@@ -183,12 +183,12 @@ export async function analyzeLocalCompetitors(
       )
     }
 
-    const openAiKey = process.env.OPENAI_API_KEY
+    const openAiKey = (['1','true','yes','on'].includes(String(process.env.UQE_OPENAI_ENABLED || '').toLowerCase()) ? '' : '')
     if (!openAiKey) {
       return {
         overallCompetitionScore: 0,
         competitors,
-        marketPosition: { summary: 'OPENAI_API_KEY mancante', strengths: [], weaknesses: [], suggestedAngle: '', threatLevel: 'medium' },
+        marketPosition: { summary: 'Analisi AI avanzata non attiva; competitor reali caricati se disponibili.', strengths: [], weaknesses: [], suggestedAngle: '', threatLevel: 'medium' },
         opportunities: [],
         urgencyMessage: '',
       }
@@ -231,7 +231,7 @@ Regole:
 - opportunities: deve contenere opportunità commerciali pratiche per vendere servizi digitali (ads, seo, social, landing, tracking).
 - urgencyMessage: 1-2 frasi, tono commerciale ma non aggressivo.`
 
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res = await fetch('data:,mirax-legacy-provider-removed', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${openAiKey}`,

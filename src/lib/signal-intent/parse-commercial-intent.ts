@@ -70,89 +70,17 @@ async function callAnthropicCommercialIntent(
   query: string,
   examples: FeedbackPromptExample[] = [],
 ): Promise<CommercialIntent | null> {
-  if (claudeUnauthorized) return null
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return null
-
-  const model = process.env.COMMERCIAL_INTENT_MODEL || process.env.SEMANTIC_MODEL || 'claude-sonnet-4-20250514'
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 1200,
-      temperature: 0,
-      messages: [{ role: 'user', content: buildPrompt(query, examples) }],
-    }),
-    signal: AbortSignal.timeout(25_000),
-  })
-
-  if (!res.ok) {
-    console.warn('[commercial-intent] Claude HTTP', res.status)
-    if (res.status === 401) claudeUnauthorized = true
-    return null
-  }
-
-  const data = (await res.json()) as { content?: Array<{ text?: string }> }
-  const text = data.content?.[0]?.text || ''
-  const match = text.match(/\{[\s\S]*\}/)
-  if (!match) return null
-  try {
-    return normalizeCommercialIntent(JSON.parse(match[0]) as Record<string, unknown>, query, 'llm')
-  } catch {
-    return null
-  }
+  void query
+  void examples
+  // Retired: graph parsing without a search lifecycle cannot spend.
+  return null
 }
 
 async function callOpenAiCommercialIntent(
   query: string,
   examples: FeedbackPromptExample[] = [],
 ): Promise<CommercialIntent | null> {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) return null
-
-  const model = process.env.COMMERCIAL_OPENAI_MODEL || process.env.SEMANTIC_OPENAI_MODEL || 'gpt-4o-mini'
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      max_tokens: 1200,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: 'Rispondi solo con JSON valido.' },
-        { role: 'user', content: buildPrompt(query, examples) },
-      ],
-    }),
-    signal: AbortSignal.timeout(25_000),
-  })
-
-  if (!res.ok) {
-    console.warn('[commercial-intent] OpenAI HTTP', res.status)
-    return null
-  }
-
-  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
-  const text = data.choices?.[0]?.message?.content || ''
-  try {
-    return normalizeCommercialIntent(JSON.parse(text) as Record<string, unknown>, query, 'llm')
-  } catch {
-    const match = text.match(/\{[\s\S]*\}/)
-    if (!match) return null
-    try {
-      return normalizeCommercialIntent(JSON.parse(match[0]) as Record<string, unknown>, query, 'llm')
-    } catch {
-      return null
-    }
-  }
+  return null
 }
 
 function normalizeIndustry(ind: string): string {

@@ -5,6 +5,7 @@ import logging
 import difflib
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
@@ -172,6 +173,8 @@ def verify_company_domain(company_name: str, url: str, location: str = "") -> Op
             "url": canonical_url,
             **scored,
             "status": "verified" if int(scored["score"]) >= 70 else "probable",
+            "resolution_method": "positive_page_identity",
+            "resolved_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as exc:
         logger.debug("verify_company_domain failed url=%s: %s", target[:80], exc)
@@ -321,7 +324,11 @@ def resolve_official_identity(
     try:
         from .search_serp import search_urls_http
 
-        urls = search_urls_http(query, max(3, min(max_results, 8)))
+        urls = search_urls_http(
+            query,
+            max(3, min(max_results, 8)),
+            cost_scope=f"domain_resolution:{name.lower()}:{loc.lower()}",
+        )
     except Exception as exc:
         logger.warning("domain resolve SERP failed name=%r: %s", name[:60], exc)
         return None

@@ -1,0 +1,48 @@
+{
+  "suite_version": "mirax-canary-v1",
+  "release_id": "2026-07-13-complete-signal-lane-coverage-v5-11",
+  "shadow_mode": true,
+  "customer_visible": false,
+  "worker_limit": 1,
+  "max_leads_per_canary": 5,
+  "hard_budget_eur_per_canary": 0.125,
+  "stop_on_first_failed_gate": true,
+  "requires_intent_gate": true,
+  "intent_gate_status": "passed",
+  "intent_gate_reason": "run c9200bae-4c8f-45e2-9872-748074137139 passed all semantic, cost and publication gates",
+  "evaluation_dataset_version": "mirax-gold-v5",
+  "source_planner_required": true,
+  "source_event_telemetry_required": [
+    "selected", "queried", "candidate_produced", "signal_confirmed",
+    "candidate_rejected", "candidate_publishable"
+  ],
+  "source_event_fields_required": [
+    "source_id", "source_url", "publisher", "observation_date",
+    "extraction_method", "cost_eur", "selection_reason"
+  ],
+  "canaries": [
+    {"vertical":"accountant","query":"Sono un commercialista: trovami PMI italiane con crescita, nuova apertura o cambi societari recenti e bisogno amministrativo verificabile","expected_signal_any":["registry_change","company_formation","geographic_expansion"]},
+    {"vertical":"insurance_broker","query":"Sono un broker assicurativo: trovami PMI italiane con nuovi cantieri, appalti, flotta o assunzioni operative recenti","expected_signal_any":["contract_awarded","fleet_expansion","hiring_operational"]},
+    {"vertical":"local_web_agency","query":"Sono un'agenzia web locale: trovami PMI italiane non famose con sito debole e investimento digitale o tracking migliorabile verificato","expected_signal_any":["website_weakness","missing_analytics","active_advertising"]},
+    {"vertical":"software_house","query":"Sono una software house: trovami PMI italiane in crescita con processi digitali, assunzioni tech o migrazione software verificabile","expected_signal_any":["technology_migration","hiring_technology","manual_processes"]},
+    {"vertical":"hr_recruitment","query":"Sono un consulente HR: trovami PMI italiane con ruoli difficili aperti e assunzioni recenti su fonti verificabili","expected_signal_any":["hiring"]},
+    {"vertical":"solar_energy","query":"Vendo impianti fotovoltaici: trovami PMI italiane con capannoni o sedi produttive, espansione e probabile fabbisogno energetico verificabile","expected_signal_any":["production_expansion","geographic_expansion","new_equipment"]},
+    {"vertical":"cybersecurity","query":"Vendo cybersecurity: trovami PMI italiane digitalizzate con esposizione web, ecommerce, posta o compliance e segnali tecnici verificabili","expected_signal_any":["cybersecurity_exposure","ecommerce_launch","compliance_gap"]},
+    {"vertical":"erp_crm","query":"Vendo ERP e CRM: trovami PMI italiane con crescita commerciale, nuove sedi, assunzioni o migrazione gestionale verificabile","expected_signal_any":["technology_migration","new_location","hiring_sales","hiring"]},
+    {"vertical":"workplace_safety","query":"Sono un consulente sicurezza sul lavoro: trovami PMI italiane con cantieri, produzione, appalti o crescita del personale operativo","expected_signal_any":["contract_awarded","hiring_operational","production_expansion"]},
+    {"vertical":"industrial_water_treatment","query":"Vendo trattamento acque industriali: trovami PMI manifatturiere italiane con impianti, processi idrici, espansione o requisiti ambientali verificabili","expected_signal_any":["production_expansion","new_equipment","regulatory_change"]}
+  ],
+  "acceptance": {
+    "published_precision_min": 0.9,
+    "top_tier_precision_min": 0.95,
+    "evidence_coverage": 1,
+    "official_domain_coverage": 1,
+    "source_url_coverage": 1,
+    "observation_date_coverage": 1,
+    "public_contact_coverage_min": 0.9,
+    "cost_per_published_lead_eur_max": 0.025,
+    "intermediate_customer_visible_leads": 0,
+    "duplicate_publications": 0,
+    "orphan_reservations": 0
+  }
+}

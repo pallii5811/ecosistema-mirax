@@ -1,0 +1,289 @@
+{
+  "manifest_version": "1.0.0",
+  "generated_at": "2026-07-12T21:33:46.092Z",
+  "frontend": {
+    "release_id": "2026-07-12-final-hardening-v5",
+    "deployment_url": "https://ecosistema-mirax-7hbcjzbic-simodepertis-projects.vercel.app",
+    "production_alias": "https://ecosistema-mirax-two.vercel.app",
+    "immutable_deployment_inspect_id": "DbY1GAGBjhibc9cQ5YPsxo151qzB",
+    "production_search_disabled": true
+  },
+  "backend": {
+    "host": "116.203.137.39",
+    "frozen_release_id": "20260712_201500_v4",
+    "live_path": "/home/worker/app/backend",
+    "staging_path": "/home/worker/app/backend-staging",
+    "workers_expected": "inactive+disabled",
+    "paid_extraction_expected": false
+  },
+  "database": {
+    "migration_count": 46,
+    "migrations": [
+      {
+        "file": "db/migrations/2026_04_24_lists_environment_link.sql",
+        "sha256": "bcc199aff827d5805df11b88b4ec72d480319a1b2231f73cfb76d5e29496270e"
+      },
+      {
+        "file": "db/migrations/2026_05_24_company_lookup_cache.sql",
+        "sha256": "b81d8bfb8d19e6026e9347f79542d220c6b1920a522ea87b6367746194d186ef"
+      },
+      {
+        "file": "db/migrations/2026_05_24_user_openapi_unlocks.sql",
+        "sha256": "6b1dfef41d9e9cc5e4048674318b52721166eaeb21ebd3734b33a9b9d4e66298"
+      },
+      {
+        "file": "db/migrations/2026_06_22_outreach_log.sql",
+        "sha256": "e62d5ececbf448ee59d2d5f9863ca9a79e4c03f2959c4b65f444f9677b5dbe9c"
+      },
+      {
+        "file": "db/migrations/2026_06_23_searches_zone.sql",
+        "sha256": "5b0175f3c402f325457ed9c6a1a3ecb1c793981d73a6fc093dcc09ea92f77583"
+      },
+      {
+        "file": "db/migrations/2026_06_25_edat_events.sql",
+        "sha256": "3446e5131d0b67e6bc400dabd3d69843a5b24112b2d3d373a3388893f2fc2584"
+      },
+      {
+        "file": "db/migrations/2026_06_26_pipeline_outreach_sync.sql",
+        "sha256": "0f3f96933a44605bd0653abbb901beaa5743f4da8e60081a60f99305f5c4b17a"
+      },
+      {
+        "file": "db/migrations/2026_06_27_knowledge_objects.sql",
+        "sha256": "b48f6db6b2cd87a401b81d9996cb4869debbb8433de21567df2fc86b5bff3f47"
+      },
+      {
+        "file": "db/migrations/2026_06_28_ai_audit_trail.sql",
+        "sha256": "14ccbd782c1e91cc9f0f37cee7233fe53d0a9912c169fe9994332754216e23aa"
+      },
+      {
+        "file": "db/migrations/2026_07_01_compliance_checks.sql",
+        "sha256": "6d981791d313297d17986251efb70aa0382d211a7084d2fdb56b15ddcbfb2f8b"
+      },
+      {
+        "file": "db/migrations/2026_07_01_lead_business_signals.sql",
+        "sha256": "5766fda2e4995eaf247e9e661a8a1ac8c9f53118d73af6bf9a8fc14d06a2de1f"
+      },
+      {
+        "file": "db/migrations/2026_07_02_universe_entities.sql",
+        "sha256": "d36128473c1ba4ca23bdd280ae16e0b80e58c131519149a8083f6e65cd0368ca"
+      },
+      {
+        "file": "db/migrations/2026_07_03_universe_realtime_analytics.sql",
+        "sha256": "fb01838bddd22ed90c12cbc850cf327d8b082cca64c2f0065272764af406cbdb"
+      },
+      {
+        "file": "db/migrations/2026_07_04_universe_scale.sql",
+        "sha256": "a56aec5c92a2a4ea636d6aeba9bcedc1f60ded21db59ebfa70569f7073808acb"
+      },
+      {
+        "file": "db/migrations/2026_07_05_universe_webhooks_ranking.sql",
+        "sha256": "7ee7f85c54d30f3b1a252b0fdf19953631e29b0baf4c9537a0ab00ca58741810"
+      },
+      {
+        "file": "db/migrations/2026_07_06_universe_idempotency.sql",
+        "sha256": "23f537f27e845189162456e06634a80b2e7b038805e72cd2808646d6b44b2950"
+      },
+      {
+        "file": "db/migrations/2026_07_07_universe_event_idempotency.sql",
+        "sha256": "769897801b7509a39eb9b9e5248f768a99b714f4985f279c33e963890e76357f"
+      },
+      {
+        "file": "db/migrations/2026_07_08_search_job_leases.sql",
+        "sha256": "6bfcf5639951490f21848c66b64f36c8cbf9aaecae05850e1918e41db58bec77"
+      },
+      {
+        "file": "db/migrations/2026_07_09_investing_marketing_signal.sql",
+        "sha256": "de7fc8a92493207731fd1defb12df443410ea933356f43065d0a0dad5d30f6d6"
+      },
+      {
+        "file": "db/migrations/2026_07_10_normalization.sql",
+        "sha256": "f2a06ccd3b41600258bdbcc14c437fca1122a41074442049f297d61706ded8a4"
+      },
+      {
+        "file": "db/migrations/2026_07_11_commercial_research_lifecycle.sql",
+        "sha256": "57b5fce5dc6b91c8a292bc6770399b729442b44e92b416813007b2f2c42815fa"
+      },
+      {
+        "file": "db/migrations/2026_07_12_atomic_cost_governor.sql",
+        "sha256": "8aa92d4860472c30bda5660eec3ad6e1d89d081f53b37b93da69be2caca7df6a"
+      },
+      {
+        "file": "db/migrations/2026_07_12_evaluation_canary_framework.sql",
+        "sha256": "e68b15848abcdb0972e7d7e053dfe959083d05b3462f5fb4934309d39af691bb"
+      },
+      {
+        "file": "db/migrations/2026_07_12_evidence_entity_contract.sql",
+        "sha256": "83efb247fdb98f9a0223500d3497a87c824bb61a2bb48b74e39fa281f9b30b09"
+      },
+      {
+        "file": "db/migrations/2026_07_12_publication_credit_ledger.sql",
+        "sha256": "db05f9721bd801a8bf9b2bef5e25b0568b3083264e82527e27030f4b3832793c"
+      },
+      {
+        "file": "db/migrations/2026_09_01_inbound_reply_classifications.sql",
+        "sha256": "dbb7463db842fda4dda3aaacd94b57bc3df6e3ce75865933a2940fa9036b22fb"
+      },
+      {
+        "file": "db/migrations/2026_10_01_gmail_connections.sql",
+        "sha256": "01c73082ee7b2a233bf84b293ff24c2d97b32a54aa73960b8f502332cc54a38b"
+      },
+      {
+        "file": "db/migrations/2026_11_01_signal_intent_expand.sql",
+        "sha256": "8d51ea1feaa25408bd921c4e52d781306b031043b57080f3f1d0cdc012b6d3f0"
+      },
+      {
+        "file": "db/migrations/2026_11_02_list_leads_foreign_keys.sql",
+        "sha256": "61e8c29dc05edbb4b97db3a915d7c10bb02a56f6d66c900677476a2bb18ab70b"
+      },
+      {
+        "file": "db/migrations/2026_12_01_signal_quality.sql",
+        "sha256": "2040745f42b2885f71e1315353f475dfaa5318c8f55fd13238c4106e8c0b152a"
+      },
+      {
+        "file": "db/migrations/2026_12_02_research_cache.sql",
+        "sha256": "3351a5074230fb7506b903e2fe75752a7bf8a7c5ab6bdfbc7d6ce71513078bc3"
+      },
+      {
+        "file": "db/migrations/2026_12_03_signal_relationships.sql",
+        "sha256": "581d94109462c328d22fb8ec19aff7df9e3cc4b78d62b647a09caa624a98bf25"
+      },
+      {
+        "file": "db/migrations/2026_12_04_realtime_business_signals.sql",
+        "sha256": "e369b68d2db6b5e4c5d795a676c5c600f8fe71f9b07668ef847f3a0f85a3e4c8"
+      },
+      {
+        "file": "db/migrations/2026_12_05_outbound_queue.sql",
+        "sha256": "321fd72128a5e35cef304ee99d001df537edde17b67762aed5a84c647bead58a"
+      },
+      {
+        "file": "db/migrations/2026_12_06_competitors.sql",
+        "sha256": "6ec1bd472eaec223a46844493df1783923b1ba8405ca74ef13af0bb6fea0f161"
+      },
+      {
+        "file": "db/migrations/2026_12_07_crm_auto_sync.sql",
+        "sha256": "8499462b453a6831ba1adb1758239fc590aa9a5e9cb8bfe7116b9adbf7bee580"
+      },
+      {
+        "file": "db/migrations/2026_12_08_universe_rls_hardening.sql",
+        "sha256": "f06e90e77fbc7c33c30ac0d12851ba01a3434b95d1d3e19299dd76653af4f52c"
+      },
+      {
+        "file": "db/migrations/2026_12_09_universe_relationship_dedup.sql",
+        "sha256": "cda94f0d1767e820848371a5ad6f267283dbe36e15f35c337b129b9f3d2a6dae"
+      },
+      {
+        "file": "db/migrations/2026_12_10_universe_website_snapshots.sql",
+        "sha256": "9676b6361076e24efb3cfeb0829bb478f4b7401b63edfd6cf6f716790f57237b"
+      },
+      {
+        "file": "db/migrations/2026_12_11_searches_realtime.sql",
+        "sha256": "6b4ec26ec3b56fe84ae759341f17ef4c5d1b94e82841e47c6571d7f331459213"
+      },
+      {
+        "file": "db/migrations/2026_12_20_kg_relations_expansion.sql",
+        "sha256": "b67edc61289a139d3aefff591179c194180381fd5f0576d8c086e8cf0b42fe5e"
+      },
+      {
+        "file": "db/migrations/2026_12_21_user_feedback.sql",
+        "sha256": "d1e3d955685ca91bb0b99a41eb670b53bacd036c4e2e7dbbb9ec02e77648c3aa"
+      },
+      {
+        "file": "db/migrations/2026_12_22_pii_access_log.sql",
+        "sha256": "b16f434fb0f37d4a06c19a9716aed1e75a25dc17b3203e3873448d49c9aa5a41"
+      },
+      {
+        "file": "db/migrations/2026_12_23_observation_text_search.sql",
+        "sha256": "e9f6f878320278ddac6453f3718bad9a6e0308001956685b8d025e5e74d2bbc8"
+      },
+      {
+        "file": "db/migrations/2026_12_24_searches_intent.sql",
+        "sha256": "725fb273ab484701105e4a3e21bb26b0d0818cd3a9083b30ab516460782ee4a7"
+      },
+      {
+        "file": "db/migrations/2026_12_25_crm_installed_signal.sql",
+        "sha256": "54ea19e0ed5b1abbaba3799cc3047329bfd9ad5aa682e026c112440dfeb16636"
+      }
+    ]
+  },
+  "source_hashes": [
+    {
+      "file": "contracts/commercial-search-plan.schema.json",
+      "sha256": "00051127b983d8b5e036865955abce462071f23441ac9469b87d9f2c5c63601f"
+    },
+    {
+      "file": "contracts/source-registry.v1.json",
+      "sha256": "ae568354569a291405898607e01a00231907336ef962cec5559c650be80c1fed"
+    },
+    {
+      "file": "contracts/signal-ontology.v1.json",
+      "sha256": "c84eedf42117d29b7dcab28304b9ea38993045e32e626355cc3443fd35329f14"
+    },
+    {
+      "file": "src/lib/intent-compiler/compile-commercial-search-plan.ts",
+      "sha256": "3663584daf94ba3686e010d9f57f3d940044d97afe88e68953acdb1a7d4b8e50"
+    },
+    {
+      "file": "src/lib/research/persistent-cost-governor.ts",
+      "sha256": "5c77ee631fe2e58cac0c1a65915fe09902bd694b756e17ebf8f6ee242e74071c"
+    },
+    {
+      "file": "backend_mirror/worker_supabase.py",
+      "sha256": "fd1a393c354fa029718f02f2db33f046d4a6770a1489301f3c50442d8588435f"
+    },
+    {
+      "file": "backend_mirror/cost_governor.py",
+      "sha256": "e03b2dc25cba5152e4062f2426858e11e4133e69b05a0650ad38789a235b1b30"
+    },
+    {
+      "file": "backend_mirror/commercial_lifecycle.py",
+      "sha256": "a20e2f6016bf36b622498ed6ae47a4964e802e31b7741b7a87c84a9803f46702"
+    },
+    {
+      "file": "backend_mirror/url_safety.py",
+      "sha256": "f6f314a876e66760fab3e84ab180baf488618e91e5692f59078e826a7fc9aaf1"
+    },
+    {
+      "file": "backend_mirror/adaptive_audit.py",
+      "sha256": "5f4e96aa93053de13b24697781dc22f137b375dea3ee4157fc6d7a7f2cce8315"
+    },
+    {
+      "file": "backend_mirror/agents/agentic_gap_fill.py",
+      "sha256": "66d1c97fa3be14a9bd7315052158c5032e7451d6f028941b9e42274020030b8b"
+    },
+    {
+      "file": "backend_mirror/agents/data_extractor.py",
+      "sha256": "d0f62e2e5c1f280b50b58ff0a0754f60706fa53bb6565aad0acfe7b75bdf9908"
+    },
+    {
+      "file": "backend_mirror/agents/web_researcher.py",
+      "sha256": "f34fac4dd4e7f3777a0d04c182a04701a14a4e2ac25c7f5d85546ae486a3ad36"
+    },
+    {
+      "file": "backend_mirror/agents/search_serp.py",
+      "sha256": "a3a8ebc491b3f0d06391e57e468986e13926ca8e288509f81f37571f05fef0a8"
+    }
+  ],
+  "evidence_reports": [
+    {
+      "file": "reports/final-safety-soak-v5.json",
+      "sha256": "56c3ccb534309ec4bb83ec5526d64bdea6a38c66980da0173a1200a69a626af8"
+    },
+    {
+      "file": "reports/rollback-rehearsal-v5.json",
+      "sha256": "00ffed32023b066f5ad53188e5e1d3d4d206372882dc347a4634b7bd674fde1a"
+    }
+  ],
+  "git": {
+    "commit": "353810f96dee10c8bff52781335a5d940f452d4b",
+    "dirty_worktree": true,
+    "changed_file_count": 207
+  },
+  "release_scope": "controlled-safe-state; customer search disabled; human review enabled",
+  "acceptance_complete": false,
+  "incomplete_gates": [
+    "human_judgments_200",
+    "intent_canary_v5",
+    "multi_vertical_canaries",
+    "live_precision_coverage_cost"
+  ]
+}

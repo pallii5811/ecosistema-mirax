@@ -438,12 +438,12 @@ Combina TUTTE le fonti in un unico `ClayEnrichedLead`. Flusso:
 ### `competitor-analysis.ts` — Analisi competitor
 - `analyzeLocalCompetitors()`: Google Places text search → competitor locali
 - GPT-4o-mini produce: competition score, market position, opportunità, urgency message
-- Richiede `GOOGLE_PLACES_API_KEY` + `OPENAI_API_KEY`
+- Richiede `GOOGLE_PLACES_API_KEY` + `ANTHROPIC_API_KEY`
 
 ### `ads-analysis.ts` — Analisi advertising
 - `analyzeAdsPresence()`: Facebook Ads Library API (gratuita) + GPT per Google Ads
 - Produce: stato ads, budget stimato, opportunità commerciali
-- Richiede `FB_ADS_TOKEN` (opzionale) + `OPENAI_API_KEY`
+- Richiede `FB_ADS_TOKEN` (opzionale) + `ANTHROPIC_API_KEY`
 
 ### `trends-analysis.ts` — Trend di mercato
 - `analyzeTrends()`: prima prova backend Hetzner (`/trends-analysis` con pytrends)
@@ -485,7 +485,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_oqwwYsG10z7HvPrJOifF-w_J7ARllCp
 SUPABASE_SERVICE_ROLE_KEY=sb_secret_...
 
 # OpenAI (per enrichment AI)
-OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-...
 
 # Google APIs
 GOOGLE_PLACES_API_KEY=...

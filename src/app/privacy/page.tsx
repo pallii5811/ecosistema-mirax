@@ -85,8 +85,7 @@ export default function PrivacyPage() {
             <ul className="list-disc pl-6 space-y-1 mt-2">
               <li><strong>Supabase Inc.</strong> — hosting database e autenticazione (server EU)</li>
               <li><strong>Vercel Inc.</strong> — hosting applicazione web</li>
-              <li><strong>Stripe Inc.</strong> — elaborazione pagamenti (PCI DSS compliant)</li>
-              <li><strong>OpenAI Inc.</strong> — elaborazione AI per generazione pitch e analisi (dati anonimizzati)</li>
+              <li><strong>Stripe Inc.</strong> — elaborazione pagamenti (PCI DSS compliant)</li>              <li><strong>Anthropic PBC</strong> ? elaborazione AI per comprensione query e analisi (dati minimizzati)</li>
               <li><strong>Resend Inc.</strong> — invio email transazionali</li>
             </ul>
             <p className="mt-2">Non vendiamo, affittiamo o cediamo i dati personali a terze parti per fini di marketing.</p>

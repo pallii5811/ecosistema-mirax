@@ -22,6 +22,9 @@ type Props = {
 export function EnvironmentsList({ environments }: Props) {
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [envList, setEnvList] = useState(environments)
+  const [editing, setEditing] = useState<{ id: string; name: string } | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
   const { success: toastSuccess, error: toastError } = useToast()
 
   const handleDelete = async (id: string, name: string) => {
@@ -36,13 +39,24 @@ export function EnvironmentsList({ environments }: Props) {
     }
   }
 
-  const handleEdit = async (id: string, currentName: string) => {
-    const nextName = window.prompt('Nuovo nome Ambiente:', currentName)?.trim()
+  const openEdit = (id: string, currentName: string) => {
+    setEditing({ id, name: currentName })
+    setEditName(currentName)
+  }
+
+  const handleEditSave = async () => {
+    if (!editing) return
+    const nextName = editName.trim()
+    const currentName = editing.name
     if (!nextName || nextName === currentName) return
 
-    const result = await updateEnvironment({ id, name: nextName })
+    setEditSaving(true)
+    const result = await updateEnvironment({ id: editing.id, name: nextName })
+    setEditSaving(false)
     if (result.success && result.environment) {
-      setEnvList((prev) => prev.map((e) => (e.id === id ? { ...e, name: nextName } : e)))
+      setEnvList((prev) => prev.map((e) => (e.id === editing.id ? { ...e, name: nextName } : e)))
+      setEditing(null)
+      setEditName('')
       toastSuccess('Ambiente aggiornato')
     } else {
       toastError(result.error || 'Errore durante la modifica')
@@ -78,7 +92,7 @@ export function EnvironmentsList({ environments }: Props) {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => handleEdit(env.id, env.name)}>
+                  <DropdownMenuItem onClick={() => openEdit(env.id, env.name)}>
                     <Pencil className="mr-2 h-4 w-4" strokeWidth={1.75} />
                     Modifica
                   </DropdownMenuItem>
@@ -153,6 +167,48 @@ export function EnvironmentsList({ environments }: Props) {
           setIsCreateOpen(false)
         }}
       />
+
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+            <h3 className="text-base font-semibold text-slate-900">Rinomina ambiente</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Dai un nome chiaro e operativo al contesto di lavoro.
+            </p>
+            <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Nome ambiente
+            </label>
+            <input
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              autoFocus
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+              placeholder="Es. PMI SaaS Lombardia"
+            />
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setEditing(null)
+                  setEditName('')
+                }}
+                disabled={editSaving}
+              >
+                Annulla
+              </Button>
+              <Button
+                type="button"
+                onClick={handleEditSave}
+                disabled={editSaving || !editName.trim()}
+                className="bg-slate-900 text-white hover:bg-slate-800"
+              >
+                {editSaving ? 'Salvataggio…' : 'Salva'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

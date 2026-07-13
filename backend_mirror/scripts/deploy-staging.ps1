@@ -7,6 +7,7 @@ $HostTarget = if ($args[0]) { $args[0] } else { "root@116.203.137.39" }
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BashScript = Join-Path $ScriptDir "deploy-staging.sh"
 $LocalDir = Split-Path -Parent $ScriptDir
+$WorkspaceDir = Split-Path -Parent $LocalDir
 $IdentityFile = if ($env:MIRAX_SSH_IDENTITY) { $env:MIRAX_SSH_IDENTITY } else { "$env:USERPROFILE\.ssh\id_ed25519" }
 $SshArgs = @("-o", "BatchMode=yes", "-o", "ConnectTimeout=15")
 if (Test-Path $IdentityFile) { $SshArgs = @("-i", $IdentityFile) + $SshArgs }
@@ -31,11 +32,21 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $bashOk = $false
-if (Get-Command bash -ErrorAction SilentlyContinue) {
-  $bashJob = Start-Job { bash -lc "exit 0" 2>$null }
+# On Windows, `bash.exe` may be a WSL placeholder with no distro installed.
+# Use Bash only when explicitly requested; the native PowerShell path is the
+# reliable default and has the same backup/smoke/rollback guarantees.
+if ($env:MIRAX_DEPLOY_USE_BASH -eq "1" -and (Get-Command bash -ErrorAction SilentlyContinue)) {
+  $bashJob = Start-Job {
+    bash -lc "exit 0" 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "bash unavailable" }
+  }
   if (Wait-Job $bashJob -Timeout 5) {
-    Receive-Job $bashJob | Out-Null
-    if ($bashJob.State -eq 'Completed') { $bashOk = $true }
+    try {
+      Receive-Job $bashJob -ErrorAction Stop | Out-Null
+      if ($bashJob.State -eq 'Completed') { $bashOk = $true }
+    } catch {
+      $bashOk = $false
+    }
   } else {
     Stop-Job $bashJob -Force | Out-Null
   }
@@ -48,39 +59,31 @@ if ($bashOk) {
   exit $LASTEXITCODE
 }
 
-Write-Host "    Git Bash/WSL assente - deploy via scp+ssh"
-$Ts = Get-Date -Format "yyyyMMdd_HHmmss"
-$Backup = "/home/worker/backups/staging_$Ts"
-Invoke-Ssh "mkdir -p $Backup; cp -a /home/worker/app/backend-staging/*.py $Backup/ 2>/dev/null; true"
-Write-Host "    Backup remoto: $Backup"
+Write-Host "    Deploy atomico via archivio singolo"
+$ReleaseId = Get-Date -Format "yyyyMMdd_HHmmss"
+$Archive = Join-Path $env:TEMP "mirax-staging-$ReleaseId.tar.gz"
+$Activator = Join-Path $ScriptDir "activate-staging-release.sh"
+$RemoteArchive = "/tmp/mirax-staging-$ReleaseId.tar.gz"
 
-Get-ChildItem "$LocalDir\*.py" -File | ForEach-Object {
-  & scp @SshArgs $_.FullName "${HostTarget}:/home/worker/app/backend-staging/"
-  if ($LASTEXITCODE -ne 0) { throw "scp failed: $($_.Name)" }
-}
-if (Test-Path "$LocalDir\universe") {
-  Invoke-Ssh "mkdir -p /home/worker/app/backend-staging/universe"
-  Get-ChildItem "$LocalDir\universe\*.py" -File | ForEach-Object {
-    & scp @SshArgs $_.FullName "${HostTarget}:/home/worker/app/backend-staging/universe/"
-    if ($LASTEXITCODE -ne 0) { throw "scp failed universe: $($_.Name)" }
+try {
+  if (Test-Path $Archive) { Remove-Item -LiteralPath $Archive -Force }
+  & tar.exe -czf $Archive --exclude='.env*' --exclude='__pycache__' --exclude='*.pyc' --exclude='data' --exclude='*.db*' -C $LocalDir . -C $WorkspaceDir contracts
+  if ($LASTEXITCODE -ne 0) { throw "tar archive failed" }
+
+  $Forbidden = & tar.exe -tzf $Archive | Select-String -Pattern '(^|/)\.env|__pycache__|\.db($|[-.])'
+  if ($Forbidden) { throw "Archive contiene runtime state/segreti: $Forbidden" }
+  $RequiredFixture = & tar.exe -tzf $Archive | Select-String -SimpleMatch 'contracts/fixtures/commercial-search-plan.valid.json'
+  if (-not $RequiredFixture) { throw "Archive privo della fixture canonical commercial plan" }
+  foreach ($Contract in @('contracts/signal-ontology.v1.json','contracts/source-registry.v1.json','contracts/commercial-search-plan.schema.json')) {
+    if (-not (& tar.exe -tzf $Archive | Select-String -SimpleMatch $Contract)) { throw "Archive privo del contratto $Contract" }
   }
-  Write-Host "    universe/ package uploaded"
-}
-& scp @SshArgs "$LocalDir\main.py" "$LocalDir\audit_engine.py" "${HostTarget}:/home/worker/app/backend/"
 
-$EnvPatch = @'
-ENV=/home/worker/app/backend-staging/.env
-grep -q '^ENRICH_BUSINESS_EVENTS=' "$ENV" 2>/dev/null || echo 'ENRICH_BUSINESS_EVENTS=1' >> "$ENV"
-grep -q '^ENRICH_BUSINESS_EVENTS_MAX=' "$ENV" 2>/dev/null || echo 'ENRICH_BUSINESS_EVENTS_MAX=12' >> "$ENV"
-grep -q '^UNIVERSE_ENABLED=' "$ENV" 2>/dev/null || echo 'UNIVERSE_ENABLED=0' >> "$ENV"
-grep -q '^ORGANIC_DISCOVERY_ENABLED=' "$ENV" 2>/dev/null || echo 'ORGANIC_DISCOVERY_ENABLED=0' >> "$ENV"
-sed -i 's/^ORGANIC_DISCOVERY_ENABLED=.*/ORGANIC_DISCOVERY_ENABLED=0/' "$ENV" 2>/dev/null || true
-pip3 install httpx beautifulsoup4 -q 2>/dev/null || pip install httpx beautifulsoup4 -q 2>/dev/null || true
-chown -R worker:worker /home/worker/app/backend-staging /home/worker/app/backend/main.py /home/worker/app/backend/audit_engine.py
-systemctl restart mirax-audit-api-staging mirax-worker-staging
-sleep 2
-systemctl is-active mirax-worker-staging
-curl -sf http://127.0.0.1:8002/health
-'@
-Invoke-Ssh $EnvPatch
-Write-Host '==> Deploy staging completato (PowerShell fallback)'
+  & scp @SshArgs $Archive "${HostTarget}:$RemoteArchive"
+  if ($LASTEXITCODE -ne 0) { throw "archive upload failed" }
+  & scp @SshArgs $Activator "${HostTarget}:/tmp/activate-staging-release.sh"
+  if ($LASTEXITCODE -ne 0) { throw "activator upload failed" }
+  Invoke-Ssh "chmod 700 /tmp/activate-staging-release.sh && /tmp/activate-staging-release.sh '$RemoteArchive' '$ReleaseId'"
+} finally {
+  Remove-Item -LiteralPath $Archive -Force -ErrorAction SilentlyContinue
+}
+Write-Host "==> Deploy staging completato: release $ReleaseId"

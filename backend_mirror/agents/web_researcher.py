@@ -5,6 +5,7 @@ Isolato dal worker legacy (Strangler Fig).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -14,7 +15,9 @@ from typing import Any, Dict, List, Optional, Set
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 import httpx
+from cost_governor import ResearchBudgetExceeded, ResearchCostGovernor
 from bs4 import BeautifulSoup
+from url_safety import assert_safe_public_url, install_playwright_ssrf_guard
 
 logger = logging.getLogger("web_researcher")
 
@@ -23,8 +26,8 @@ DISCOVERY_MAX_QUERIES = int(os.getenv("AGENTIC_DISCOVERY_MAX_QUERIES", "12") or 
 DEFAULT_MAX_URLS_PER_QUERY = 25
 DISCOVERY_MAX_URLS_PER_QUERY = int(os.getenv("AGENTIC_DISCOVERY_MAX_URLS_PER_QUERY", "60") or "60")
 DEFAULT_MAX_TEXT_CHARS = 5000
-DEFAULT_PAGE_TIMEOUT_MS = 25_000
-DEFAULT_NAV_TIMEOUT_MS = 20_000
+DEFAULT_PAGE_TIMEOUT_MS = int(os.getenv("AGENTIC_PAGE_TIMEOUT_MS", "8_000").replace("_", "") or "8000")
+DEFAULT_NAV_TIMEOUT_MS = int(os.getenv("AGENTIC_NAV_TIMEOUT_MS", "12_000").replace("_", "") or "12000")
 
 SKIP_URL_PATTERNS = (
     r"google\.(com|it)",
@@ -39,10 +42,64 @@ SKIP_URL_PATTERNS = (
     r"ebay\.",
     r"github\.com",
     r"medium\.com",
+    r"trustpilot\.",
+    r"tripadvisor\.",
+    r"wikipedia\.",
+    r"regione\.[a-z]",
+    r"\.regione\.",
+    r"camcom\.",
+    r"infocamere\.",
+    r"registroimprese\.",
+    r"ospedale",
+    r"asl\.",
+    r"ats-",
+    r"unicusano\.it",
+    r"youtrend\.it",
+    r"jobcentre\.it",
+    r"prontopro\.it",
+    r"ojs\.sijm\.it",
+    r"karon\.it/pubblicazioni",
+    r"/blog/",
+    r"/guide/",
+    r"/guida/",
+    r"/pubblicazioni/",
+    r"/allegato\.php",
+    r"/chi-e-",
+    r"/social-media-marketing/",
+    r"/gestione-social",
+    r"/gestione-pagina",
+    r"/gestione-campagne",
+    r"/gestione-google-ads",
+    r"/gestione-facebook-ads",
+    r"/agenzia-.*marketing/",
+    r"/banner-design",
+    r"\.(csv|xls|xlsx|pdf|zip)(\?|$)",
 )
 
 # Sempre appendere alle query generate (Iron Dome — escludi code host)
 QUERY_CODE_EXCLUSIONS = "-site:github.com -site:medium.com"
+SALES_INTEL_BIG_BRAND_EXCLUSIONS = (
+    '-Canonical -Factorial -"Jet HR" -Personio -Salesforce -HubSpot '
+    '-Amazon -Google -Microsoft -Oracle -SAP -Accenture -Deloitte -KPMG -PwC '
+    '-Nike -Ferrari -Uniqlo -Primark -"Urban Outfitters" -IKEA -Zara -H&M '
+    '-Mediaset -Iliad -Acer -MD -Pepco'
+)
+MARKETING_SIGNAL_NOISE_EXCLUSIONS = (
+    '-blog -guida -"cos\'è" -"come funziona" -università -university '
+    '-site:unicusano.it -site:youtrend.it -site:ojs.sijm.it -site:karon.it '
+    '-site:wikipedia.org -site:facebook.com -site:linkedin.com'
+)
+MARKETING_SIGNAL_NOISE_EXCLUSIONS = (
+    MARKETING_SIGNAL_NOISE_EXCLUSIONS
+    + ' -agenzia -"web agency" -"digital agency" -consulenza -servizi -corso'
+    + ' -"social media marketing" -"web marketing" -"performance marketing"'
+)
+MARKETING_CASE_STUDY_EXCLUSIONS = (
+    '-"cos\'Ã¨" -"come funziona" -universitÃ  -university -corso '
+    '-site:unicusano.it -site:youtrend.it -site:ojs.sijm.it -site:karon.it '
+    '-site:wikipedia.org -site:facebook.com -site:linkedin.com'
+)
+SMB_BUYER_CONTEXT = '("PMI" OR "piccole medie imprese" OR "Srl" OR "azienda italiana" OR "scaleup italiana" OR "agenzia")'
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -61,6 +118,10 @@ def _should_skip_url(url: str) -> bool:
     if not url or not url.startswith("http"):
         return True
     low = url.lower()
+    parsed = urlparse(low)
+    path = parsed.path or ""
+    if re.search(r"\.(csv|xls|xlsx|pdf|zip|rar|7z)$", path):
+        return True
     for pat in SKIP_URL_PATTERNS:
         if re.search(pat, low):
             return True
@@ -112,7 +173,16 @@ def _harden_search_query(query: str) -> str:
         q = re.sub(re.escape(token), "", q, flags=re.IGNORECASE)
     q = re.sub(r"\s+", " ", q).strip()
     suffix = f" {QUERY_CODE_EXCLUSIONS}"
-    return f"{q[: 220 - len(suffix)].rstrip()}{suffix}"
+    max_len = 500
+    if len(q) + len(suffix) <= max_len:
+        return f"{q}{suffix}"
+    kept: List[str] = []
+    for token in q.split():
+        candidate = " ".join([*kept, token]).strip()
+        if len(candidate) + len(suffix) > max_len:
+            break
+        kept.append(token)
+    return f"{' '.join(kept).rstrip()}{suffix}"
 
 
 def _finalize_search_queries(queries: List[str], *, max_queries: int = DEFAULT_MAX_QUERIES) -> List[str]:
@@ -149,6 +219,41 @@ def _is_sales_intelligence_seller_query(plan: Dict[str, Any]) -> bool:
         re.search(r"\b(lead\s*generation|leadgen|sales intelligence|prospecting|outbound|pipeline)\b", blob)
         and re.search(r"\b(vendere|vendo|software|servizio|piattaforma|tool)\b", blob)
     )
+
+
+def _sales_intel_smb_queries(location: str) -> List[str]:
+    """High-intent discovery lanes for users selling sales-intel/lead-gen."""
+    loc = location or "Italia"
+    neg = SALES_INTEL_BIG_BRAND_EXCLUSIONS
+    smb = SMB_BUYER_CONTEXT
+    current_year = datetime.now(timezone.utc).year
+    return [
+        f'site:.it "lavora con noi" SDR PMI {loc} {neg}',
+        f'site:.it "lavora con noi" "Business Developer" Srl {loc} {neg}',
+        f'site:.it "posizioni aperte" commerciale Srl {loc} {neg}',
+        f'site:.it "Sales Account" "lavora con noi" Srl {loc} {neg}',
+        f'site:.it "partner commerciali" PMI {loc} {current_year} {neg}',
+        f'site:.it "nuova sede" "Srl" commerciale {loc} {neg}',
+        f'site:.it "Google Ads" "Srl" vendite {loc} {neg}',
+        f'site:.it "richiedi demo" CRM Srl {loc} {neg}',
+    ]
+
+
+def _role_or_clause(roles: List[str], fallback: str) -> str:
+    clean: List[str] = []
+    seen: Set[str] = set()
+    for role in roles[:8]:
+        val = re.sub(r"\s+", " ", str(role or "").strip())
+        if not val:
+            continue
+        key = val.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(f'"{val}"' if " " in val else val)
+    if not clean:
+        clean = [f'"{fallback}"' if " " in fallback else fallback]
+    return "(" + " OR ".join(clean[:8]) + ")"
 
 
 def _queries_for_discovery_round(
@@ -206,53 +311,159 @@ def _signal_boolean_queries(plan: Dict[str, Any]) -> List[str]:
         if str(value).strip()
     ]
 
-    role = "sviluppatore"
-    if re.search(r"\b(commercialist|ragioniere|contabil)\b", orig_low):
+    role = ""
+    if re.search(r"\b(commercialist\w*|ragionier\w*|contabil\w*)\b", orig_low):
         role = "commercialista"
+    elif re.search(r"\b(developer|sviluppator\w*|programmat\w*|software\s+engineer|data\s+engineer|cybersecurity)\b", orig_low):
+        role = "developer"
     elif re.search(r"\b(marketing|seo|ads)\b", orig_low):
         role = "marketing"
 
     queries: List[str] = []
     if "hiring" in sig_set:
-        if hypothesis_roles:
+        if hypothesis_roles and _is_sales_intelligence_seller_query(plan):
             queries.append(
                 '(site:indeed.it OR site:infojobs.it) '
-                f'("SDR" OR "BDR" OR "Inside Sales") (outbound OR prospecting) {location}'
+                f'("SDR" OR "BDR" OR "Inside Sales") (outbound OR prospecting) {location} {SMB_BUYER_CONTEXT} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
             )
             queries.append(
                 '("Sales Development Representative" OR "Business Developer") '
-                f'(pipeline OR "new business" OR "sviluppo nuovi clienti") {location}'
+                f'(pipeline OR "new business" OR "sviluppo nuovi clienti") {location} {SMB_BUYER_CONTEXT} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
             )
             queries.append(
                 'site:.it (careers OR "lavora con noi") '
-                '(SDR OR BDR OR "Business Developer")'
+                f'(SDR OR BDR OR "Business Developer") {SMB_BUYER_CONTEXT} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
             )
             queries.append(
-                f'("Sales Account" OR "Account Executive") ("new business" OR outbound OR prospecting) {location}'
+                f'("Sales Account" OR "Account Executive") ("new business" OR outbound OR prospecting) {location} {SMB_BUYER_CONTEXT} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
             )
             queries.append(
-                f'("Business Development Representative" OR BDR) ("pipeline" OR prospecting) {location}'
+                f'("Business Development Representative" OR BDR) ("pipeline" OR prospecting) {location} {SMB_BUYER_CONTEXT} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
             )
             queries.append(
-                f'("Inside Sales" OR "Sales Development") ("lavora con noi" OR careers) {location}'
+                f'("Inside Sales" OR "Sales Development") ("lavora con noi" OR careers) {location} {SMB_BUYER_CONTEXT} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
             )
             queries.append(
-                f'site:linkedin.com/jobs ("SDR" OR "Business Developer" OR "Sales Account") {location}'
+                f'site:linkedin.com/jobs ("SDR" OR "Business Developer" OR "Sales Account") {location} {SMB_BUYER_CONTEXT} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
             )
             queries.append(
-                f'("Junior Sales" OR "Sales Specialist") (outbound OR "sviluppo commerciale") {location}'
+                f'("Junior Sales" OR "Sales Specialist") (outbound OR "sviluppo commerciale") {location} {SMB_BUYER_CONTEXT} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
+            )
+        elif hypothesis_roles:
+            role_clause = _role_or_clause(hypothesis_roles, role)
+            queries.append(
+                f'(site:indeed.it OR site:infojobs.it OR site:linkedin.com/jobs) {role_clause} {location} '
+                f'("Srl" OR "PMI" OR "azienda") {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
+            )
+            queries.append(
+                f'site:.it ("lavora con noi" OR careers OR "posizioni aperte") {role_clause} '
+                f'("Srl" OR "PMI" OR "azienda") {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
+            )
+            queries.append(
+                f'{role_clause} ("assume" OR "ricerca personale" OR "cerca") '
+                f'("Srl" OR "PMI" OR "azienda") {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
             )
         else:
-            queries.append(f'site:indeed.it OR site:infojobs.it "{role}" Italia')
-            queries.append(f'site:indeed.it OR site:infojobs.it "{sector}" assunzioni Italia')
-    if sig_set & {"funding", "funding_received", "expansion", "sector_investment"}:
+            # An unspecified hiring query must not silently become a developer
+            # search. Prefer identifiable official SME career pages, then job
+            # boards constrained to company-bearing vacancy pages.
+            role_clause = f'"{role}"' if role else '("ruoli aperti" OR assunzioni OR "ricerca personale")'
+            queries.append(
+                f'site:.it ("lavora con noi" OR careers OR "posizioni aperte") '
+                f'{role_clause} '
+                f'("Srl" OR "PMI" OR azienda) {location} '
+                f'-site:indeed.it -site:infojobs.it -site:linkedin.com {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
+            )
+            queries.append(
+                f'(site:indeed.it OR site:infojobs.it OR site:linkedin.com/jobs) '
+                f'{role_clause} ("Srl" OR "PMI" OR azienda) (assunzioni OR "posizioni aperte") '
+                f'{location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
+            )
+    if sig_set & {"funding", "funding_received", "sector_investment"}:
         queries.append(f'site:startupitalia.eu OR site:italian.tech "round di finanziamento" {sector}')
+    if "expansion" in sig_set:
+        queries.append(f'("nuova sede" OR ampliamento OR "nuova apertura" OR "cresce") ("Srl" OR "PMI" OR "azienda") {sector} {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}')
+        queries.append(f'("assume" OR "aumenta organico" OR "potenzia") ("Srl" OR "PMI" OR "azienda") {sector} {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}')
+    if "production_expansion" in sig_set:
+        queries.append(
+            f'("ampliamento produttivo" OR "nuovo stabilimento" OR "nuovo impianto" OR "aumento capacità produttiva") '
+            f'("Srl" OR "PMI" OR impresa) {sector} {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
+        )
+        queries.append(
+            f'site:.it (news OR comunicati OR newsroom) (stabilimento OR impianto OR "linea produttiva") '
+            f'(ampliamento OR investimento OR espansione) {sector} {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
+        )
+    if "new_location" in sig_set:
+        queries.append(
+            f'("nuova sede" OR "apertura filiale" OR inaugura OR trasferimento) '
+            f'("Srl" OR "PMI" OR impresa OR studio) {sector} {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
+        )
+    if sig_set & {"investing_marketing", "meta_ads_started", "google_ads_started"}:
+        neg = f"{SALES_INTEL_BIG_BRAND_EXCLUSIONS} {MARKETING_SIGNAL_NOISE_EXCLUSIONS}"
+        case_neg = f"{SALES_INTEL_BIG_BRAND_EXCLUSIONS} {MARKETING_CASE_STUDY_EXCLUSIONS}"
+        queries.append(
+            f'site:.it ("Meta Ads" OR "Facebook Ads" OR "Google Ads" OR "paid media") '
+            f'("Srl" OR "PMI" OR "piccole medie imprese" OR "azienda") {location} {neg}'
+        )
+        queries.append(
+            f'site:.it ("inserzioni attive" OR "Libreria Inserzioni" OR "conversion tracking" OR "lead ads") '
+            f'("Srl" OR "azienda" OR "PMI") {location} {neg}'
+        )
+        queries.append(
+            f'("case study" OR "success story") ("Google Ads" OR "Meta Ads" OR "performance marketing") '
+            f'("cliente" OR "risultati" OR "fatturato" OR "lead") {location} {case_neg}'
+        )
+        queries.append(
+            f'("caso studio" OR "case history") ("campagne Google Ads" OR "campagne Meta Ads") '
+            f'("cliente" OR "risultati") {location} {case_neg}'
+        )
+        queries.append(
+            f'site:.it ("landing page" OR "richiedi preventivo" OR "richiedi informazioni") '
+            f'("Meta Pixel" OR "Google Tag Manager" OR "conversioni") {location} {neg}'
+        )
+    if sig_set & {"seeking_supplier"}:
+        queries.append(
+            f'("cerchiamo fornitori" OR "albo fornitori" OR "manifestazione di interesse" OR "richiesta preventivo") {sector} {location}'
+        )
+    if sig_set & {"new_product", "market_entry", "executive_change", "investing_expansion"}:
+        queries.append(
+            f'("nuovo prodotto" OR "nuovo mercato" OR "nuova partnership" OR "accordo commerciale") {sector} {location}'
+        )
+        queries.append(
+            f'(fiera OR expo OR webinar OR stand OR sponsor) {sector} {location}'
+        )
     if "tender_won" in sig_set:
         queries.append(f'site:anac.gov.it OR "comunicato stampa" "aggiudicazione appalto" {location}')
-    if "new_company" in sig_set:
+        queries.append(f'("gara aggiudicata" OR "appalto aggiudicato" OR "contratto affidato") ("Srl" OR "impresa") {sector} {location}')
+    if sig_set & {"new_company", "registry_change"}:
         queries.append(f'"nuova apertura" OR "costituzione società" {sector} {location}')
-    if "tech_migration" in sig_set:
+        queries.append(f'("nuova apertura" OR "nuova attività" OR "costituzione società" OR "nasce") ("Srl" OR "startup" OR "impresa") {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}')
+        queries.append(f'("apre" OR "inaugura" OR "nuova sede") ("negozio" OR "studio" OR "azienda" OR "ecommerce") {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}')
+    if sig_set & {"site_stale", "no_pixel", "no_gtm"}:
+        queries.append(f'site:.it ("copyright 2019" OR "copyright 2020" OR "copyright 2021") ("Srl" OR "azienda" OR "negozio" OR "hotel" OR "ristorante") {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}')
+        queries.append(f'site:.it ("sito in costruzione" OR "coming soon" OR "under construction") ("Srl" OR "azienda") {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}')
+        queries.append(f'site:.it ("richiedi preventivo" OR "prenota" OR "contattaci") ("Srl" OR "azienda") {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}')
+    if sig_set & {"regulatory", "regulatory_change"}:
+        queries.append(f'("certificazione" OR "sicurezza sul lavoro" OR "adeguamento normativo" OR compliance) ("Srl" OR "PMI" OR "azienda") {location}')
+        queries.append(
+            f'(site:gazzettaufficiale.it OR site:gov.it OR site:regione.it) '
+            f'("nuovi requisiti" OR obbligo OR adeguamento OR autorizzazione) {sector} {location}'
+        )
+    if sig_set & {"tech_migration", "technology_migration"}:
         queries.append(f'"digital transformation" OR "migrazione cloud" {sector} {location}')
+        queries.append(
+            f'("migrazione ERP" OR "nuovo CRM" OR "nuova piattaforma" OR "sostituzione gestionale") '
+            f'("Srl" OR "PMI" OR azienda) {sector} {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
+        )
+    if "cybersecurity_exposure" in sig_set:
+        queries.append(
+            f'site:.it (ecommerce OR e-commerce OR webmail OR "area clienti") '
+            f'("Srl" OR "PMI" OR azienda) {sector} {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
+        )
+        queries.append(
+            f'("vulnerabilità" OR "rischio cyber" OR "sicurezza informatica" OR "servizi esposti") '
+            f'("Srl" OR "PMI" OR azienda) {sector} {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}'
+        )
     return queries
 
 
@@ -266,6 +477,12 @@ _LANE_QUERY_CONTEXT: Dict[str, str] = {
     "technology": '("case study" OR migrazione OR implementazione OR "nuovo software")',
     "real_estate": '("nuova sede" OR trasferimento OR ampliamento OR "nuova apertura")',
     "regulatory": '(site:gazzettaufficiale.it OR site:gov.it OR site:regione.it OR autorizzazione OR obbligo)',
+    "ads": '("Meta Ad Library" OR "Google Ads" OR "inserzioni attive" OR "campagna" OR "landing page")',
+    "reviews": '("recensioni" OR "Trustpilot" OR "Google reviews" OR "stelle" OR "lamentano")',
+    "events": '("fiera" OR "evento" OR "webinar" OR "expo" OR "stand" OR sponsor)',
+    "marketplace": '("partner directory" OR marketplace OR "app marketplace" OR integrazione OR directory)',
+    "partnerships": '("nuova partnership" OR "accordo commerciale" OR "partner commerciale" OR "rete vendita" OR "canale vendita")',
+    "compliance": '("certificazione" OR "obbligo" OR "adeguamento" OR normativa OR compliance OR "albo fornitori")',
     "web_evidence": '(evidenza OR annuncio OR comunicato OR registro)',
 }
 
@@ -324,18 +541,35 @@ def _heuristic_search_queries(plan: Dict[str, Any]) -> List[str]:
             queries.append(source_queries[index])
 
     seller_sales_intel = _is_sales_intelligence_seller_query(plan)
+    accountant_seller = bool(re.search(r"\b(commercialist\w*|ragionier\w*|contabil\w*)\b", orig_low))
+    if accountant_seller:
+        # A seller profession is not a hiring role. Keep discovery anchored to
+        # registry/company/news lanes and observable corporate events; generic
+        # "nuova apertura" SERPs otherwise over-index on retail careers and
+        # famous chains before the extractor sees a valid SME.
+        queries = [
+            *source_queries,
+            f'(site:registroimprese.it OR site:infocamere.it OR site:camcom.it) '
+            f'("nuova impresa" OR "variazione societaria" OR "nuova sede") {location}',
+            f'("nuova sede" OR "nuova apertura" OR "costituita nel") '
+            f'("Srl" OR "PMI") {location} {SALES_INTEL_BIG_BRAND_EXCLUSIONS}',
+        ]
+    if seller_sales_intel:
+        # Broad SERPs over-index on famous SaaS/enterprise brands. Put
+        # PMI/local-first, evidence-rich lanes before any source-plan/LLM query.
+        queries = [*_sales_intel_smb_queries(location), *queries]
 
     if re.search(r"\b(python|programmatore|developer|sviluppat\w*)\b", orig_low):
         queries.extend([
             f'site:indeed.it OR site:infojobs.it "sviluppatore Python" {location}',
             f'piccole medie imprese {location} lavora con noi sviluppatore backend -pmi.com',
         ])
-    elif not seller_sales_intel and re.search(r"\b(commercialist|ragioniere|contabil|potenziali clienti|vendere)\b", orig_low):
+    elif not seller_sales_intel and not accountant_seller and re.search(r"\b(potenziali clienti|vendere)\b", orig_low):
         queries.extend([
             f'"nuova apertura" OR "costituzione società" {location}',
             f'site:startupitalia.eu "round di finanziamento" {location}',
         ])
-    elif re.search(r"\b(sono\s+un|freelanc|clienti|potrebbero\s+aver\s+bisogno)\b", orig_low):
+    elif not queries and re.search(r"\b(sono\s+un|freelanc|clienti|potrebbero\s+aver\s+bisogno)\b", orig_low):
         queries.extend([
             f'piccole medie imprese {location} in crescita assume {datetime.now(timezone.utc).year} site:.it -pmi.com',
             f'site:startupitalia.eu funding round {location}',
@@ -368,9 +602,21 @@ Genera query di ricerca Boolean mirate alle FONTI GIUSTE in base a required_sign
 - tender_won → site:anac.gov.it OR "comunicato stampa" "aggiudicazione appalto" [città]
 - new_company → "nuova apertura" OR "costituzione società" [settore] [città]
 - tech_migration → "digital transformation" OR "migrazione cloud" [settore]
+- registry_change → "nuova sede", "costituzione società", "apre", "inaugura" con PMI/Srl
+- site_stale / no_pixel / no_gtm → audit su sito ufficiale, copyright vecchio, tracking assente, CTA/funnel
+- regulatory → certificazioni, sicurezza sul lavoro, adeguamenti normativi e compliance
+
+Miniere d'oro da usare quando coerenti con source_plan o required_signals:
+- ads attivi e landing page: Meta Ad Library, Google Ads, campagne, CTA commerciali
+- ricerca fornitori: albo fornitori, manifestazione di interesse, richieste preventivo, bandi
+- crescita commerciale: fiere, eventi, webinar, partnership, rete vendita, nuovi mercati
+- pain pubblici: recensioni, Trustpilot, Google reviews e complaint solo se la query/source_plan li richiede
 
 REGOLE IRON DOME:
 - Ogni query DEVE includere: -site:github.com -site:medium.com
+- Se l'utente vende lead generation, sales intelligence o outbound, cerca PMI,
+  Srl, agenzie, studi e scaleup non famose. Escludi colossi, brand gia noti
+  ed enterprise salvo richiesta esplicita.
 - NON cercare la professione dell'utente letteralmente — cerca aziende con SEGNALI DI BISOGNO.
 - NON query generiche ("aziende informatica Italia").
 - Genera il numero richiesto di query diverse, operatori Boolean (site:, OR, virgolette).
@@ -399,6 +645,7 @@ class WebResearcher:
         max_text_chars: int = DEFAULT_MAX_TEXT_CHARS,
         page_timeout_ms: int = DEFAULT_PAGE_TIMEOUT_MS,
         seen_urls: Optional[Set[str]] = None,
+        cost_governor: Optional[ResearchCostGovernor] = None,
     ) -> None:
         if not isinstance(plan, dict):
             raise ValueError("plan must be a dict (MiraxQueryPlan)")
@@ -419,7 +666,11 @@ class WebResearcher:
         self.max_text_chars = max_text_chars
         self.page_timeout_ms = page_timeout_ms
         self.seen_urls = seen_urls if seen_urls is not None else set()
+        self.cost_governor = cost_governor
         self.generated_base_queries: List[str] = []
+        self.search_queries_executed = 0
+        self.pages_scheduled = 0
+        self.cost_failure = False
         try:
             self.scrape_workers = max(1, min(8, int(os.getenv("AGENTIC_SCRAPE_WORKERS", "4") or "4")))
         except ValueError:
@@ -441,7 +692,7 @@ class WebResearcher:
         llm_queries = (
             []
             if len(deterministic) >= self.max_queries
-            else await _llm_search_queries(self.plan, self.max_queries)
+            else await _llm_search_queries(self.plan, self.max_queries, self.cost_governor)
         )
         self.generated_base_queries = _finalize_search_queries(
             [*deterministic, *llm_queries],
@@ -466,6 +717,8 @@ class WebResearcher:
             if urls:
                 logger.info("HTTP SERP: %s urls for query=%r", len(urls), query[:70])
                 return urls
+        except ResearchBudgetExceeded:
+            raise
         except Exception as exc:
             logger.warning("HTTP SERP failed query=%r: %s", query[:70], exc)
         return await self._search_google_playwright(query)
@@ -497,6 +750,7 @@ class WebResearcher:
                     viewport={"width": 1280, "height": 720},
                 )
                 page = await context.new_page()
+                await install_playwright_ssrf_guard(page)
                 search_url = f"https://www.google.com/search?q={quote_plus(query)}&hl=it&num=15"
                 try:
                     await page.goto(search_url, timeout=DEFAULT_NAV_TIMEOUT_MS, wait_until="domcontentloaded")
@@ -532,6 +786,7 @@ class WebResearcher:
 
     async def _scrape_url(self, page: Any, url: str) -> Optional[str]:
         try:
+            assert_safe_public_url(url)
             await page.goto(url, timeout=self.page_timeout_ms, wait_until="domcontentloaded")
             try:
                 await page.wait_for_load_state("networkidle", timeout=4000)
@@ -555,6 +810,8 @@ class WebResearcher:
 
         try:
             queries = await self.generate_search_queries()
+        except ResearchBudgetExceeded:
+            raise
         except Exception as exc:
             logger.warning("generate_search_queries failed: %s", exc)
             queries = _heuristic_search_queries(self.plan)
@@ -567,6 +824,7 @@ class WebResearcher:
         url_job_limit = max(1, min(self.max_total_urls, self.max_urls_per_query * self.max_queries))
         for q in queries:
             try:
+                self.search_queries_executed += 1
                 found = await self._discover_urls_for_query(q)
                 for u in found:
                     key = u.lower().rstrip("/")
@@ -576,6 +834,8 @@ class WebResearcher:
                     url_jobs.append((u, q))
                     if len(url_jobs) >= url_job_limit:
                         break
+            except ResearchBudgetExceeded:
+                raise
             except Exception as exc:
                 logger.warning("search failed query=%r: %s", q[:80], exc)
             if len(url_jobs) >= url_job_limit:
@@ -584,6 +844,7 @@ class WebResearcher:
         if not url_jobs:
             logger.info("no URLs discovered from search")
             return results
+        self.pages_scheduled = len(url_jobs)
 
         try:
             from playwright.async_api import async_playwright
@@ -603,6 +864,7 @@ class WebResearcher:
                 )
                 context = await browser.new_context(user_agent=USER_AGENT, locale="it-IT")
                 page = await context.new_page()
+                await install_playwright_ssrf_guard(page)
 
                 for url, query_source in url_jobs:
                     text = await self._scrape_url(page, url)
@@ -629,6 +891,10 @@ class WebResearcher:
 
         try:
             queries = await self.generate_search_queries()
+        except ResearchBudgetExceeded:
+            self.cost_failure = True
+            logger.error("cost governor stopped query generation")
+            return
         except Exception as exc:
             logger.warning("generate_search_queries failed: %s", exc)
             queries = _heuristic_search_queries(self.plan)
@@ -641,6 +907,7 @@ class WebResearcher:
         url_job_limit = max(1, min(self.max_total_urls, self.max_urls_per_query * self.max_queries))
         for q in queries:
             try:
+                self.search_queries_executed += 1
                 found = await self._discover_urls_for_query(q)
                 for u in found:
                     key = u.lower().rstrip("/")
@@ -650,6 +917,10 @@ class WebResearcher:
                     url_jobs.append((u, q))
                     if len(url_jobs) >= url_job_limit:
                         break
+            except ResearchBudgetExceeded:
+                self.cost_failure = True
+                logger.error("cost governor stopped web search")
+                return
             except Exception as exc:
                 logger.warning("search failed query=%r: %s", q[:80], exc)
             if len(url_jobs) >= url_job_limit:
@@ -658,6 +929,7 @@ class WebResearcher:
         if not url_jobs:
             logger.info("no URLs discovered from search")
             return
+        self.pages_scheduled = len(url_jobs)
 
         try:
             from playwright.async_api import async_playwright
@@ -685,6 +957,7 @@ class WebResearcher:
                 async with sem:
                     page = await context.new_page()
                     try:
+                        await install_playwright_ssrf_guard(page)
                         text = await self._scrape_url(page, url)
                         if not text:
                             return None
@@ -748,11 +1021,18 @@ async def _search_google_optional_lib(query: str, limit: int) -> List[str]:
     return urls
 
 
-async def _llm_search_queries(plan: Dict[str, Any], max_queries: int) -> List[str]:
-    raw = await _call_openai_search_queries(plan, max_queries)
+async def _llm_search_queries(
+    plan: Dict[str, Any],
+    max_queries: int,
+    cost_governor: Optional[ResearchCostGovernor] = None,
+) -> List[str]:
+    raw = await _call_anthropic_search_queries(plan, max_queries, cost_governor)
     if raw:
         return raw
-    return await _call_anthropic_search_queries(plan, max_queries)
+    # OpenAI query generation is retired from the production discovery path.
+    # If Anthropic is unavailable, callers use deterministic source-plan and
+    # signal templates instead of switching to another paid provider.
+    return []
 
 
 def _llm_prompt(plan: Dict[str, Any], max_queries: int) -> str:
@@ -812,10 +1092,14 @@ def _parse_queries_json(text: str) -> List[str]:
 
 
 async def _call_openai_search_queries(plan: Dict[str, Any], max_queries: int) -> List[str]:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if os.getenv("UQE_OPENAI_ENABLED", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return []
+    api_key = ""
     if not api_key:
         return []
-    model = os.getenv("UQE_OPENAI_MODEL") or os.getenv("SEMANTIC_OPENAI_MODEL") or "gpt-5.5"
+    model = "" or ""
+    if not model:
+        return []
     tool_schema = {
         "type": "function",
         "function": {
@@ -838,7 +1122,7 @@ async def _call_openai_search_queries(plan: Dict[str, Any], max_queries: int) ->
     try:
         async with httpx.AsyncClient(timeout=28.0) as client:
             res = await client.post(
-                "https://api.openai.com/v1/chat/completions",
+                'data:,mirax-legacy-provider-removed',
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
                     "model": model,
@@ -868,11 +1152,43 @@ async def _call_openai_search_queries(plan: Dict[str, Any], max_queries: int) ->
     return []
 
 
-async def _call_anthropic_search_queries(plan: Dict[str, Any], max_queries: int) -> List[str]:
+async def _call_anthropic_search_queries(
+    plan: Dict[str, Any],
+    max_queries: int,
+    cost_governor: Optional[ResearchCostGovernor] = None,
+) -> List[str]:
+    if os.getenv("UQE_ANTHROPIC_ENABLED", "1").strip().lower() in {"0", "false", "no", "off", "disabled"}:
+        return []
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return []
-    model = os.getenv("UQE_ANTHROPIC_MODEL") or os.getenv("SEMANTIC_MODEL") or "claude-sonnet-4-20250514"
+    model = (
+        os.getenv("UQE_ANTHROPIC_MODEL")
+        or os.getenv("ANTHROPIC_MODEL")
+        or os.getenv("SEMANTIC_MODEL")
+        or "claude-sonnet-5"
+    ).replace("\\r", "").replace("\\n", "").strip()
+    if cost_governor is None:
+        raise ResearchBudgetExceeded("Anthropic query generation requires an atomic cost governor")
+    prompt = _llm_prompt(plan, max_queries)
+    digest = hashlib.sha256(
+        f"{plan.get('_discovery_round', 1)}:{prompt}".encode("utf-8", "ignore")
+    ).hexdigest()[:32]
+    reservation_key = f"llm-query-plan:{digest}"
+    estimated_eur = max(0.0, float(os.getenv("MIRAX_QUERY_LLM_RESERVED_EUR", "0.02") or "0.02"))
+    reservation = cost_governor.reserve(
+        reservation_key,
+        "llm_query_generation",
+        estimated_eur,
+        provider="anthropic",
+        model=model,
+        source_class="query_plan",
+        units=1,
+        metadata={"discovery_round": int(plan.get("_discovery_round") or 1)},
+    )
+    if reservation.status != "reserved":
+        logger.info("LLM query-plan idempotency hit status=%s; using deterministic queries", reservation.status)
+        return []
     tool = {
         "name": "submit_search_queries",
         "description": "Invia query B2B mirate su fonti osservabili, coerenti col target richiesto.",
@@ -901,23 +1217,51 @@ async def _call_anthropic_search_queries(plan: Dict[str, Any], max_queries: int)
                 json={
                     "model": model,
                     "max_tokens": max(600, min(1400, max_queries * 120)),
-                    "temperature": 0,
                     "system": B2B_SYSTEM_PROMPT,
                     "tools": [tool],
                     "tool_choice": {"type": "tool", "name": "submit_search_queries"},
-                    "messages": [{"role": "user", "content": _llm_prompt(plan, max_queries)}],
+                    "messages": [{"role": "user", "content": prompt}],
                 },
             )
         if res.status_code != 200:
             logger.warning("Anthropic search queries HTTP %s", res.status_code)
+            cost_governor.settle(
+                reservation_key,
+                estimated_eur,
+                metadata={"outcome": "http_error", "http_status": res.status_code},
+            )
             return []
         data = res.json()
+        usage = data.get("usage") or {}
+        input_tokens = int(usage.get("input_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or 0)
+        input_rate = max(0.0, float(os.getenv("MIRAX_LLM_INPUT_EUR_PER_M", "3") or "3"))
+        output_rate = max(0.0, float(os.getenv("MIRAX_LLM_OUTPUT_EUR_PER_M", "15") or "15"))
+        actual_eur = (input_tokens * input_rate + output_tokens * output_rate) / 1_000_000
+        cost_governor.settle(
+            reservation_key,
+            actual_eur if (input_tokens or output_tokens) else estimated_eur,
+            metadata={
+                "outcome": "success",
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            },
+        )
         for block in data.get("content") or []:
             if block.get("type") == "tool_use" and block.get("name") == "submit_search_queries":
                 inp = block.get("input") or {}
                 return _finalize_search_queries(_parse_queries_json(json.dumps(inp)), max_queries=max_queries)
+    except ResearchBudgetExceeded:
+        raise
     except Exception as exc:
         logger.warning("Anthropic search queries failed: %s", exc)
+        # Once the request has been attempted, transport failure is ambiguous.
+        # Conservatively settle the reservation and stop guessing at zero cost.
+        cost_governor.settle(
+            reservation_key,
+            estimated_eur,
+            metadata={"outcome": "provider_delivery_uncertain", "error_type": type(exc).__name__},
+        )
     return []
 
 

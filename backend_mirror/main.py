@@ -19,6 +19,7 @@ from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Tuple
 
 from audit_engine import run_technical_audit
 from report_generator import generate_audit_pdf
+from url_safety import assert_safe_public_url, safe_async_get
 
 try:
     from colorama import Fore, Style, init as colorama_init
@@ -149,11 +150,11 @@ async def deep_scrape_email_from_website(website: str, html_home: Optional[str] 
         from urllib.parse import urljoin
 
         timeout = httpx.Timeout(10.0, connect=5.0)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=False) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, verify=True) as client:
             for path in candidates:
                 try:
                     url = urljoin(base, path)
-                    r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                    r = await safe_async_get(client, url, headers={"User-Agent": "Mozilla/5.0"})
                     if not getattr(r, "text", None):
                         continue
                     em = extract_email_from_html(r.text)
@@ -354,11 +355,11 @@ async def deep_scrape_mobile_from_website(website: str, html_home: Optional[str]
         from urllib.parse import urljoin
 
         timeout = httpx.Timeout(6.0, connect=4.0)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, verify=True) as client:
             for path in candidates:
                 try:
                     url = path if str(path).lower().startswith(("http://", "https://")) else urljoin(base, path)
-                    r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                    r = await safe_async_get(client, url, headers={"User-Agent": "Mozilla/5.0"})
                     if r.status_code >= 400:
                         continue
                     raw = r.text or ""
@@ -646,9 +647,10 @@ async def fetch_html(url: str) -> str:
 
 
 async def fetch_html_with_final_url(url: str) -> Tuple[str, str]:
+    assert_safe_public_url(url)
     timeout = httpx.Timeout(8.0, connect=5.0)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=False) as client:
-        r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, verify=True) as client:
+        r = await safe_async_get(client, url, headers={"User-Agent": "Mozilla/5.0"})
         r.raise_for_status()
         return r.text, str(r.url)
 
@@ -656,11 +658,12 @@ async def fetch_html_with_final_url(url: str) -> Tuple[str, str]:
 async def fetch_html_with_final_url_and_status(
     url: str,
 ) -> Tuple[Optional[str], str, Optional[int], Optional[str], Optional[float]]:
+    assert_safe_public_url(url)
     timeout = httpx.Timeout(15.0, connect=7.0)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=False) as client:
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, verify=True) as client:
         try:
             t0 = time.perf_counter()
-            r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            r = await safe_async_get(client, url, headers={"User-Agent": "Mozilla/5.0"})
             status = int(getattr(r, "status_code", 0) or 0)
             final_url = str(r.url)
             elapsed_s: Optional[float] = None
@@ -1000,10 +1003,8 @@ async def audit_website_with_status(
 
 
 def _compose_maps_query(category: str, city: str, zone: Optional[str]) -> str:
-    z = (zone or "").strip()
-    if not z or z.lower() == "tutta la città".lower():
-        return f"{category} {city}"
-    return f"{category} {city} {z}"
+    # zone is now interpreted as the job lead cap, not a query refinement.
+    return f"{category} {city}"
 
 
 async def scrape_google_maps_playwright(category: str, city: str, zone: Optional[str] = None, on_result=None) -> List[Dict[str, Any]]:
@@ -1026,9 +1027,36 @@ async def scrape_google_maps_playwright_with_alarm(
 
 def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = None, alarm_cb=None, on_result=None) -> List[Dict[str, Any]]:
     base_query = _compose_maps_query(category, city, zone)
-    query_variants = [base_query, f"{base_query}, Italia"]
+    # Google Maps sidebar often caps a single search at ~50-70 unique places.
+    # Rotate through semantic sub-category variants to build a larger pool quickly.
+    city_clean = (city or "").strip()
+    # Two semantic variants are enough: the plain query and a broader one.
+    # Google Maps sidebar caps a single search at ~50-70 unique places; the
+    # second variant usually yields a partially overlapping pool.
+    query_variants = [
+        base_query,
+        f"{base_query}, Italia",
+    ]
+    query_variants = list(dict.fromkeys(query_variants))
     last_error: Optional[str] = None
     started = time.time()
+
+    # Compute cap and pool target up front so we can stop early across variants.
+    MAPS_HARD_CAP = 200
+    pool_target = 120
+    cap_new = 500
+    job_max = 0
+    z = (zone or "").strip()
+    if z.isdigit():
+        job_max = int(z)
+    if job_max > 0:
+        cap_new = min(job_max, MAPS_HARD_CAP)
+        pool_target = max(24, min(int(cap_new * 1.2), 120))
+    demo_max = int((os.getenv("DEMO_MAX_RESULTS") or "0").strip() or "0")
+    if demo_max > 0:
+        cap_new = min(cap_new, demo_max, MAPS_HARD_CAP)
+        pool_target = max(24, min(int(cap_new * 1.2), 120))
+    pool_target = max(pool_target, cap_new, 24)
 
     # IMPORTANT: a global cross-run lead history can dramatically reduce the number of returned
     # results (it will skip items already seen in previous runs), making it impossible to reach
@@ -1040,10 +1068,17 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
     except Exception:
         lead_history = set()
 
+    all_results: List[Dict[str, Any]] = []
+    seen_lead_ids: set[str] = set()
+    maps_started = time.time()
+
     with sync_playwright() as p:
         for attempt, q in enumerate(query_variants, start=1):
             results: List[Dict[str, Any]] = []
+            # Reset per-variant timer so each query gets its own scroll budget.
+            started = time.time()
             try:
+                print(f"[maps] Starting variant {attempt}/{len(query_variants)}: {q}")
                 browser = p.chromium.launch(
                     headless=True,
                     args=[
@@ -1287,7 +1322,7 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                 page.wait_for_timeout(3000)
 
                 # Guard rail: if we're close to the global 240s timeout, bail out early.
-                if time.time() - started > 210:
+                if time.time() - maps_started > 480:
                     context.close()
                     browser.close()
                     return results
@@ -1341,13 +1376,11 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                         continue
                     raise RuntimeError(last_error)
 
-                # Scroll feed to load more results
-                # Build a larger pool to bypass lazy-loading, then shuffle and sample for variety.
-                pool_target = 120
-                cap_new = 500
-                if _demo_max_results > 0:
-                    cap_new = max(cap_new, _demo_max_results)
-                pool_target = max(pool_target, cap_new, 120)
+                # Scroll feed to load more results.
+                # cap_new and pool_target are computed before the variant loop so we can
+                # stop early once we have enough unique leads across query variants.
+                    pool_target = max(24, min(int(cap_new * 1.2), 120))
+                pool_target = max(pool_target, cap_new, 24)
 
                 def _scroll_once() -> None:
                     try:
@@ -1357,7 +1390,7 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                             page.mouse.wheel(0, 1200)
                         except Exception:
                             pass
-                    page.wait_for_timeout(350)
+                    page.wait_for_timeout(250)
 
                 def _wait_results_stable(timeout_ms: int = 6500) -> None:
                     # Best-effort: wait for Maps loading spinners to disappear and for titles to be present.
@@ -1377,8 +1410,8 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                     seen_hrefs: set = set()
                     last_seen = 0
                     stagnant = 0
-                    max_rounds = max(80, min(200, pool_target + 40))  # more scroll rounds for larger targets
-                    scroll_timeout_s = max(240, pool_target * 2)
+                    max_rounds = max(12, min(50, pool_target + 10))  # scale rounds with target
+                    scroll_timeout_s = min(120, max(30, pool_target * 3))
                     for ri in range(max_rounds):
                         if time.time() - started > scroll_timeout_s:
                             break
@@ -1427,9 +1460,9 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                                 page.keyboard.press("PageDown")
                             except Exception:
                                 _scroll_once()
-                        page.wait_for_timeout(1700)
+                        page.wait_for_timeout(1200)
                         try:
-                            _wait_results_stable(timeout_ms=6500)
+                            _wait_results_stable(timeout_ms=4000)
                         except Exception:
                             pass
 
@@ -1440,7 +1473,7 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                     _scroll_once()
 
                 try:
-                    _wait_results_stable(timeout_ms=6500)
+                    _wait_results_stable(timeout_ms=3500)
                 except Exception:
                     pass
 
@@ -1628,15 +1661,15 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                 seen_names: set = set()
                 stagnant_rounds = 0
                 last_results_len = len(results)
-                max_extract_rounds = 60
+                max_extract_rounds = 12
                 for ri in range(max_extract_rounds):
                     if len(results) >= cap_new:
                         break
-                    if time.time() - started > 420:
+                    if time.time() - maps_started > 600:
                         break
 
                     try:
-                        _wait_results_stable(timeout_ms=6500)
+                        _wait_results_stable(timeout_ms=3500)
                     except Exception:
                         pass
 
@@ -1660,7 +1693,7 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                     for idx in range(visible_count):
                         if len(results) >= cap_new:
                             break
-                        if time.time() - started > 420:
+                        if time.time() - maps_started > 600:
                             break
 
                         card = active_cards.nth(idx)
@@ -1695,20 +1728,28 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                             current_rating, current_reviews = None, 0
 
                         try:
-                            card.click()
-                            page.wait_for_timeout(2500)
+                            # Click the actual place link when available; it's more reliable than
+                            # clicking the virtualized card container.
+                            link_loc = card.locator("a.hfpxzc").first
+                            if link_loc.count() and link_loc.is_visible():
+                                link_loc.click(timeout=3500)
+                            else:
+                                card.click(timeout=3500)
+                            page.wait_for_timeout(1500)
                         except Exception:
                             pass
 
                         # Best-effort: wait for the details panel title to reflect the clicked business
+                        panel_matched = False
                         try:
                             panel_title = page.locator("h1.DUwDvf").first
-                            for _ in range(5):
+                            for _ in range(20):
                                 try:
                                     t = (panel_title.text_content(timeout=700) or "").strip()
                                 except Exception:
                                     t = ""
                                 if t and name and t.lower() == name.lower():
+                                    panel_matched = True
                                     break
                                 page.wait_for_timeout(300)
                         except Exception:
@@ -1778,9 +1819,10 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
 
                         phone_for_id = normalize_phone_italy(phone.strip()) if phone else None
                         lead_id = _make_lead_id(name, address.strip() if address else None, phone_for_id)
-                        if lead_id in lead_history:
+                        if lead_id in lead_history or lead_id in seen_lead_ids:
                             print("Già presente in storico - SALTO")
                             continue
+                        seen_lead_ids.add(lead_id)
 
                         fb = None
                         ig = None
@@ -1816,7 +1858,7 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                     page.wait_for_timeout(900)
 
                     try:
-                        _wait_results_stable(timeout_ms=6500)
+                        _wait_results_stable(timeout_ms=3500)
                     except Exception:
                         pass
 
@@ -1826,7 +1868,7 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                         stagnant_rounds = 0
                         last_results_len = len(results)
 
-                    if stagnant_rounds >= 6:
+                    if stagnant_rounds >= 2:
                         break
 
                 try:
@@ -1838,7 +1880,11 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                 except Exception:
                     pass
 
-                return results
+                all_results.extend(results)
+                print(f"[maps] Variant '{q}' yielded {len(results)} new leads (total unique {len(all_results)}/{cap_new})")
+                if len(all_results) >= cap_new:
+                    break
+                continue
 
             except Exception as e:
                 try:
@@ -1855,6 +1901,8 @@ def _scrape_google_maps_sync(category: str, city: str, zone: Optional[str] = Non
                     time.sleep(1.0)
                     continue
                 raise
+
+    return all_results
 
 
 async def run_job(job: Job) -> None:

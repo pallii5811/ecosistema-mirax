@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from url_safety import safe_requests_get
 
 
 @dataclass
@@ -51,12 +52,13 @@ def _extract_context(html: str, needle: str, radius: int = 180) -> Optional[str]
 
 def fetch_homepage_html(url: str, timeout_s: float = 10.0) -> Tuple[str, str, int, float]:
     t0 = time.monotonic()
-    r = requests.get(
-        url,
-        headers={"User-Agent": "Mozilla/5.0"},
-        timeout=timeout_s,
-        allow_redirects=True,
-    )
+    with requests.Session() as session:
+        r = safe_requests_get(
+            session,
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=timeout_s,
+        )
     elapsed_s: float = 0.0
     try:
         # requests provides elapsed, but keep a timer fallback.

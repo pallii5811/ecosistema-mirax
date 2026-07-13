@@ -7,7 +7,7 @@ import { buildDigitalTwin } from '@/lib/universe/digital-twin'
 import { executeAgenticUniverseSearch } from '@/lib/universe/agentic-search'
 import { getEntityByAlias, getEntityByCanonicalId } from '@/lib/universe/entity-repository'
 import { normalizeDomain } from '@/lib/universe/canonical'
-import { parseSignalIntent } from '@/lib/signal-intent/parse-semantic'
+import { parseSignalIntentOffline } from '@/lib/signal-intent/parse-semantic'
 import { coerceSignalIntent } from '@/lib/signal-intent/parse-heuristic'
 import type { SignalIntentSpec } from '@/lib/signal-intent/types'
 
@@ -35,7 +35,7 @@ export async function runUniverseAgent(input: UniverseAgentInput) {
     }
     const intent = input.signal_intent
       ? coerceSignalIntent(input.signal_intent)
-      : await parseSignalIntent(query)
+      : parseSignalIntentOffline(query)
     const result = await executeAgenticUniverseSearch(sb, intent, {
       city: input.city,
       limit: input.limit ?? 50,

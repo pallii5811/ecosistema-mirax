@@ -17,13 +17,20 @@ import {
   coerceSignalIntent,
   intentTechnicalToLegacy,
   mergeSignalIntent,
-  parseSignalIntent,
   parseSignalIntentHeuristic,
   parseSignalIntentOffline,
   type SignalIntentSpec,
 } from '@/lib/signal-intent'
 import { inferMapsCategoryFromIntent, inferSearchKeywordsFromIntent, queryNamesExplicitCategory } from '@/lib/signal-intent/infer-maps-category'
 import { filterLeadsWithAI } from '@/lib/lead-relevance'
+
+function isLegacyOpenAiEnabled(): boolean {
+  return false
+}
+
+function getLegacyOpenAiApiKey(): string {
+  return ''
+}
 
 
 
@@ -65,7 +72,7 @@ const openaiSearchNlpParams = async (
 
 ): Promise<SearchNlpParams> => {
 
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = getLegacyOpenAiApiKey()
 
   if (!apiKey) {
 
@@ -101,7 +108,7 @@ const openaiSearchNlpParams = async (
 
 
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetch('data:,mirax-legacy-provider-removed', {
 
     method: 'POST',
 
@@ -150,6 +157,38 @@ const openaiSearchNlpParams = async (
   console.log('LLM EXTRACTION:', { raw: rawParsed, coerced, source: 'llm' })
 
   return coerced
+
+}
+
+const safeSearchNlpParams = async (
+
+  userQuery: string,
+
+  ctx: { available_categories: string[]; available_locations: string[] },
+
+): Promise<SearchNlpParams> => {
+
+  const fallback = heuristicSearchNlpParams(userQuery)
+
+  if (!getLegacyOpenAiApiKey()) {
+
+    return fallback
+
+  }
+
+  try {
+
+    return await openaiSearchNlpParams(userQuery, ctx)
+
+  } catch (error) {
+
+    console.warn('Search NLP legacy provider unavailable; using deterministic fallback', {
+      reason: error instanceof Error ? error.message : String(error),
+    })
+
+    return fallback
+
+  }
 
 }
 
@@ -240,7 +279,7 @@ export async function textToFilterSearchActionExpanded(userQuery: string): Promi
 
     const available = await fetchAvailableSearchOptions(supabase)
 
-    let nlp = await openaiSearchNlpParams(query, available)
+    let nlp = await safeSearchNlpParams(query, available)
 
     const heur = heuristicSearchNlpParams(query)
 
@@ -355,7 +394,7 @@ export async function textToFilterSearchActionExpanded(userQuery: string): Promi
 
 
 
-    const semanticIntent = await parseSignalIntent(query)
+    const semanticIntent = parseSignalIntentOffline(query)
 
     const inferredMapsCategory = inferMapsCategoryFromIntent(query, semanticIntent)
     let resolvedCategory =
@@ -1704,7 +1743,7 @@ export async function processSemanticSearchAction(
   options?: SearchActionOptions,
 ): Promise<TextToFilterSearchResponse> {
 
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = getLegacyOpenAiApiKey()
 
   if (!apiKey) {
 
@@ -3122,11 +3161,11 @@ const buildPitchSystemPrompt = () => {
 
 const openaiPitch = async (input: PitchInput): Promise<PitchResult> => {
 
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = getLegacyOpenAiApiKey()
 
   if (!apiKey) {
 
-    throw new Error('Missing OPENAI_API_KEY in environment')
+    throw new Error('LEGACY_AI_PROVIDER_REMOVED')
 
   }
 
@@ -3190,7 +3229,7 @@ const openaiPitch = async (input: PitchInput): Promise<PitchResult> => {
 
 
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetch('data:,mirax-legacy-provider-removed', {
 
     method: 'POST',
 
@@ -3258,15 +3297,56 @@ const openaiPitch = async (input: PitchInput): Promise<PitchResult> => {
 
 }
 
+function buildDeterministicEmailPitch(input: PitchInput): PitchResult {
+  const nome = input.nome?.trim() || 'la vostra attività'
+  const citta = input.citta?.trim()
+  const categoria = input.categoria?.trim()
+  const context = [categoria, citta].filter(Boolean).join(' a ')
+  const issues: string[] = []
+
+  const tech = new Set((input.tech_stack || []).map((v) => v.toLowerCase()))
+  if (!tech.has('meta pixel') && !tech.has('facebook pixel')) issues.push('tracciamento Meta/Facebook Pixel non evidente')
+  if (!tech.has('google tag manager') && !tech.has('gtm')) issues.push('Google Tag Manager non evidente')
+  if (typeof input.page_speed === 'number' && input.page_speed > 0 && input.page_speed < 70) {
+    issues.push(`performance sito migliorabile (score ${Math.round(input.page_speed)}/100)`)
+  }
+  for (const err of (input.html_errors || []).slice(0, 3)) {
+    if (err.trim()) issues.push(err.trim())
+  }
+
+  const topIssues = issues.slice(0, 3)
+  const issueText = topIssues.length
+    ? topIssues.map((issue) => `- ${issue}`).join('\n')
+    : '- presenza digitale da verificare su tracking, velocità, CTA e conversioni'
+
+  return {
+    subject: topIssues.length
+      ? `3 leve rapide per migliorare i contatti di ${nome}`
+      : `Spunto concreto per aumentare i contatti di ${nome}`,
+    body: [
+      `Buongiorno, ho dato un’occhiata a ${nome}${context ? ` (${context})` : ''} e ho notato alcuni punti che possono incidere direttamente sulle richieste di contatto dal sito.`,
+      '',
+      issueText,
+      '',
+      'Il punto non è “rifare il sito”, ma capire dove oggi si perdono visite, tracciamento e richieste commerciali. Con piccoli interventi su misurazione, velocità e CTA spesso si riesce a trasformare traffico già esistente in più preventivi qualificati.',
+      '',
+      'Se ha senso, posso preparare una mini-analisi gratuita con le 3 priorità più veloci da sistemare. Preferite sentirci oggi pomeriggio o domani mattina?',
+      '',
+      'Un saluto,',
+      '[Nome Agenzia]',
+    ].join('\n'),
+  }
+}
+
 
 
 const openaiDeterministicSearchFilters = async (userQuery: string): Promise<DeterministicSearchFilters> => {
 
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = getLegacyOpenAiApiKey()
 
   if (!apiKey) {
 
-    throw new Error('Missing OPENAI_API_KEY in environment')
+    throw new Error('LEGACY_AI_PROVIDER_REMOVED')
 
   }
 
@@ -3292,7 +3372,7 @@ const openaiDeterministicSearchFilters = async (userQuery: string): Promise<Dete
 
 
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetch('data:,mirax-legacy-provider-removed', {
 
     method: 'POST',
 
@@ -3344,11 +3424,11 @@ const openaiDeterministicSearchFilters = async (userQuery: string): Promise<Dete
 
 const openaiLegacyAiFilters = async (userQuery: string): Promise<LegacyAiFilters> => {
 
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = getLegacyOpenAiApiKey()
 
   if (!apiKey) {
 
-    throw new Error('Missing OPENAI_API_KEY in environment')
+    throw new Error('LEGACY_AI_PROVIDER_REMOVED')
 
   }
 
@@ -3372,7 +3452,7 @@ const openaiLegacyAiFilters = async (userQuery: string): Promise<LegacyAiFilters
 
 
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetch('data:,mirax-legacy-provider-removed', {
 
     method: 'POST',
 
@@ -3424,11 +3504,11 @@ const openaiLegacyAiFilters = async (userQuery: string): Promise<LegacyAiFilters
 
 const openaiNliJson = async (userQuery: string): Promise<NliFilterSpec> => {
 
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = getLegacyOpenAiApiKey()
 
   if (!apiKey) {
 
-    throw new Error('Missing OPENAI_API_KEY in environment')
+    throw new Error('LEGACY_AI_PROVIDER_REMOVED')
 
   }
 
@@ -3454,7 +3534,7 @@ const openaiNliJson = async (userQuery: string): Promise<NliFilterSpec> => {
 
 
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetch('data:,mirax-legacy-provider-removed', {
 
     method: 'POST',
 
@@ -3512,11 +3592,11 @@ const openaiNliJson = async (userQuery: string): Promise<NliFilterSpec> => {
 
 const openaiJson = async (userQuery: string): Promise<TextToFilterSpec> => {
 
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = getLegacyOpenAiApiKey()
 
   if (!apiKey) {
 
-    throw new Error('Missing OPENAI_API_KEY in environment')
+    throw new Error('LEGACY_AI_PROVIDER_REMOVED')
 
   }
 
@@ -3542,7 +3622,7 @@ const openaiJson = async (userQuery: string): Promise<TextToFilterSpec> => {
 
 
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetch('data:,mirax-legacy-provider-removed', {
 
     method: 'POST',
 
@@ -3874,7 +3954,7 @@ export async function textToFilterSearchAction(
       }
     } else {
       available = await fetchAvailableSearchOptions(supabase)
-      nlp = await openaiSearchNlpParams(query, available)
+      nlp = await safeSearchNlpParams(query, available)
     }
 
     // Hard-enforce negative intents from raw query so they are never ignored.
@@ -3997,7 +4077,7 @@ export async function textToFilterSearchAction(
 
 
 
-    const semanticIntent = canFastPath ? offlineIntent : await parseSignalIntent(query)
+    const semanticIntent = offlineIntent
 
     const inferredMapsCategory = inferMapsCategoryFromIntent(query, semanticIntent)
     let resolvedCategory =
@@ -5392,11 +5472,11 @@ export async function generateWhatsAppPitchAction(
   const mode: OutreachMode = input.mode === 'mirax_promo' ? 'mirax_promo' : 'sell_service'
   const fallback = buildWhatsAppFallback({ ...input, mode })
   const fallbackRationale = buildOutreachRationale(input, mode)
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = getLegacyOpenAiApiKey()
   if (!apiKey) return { message: fallback, rationale: fallbackRationale }
 
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res = await fetch('data:,mirax-legacy-provider-removed', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -5460,7 +5540,13 @@ export async function generatePitchAction(input: PitchInput): Promise<PitchResul
 
 
 
-  return openaiPitch(safeInput)
+  const fallback = buildDeterministicEmailPitch(safeInput)
+  if (!getLegacyOpenAiApiKey()) return fallback
+  try {
+    return await openaiPitch(safeInput)
+  } catch {
+    return fallback
+  }
 
 }
 
@@ -5468,9 +5554,9 @@ export async function generatePitchAction(input: PitchInput): Promise<PitchResul
 
 export async function expandAndSearch(query: string): Promise<{ subcategories: string[]; results: any[] }> {
   try {
-    const apiKey = process.env.OPENAI_API_KEY
+    const apiKey = getLegacyOpenAiApiKey()
     if (!apiKey) return { subcategories: [], results: [] }
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res = await fetch('data:,mirax-legacy-provider-removed', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({

@@ -305,7 +305,7 @@ export default function InsightsPage() {
             Il tuo Sales Command Center ti aspetta
           </h2>
           <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto leading-relaxed">
-            Una volta aggiunti i primi lead alla Pipeline, qui vedrai forecast del mese, azioni urgenti, pattern di conversione e consigli GPT-4o personalizzati sui tuoi dati reali.
+            Una volta aggiunti i primi lead alla Pipeline, qui vedrai forecast del mese, azioni urgenti, pattern di conversione e consigli MIRAX AI personalizzati sui tuoi dati reali.
           </p>
           <div className="flex items-center justify-center gap-2 mt-6 flex-wrap">
             <Link
@@ -499,7 +499,7 @@ export default function InsightsPage() {
         </div>
       )}
 
-      {/* AI Coach (mostrato SOLO se GPT ha risposto davvero) */}
+      {/* AI Coach */}
       {hasData && aiData?.usedAI && aiData.insights.length > 0 && (
         <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
           <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-slate-200 flex-wrap">
@@ -509,7 +509,7 @@ export default function InsightsPage() {
               </div>
               <span className="text-sm font-semibold text-slate-900">Sales Coach AI</span>
               <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-600 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> GPT-4o-mini
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> MIRAX AI
               </span>
             </div>
             <button

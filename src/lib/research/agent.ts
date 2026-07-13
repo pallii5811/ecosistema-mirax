@@ -20,6 +20,14 @@ const MAX_BUDGET_USD = 0.05
 const MAX_TOOL_ROUNDS = 4
 const MODEL = 'gpt-4o-mini'
 
+function isLegacyOpenAiResearchEnabled(): boolean {
+  return false
+}
+
+function getLegacyOpenAiApiKey(): string {
+  return ''
+}
+
 const OPENAI_TOOLS = [
   {
     type: 'function' as const,
@@ -161,10 +169,10 @@ Usa i tool disponibili. Poi rispondi con JSON secondo lo schema richiesto.`
 async function callOpenAIWithTools(
   messages: OpenAIMessage[],
 ): Promise<{ message: OpenAIMessage; usage?: { prompt_tokens?: number; completion_tokens?: number } }> {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) throw new Error('OPENAI_API_KEY mancante')
+  const apiKey = getLegacyOpenAiApiKey()
+  if (!apiKey) throw new Error('LEGACY_RESEARCH_PROVIDER_DISABLED')
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetch('data:,mirax-legacy-provider-removed', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -221,6 +229,17 @@ export async function runResearchAgent(
       signals: [],
       research_summary: 'Mock mode — nessuna chiamata AI.',
       model: 'mock-v1',
+      from_cache: false,
+      tools_used: [],
+      estimated_cost_usd: 0,
+    }
+  }
+
+  if (!isLegacyOpenAiResearchEnabled()) {
+    return {
+      signals: [],
+      research_summary: 'Research agent legacy disabilitato. Usa pipeline Sonnet/Search MIRAX.',
+      model: 'disabled-legacy-research',
       from_cache: false,
       tools_used: [],
       estimated_cost_usd: 0,

@@ -2,11 +2,16 @@
  * Blocco 2 — unit tests: search job payload + zone encoding
  */
 import assert from 'node:assert/strict'
-import { buildPendingSearchInsert, encodeMaxLeadsZone } from '../src/lib/search-job-payload.ts'
+import { buildPendingSearchInsert, clampSearchMaxLeads, encodeMaxLeadsZone } from '../src/lib/search-job-payload.ts'
 
 assert.equal(encodeMaxLeadsZone(10), '10')
-assert.equal(encodeMaxLeadsZone(999), '500')
+assert.equal(encodeMaxLeadsZone(999), '999')
+assert.equal(encodeMaxLeadsZone(10000), '10000')
+assert.equal(encodeMaxLeadsZone(12000), '10000')
 assert.equal(encodeMaxLeadsZone(0), undefined)
+assert.equal(clampSearchMaxLeads(4679, 4679), 4679)
+assert.equal(clampSearchMaxLeads(5000, 4679), 4679)
+assert.equal(clampSearchMaxLeads(10000, 12000), 10000)
 
 const row = buildPendingSearchInsert({
   category: 'Idraulici',

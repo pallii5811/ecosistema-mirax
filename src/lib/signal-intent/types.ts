@@ -4,6 +4,10 @@
 
 export type MiraxSignalRequirement =
   | 'hiring'
+  | 'hiring_operational'
+  | 'hiring_technology'
+  | 'hiring_sales'
+  | 'hiring_marketing'
   | 'registry_change'
   | 'sector_investment'
   | 'tender_won'
@@ -17,12 +21,18 @@ export type MiraxSignalRequirement =
   | 'investing_marketing'
   | 'seeking_supplier'
   | 'expansion'
+  | 'fleet_expansion'
+  | 'production_expansion'
+  | 'new_location'
   | 'executive_change'
   | 'investing_expansion'
   | 'new_product'
   | 'market_entry'
   | 'new_company'
   | 'tech_migration'
+  | 'manual_processes'
+  | 'cybersecurity_exposure'
+  | 'regulatory_change'
 
 export type IntentTechnicalFilters = {
   has_gtm?: boolean | null

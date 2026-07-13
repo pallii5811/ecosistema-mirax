@@ -19,6 +19,10 @@ export const AGENTIC_EXAMPLE_QUERIES = [
 
 export const SIGNAL_REQUIREMENT_LABELS: Record<MiraxSignalRequirement, string> = {
   hiring: 'In assunzione',
+  hiring_operational: 'Assunzioni operative',
+  hiring_technology: 'Assunzioni tech',
+  hiring_sales: 'Assunzioni sales',
+  hiring_marketing: 'Assunzioni marketing',
   registry_change: 'Variazione registro',
   sector_investment: 'Investimento settoriale',
   tender_won: 'Gara vinta',
@@ -32,12 +36,18 @@ export const SIGNAL_REQUIREMENT_LABELS: Record<MiraxSignalRequirement, string> =
   investing_marketing: 'Investe in marketing',
   seeking_supplier: 'Cerca fornitore',
   expansion: 'Espansione',
+  fleet_expansion: 'Espansione flotta',
+  production_expansion: 'Espansione produttiva',
+  new_location: 'Nuova sede',
   executive_change: 'Cambio dirigenza',
   investing_expansion: 'Investe in espansione',
   new_product: 'Nuovo prodotto',
   market_entry: 'Nuovo mercato',
   new_company: 'Nuova impresa',
   tech_migration: 'Migrazione tech',
+  manual_processes: 'Processi manuali',
+  cybersecurity_exposure: 'Esposizione cyber',
+  regulatory_change: 'Cambio normativo',
 }
 
 export const PARSE_SOURCE_LABELS: Record<string, string> = {

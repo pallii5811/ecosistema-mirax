@@ -20,6 +20,13 @@ import {
   isBuyerMarketingInvestmentQuery,
   isSellerMarketingAgencySector,
 } from '@/lib/signal-intent/marketing-investment'
+import {
+  compileCommercialSearchPlan,
+  detectQueryContradictions,
+  type CommercialIntentCompilerOptions,
+} from '@/lib/intent-compiler/compile-commercial-search-plan'
+import type { CommercialSearchPlan } from '@/lib/contracts/commercial-search-plan'
+import { sourceSupportsSignal } from '@/lib/source-intelligence/registry'
 
 const MIRAX_QUERY_PLAN_TOOL_NAME = 'submit_mirax_query_plan'
 
@@ -30,8 +37,9 @@ METODO OBBLIGATORIO:
 2. Traduci l'offerta in problemi/costi che risolve, ICP plausibile, buying committee e segnali d'acquisto osservabili adesso.
 3. Trasforma i segnali in fatti verificabili (annuncio di lavoro, outbound, nuova pipeline, gara, round, nuova sede, cambio tecnologia), fonti e domande di ricerca.
 4. Dai priorita ai segnali piu vicini alla spesa: espliciti, recenti, specifici e supportati da URL/data. Popolarita o crescita generica non bastano.
-5. Definisci disqualifier e ranking. Un lead senza prova non e "caldo".
-6. Richiedi dal sito ufficiale tutti i dati utili e pubblici: contatti business, social, decision maker, tecnologie, criticita e contesto per l'outreach.
+5. Pensa alle miniere d'oro: annunci hiring, ads attivi/landing, gare/albi, recensioni negative o pain pubblici, fiere/eventi, partnership/canali, marketplace/directory, compliance/scadenze, sito ufficiale e stack tecnologico.
+6. Definisci disqualifier e ranking. Un lead senza prova non e "caldo".
+7. Richiedi dal sito ufficiale tutti i dati utili e pubblici: contatti business, social, decision maker, tecnologie, criticita e contesto per l'outreach.
 
 ESEMPIO: se l'utente vende lead generation/Sales Intelligence, cerca aziende che stanno assumendo SDR/BDR/Inside Sales/Business Developer, citano outbound, prospecting, sviluppo nuovi clienti o gestione pipeline. Non cercare genericamente aziende software e non usare funding come prova sufficiente da solo.
 
@@ -107,7 +115,9 @@ const OPENAI_TOOL_SCHEMA = {
                 type: 'string',
                 enum: [
                   'public_registry', 'public_procurement', 'job_market', 'funding',
-                  'company_web', 'news', 'technology', 'real_estate', 'regulatory', 'web_evidence',
+                  'company_web', 'news', 'technology', 'real_estate', 'regulatory',
+                  'ads', 'reviews', 'events', 'marketplace', 'partnerships', 'compliance',
+                  'web_evidence',
                 ],
               },
               source_types: { type: 'array', items: { type: 'string' } },
@@ -200,7 +210,8 @@ type RawToolPlan = {
 
 const VALID_SOURCE_LANES = new Set<UqeSourceLane>([
   'public_registry', 'public_procurement', 'job_market', 'funding', 'company_web',
-  'news', 'technology', 'real_estate', 'regulatory', 'web_evidence',
+  'news', 'technology', 'real_estate', 'regulatory', 'ads', 'reviews', 'events',
+  'marketplace', 'partnerships', 'compliance', 'web_evidence',
 ])
 
 function defaultSourcePlan(query: string, signals: string[]): UqeSourcePlanItem[] {
@@ -236,8 +247,33 @@ function defaultSourcePlan(query: string, signals: string[]): UqeSourcePlanItem[
   if (signals.some((signal) => ['crm_change', 'tech_migration', 'no_pixel', 'site_stale'].includes(signal))) {
     add('technology', ['sito ufficiale', 'job posting tecnici', 'case study fornitore'], ['dominio ufficiale', 'tecnologia', 'evidenza'])
   }
+  if (signals.some((signal) => ['investing_marketing', 'meta_ads_started', 'google_ads_started'].includes(signal))) {
+    add(
+      'ads',
+      ['Meta Ad Library', 'Google Ads Transparency Center', 'landing page', 'tag di tracking'],
+      ['inserzione/campagna attiva', 'pagina o creatività', 'dominio ufficiale', 'data quando disponibile'],
+      true,
+    )
+    add(
+      'technology',
+      ['sito ufficiale', 'tag manager', 'pixel', 'landing page'],
+      ['pixel/tag ads', 'form lead', 'call tracking o CTA commerciale'],
+    )
+  }
+  if (signals.some((signal) => ['seeking_supplier', 'tender_won'].includes(signal))) {
+    add('compliance', ['bandi', 'albi fornitori', 'normative di settore'], ['bisogno/obbligo', 'scadenza o data', 'ente/azienda'])
+  }
+  if (signals.some((signal) => ['new_product', 'market_entry', 'executive_change', 'investing_expansion'].includes(signal))) {
+    add('events', ['fiere', 'webinar', 'conferenze', 'sponsor eventi'], ['azienda', 'evento/lancio', 'data', 'tema investimento'], true)
+    add('partnerships', ['comunicati partnership', 'canale vendita', 'reseller/partner'], ['azienda', 'partner/canale', 'data', 'obiettivo commerciale'], true)
+  }
   if (signals.includes('expansion')) {
     add('real_estate', ['permessi', 'immobili commerciali', 'comunicati apertura'], ['azienda', 'nuova sede/apertura', 'data'])
+    add('events', ['fiere', 'eventi locali', 'comunicati espansione'], ['azienda', 'evento/espansione', 'data'], true)
+    add('partnerships', ['rete vendita', 'nuovi partner', 'accordi commerciali'], ['azienda', 'accordo commerciale', 'data'], true)
+  }
+  if (/recension|review|trustpilot|stelle|lament|reputazione/i.test(query)) {
+    add('reviews', ['Google reviews', 'Trustpilot', 'Tripadvisor', 'Glassdoor', 'recensioni locali'], ['rating', 'tema criticità', 'data recensione'], true)
   }
   add('news', ['comunicati stampa', 'stampa locale', 'newsroom'], ['azienda', 'segnale', 'data'], true)
   add('company_web', ['sito ufficiale'], ['dominio ufficiale', 'identita aziendale'])
@@ -265,16 +301,340 @@ function normalizeSourcePlan(raw: unknown, query: string, signals: string[]): Uq
   return normalized.length ? normalized.sort((a, b) => b.priority - a.priority) : defaultSourcePlan(query, signals)
 }
 
+type SellerPlaybookKind =
+  | 'sales_intelligence'
+  | 'accounting_tax'
+  | 'insurance_broker'
+  | 'web_agency'
+  | 'software_development'
+  | 'generic_consulting'
+
+type SellerPlaybookDefaults = {
+  sector: string
+  location: string
+  signals: string[]
+  summary: string
+  research_questions: string[]
+  reasoning: string
+}
+
+function classifySellerPlaybook(query: string, hypothesis?: UqeCommercialHypothesis): SellerPlaybookKind | null {
+  const blob = `${query} ${hypothesis?.offer || ''} ${(hypothesis?.target_profile || []).join(' ')} ${(hypothesis?.buying_signals || []).join(' ')}`.toLowerCase()
+  const seller = isSellerAbstractQuery(query) || Boolean(hypothesis?.offer)
+  if (!seller) return null
+  if (/\b(lead\s*generation|leadgen|sales\s*intelligence|prospecting|outbound|generazione\s+lead)\b/i.test(blob)) {
+    return 'sales_intelligence'
+  }
+  if (/\b(commercialist\w*|ragionier\w*|contabil\w*|fiscal\w*|paghe|payroll|dichiarazion\w*\s+fiscal|bilancio|consulenza\s+fiscale)\b/i.test(blob)) {
+    return 'accounting_tax'
+  }
+  if (/\b(broker\s+assicur|assicurazion|polizze?|rc\s*(?:auto|professionale|aziendale)?|rischi?\s+aziendal|welfare|infortuni|responsabilit\w*)\b/i.test(blob)) {
+    return 'insurance_broker'
+  }
+  if (/\b(web\s*agency|agenzia\s+web|rifare\s+il\s+sito|sito\s+web|ecommerce|shopify|seo\b|google\s+ads|meta\s+ads|marketing\s+digitale|social\s+media|performance\s+marketing)\b/i.test(blob)) {
+    return 'web_agency'
+  }
+  if (/\b(programmatore|developer|sviluppat\w*|software\s+engineer|full[\s-]?stack|app\b|saas|software\s+su\s+misura)\b/i.test(blob)) {
+    return 'software_development'
+  }
+  if (seller) return 'generic_consulting'
+  return null
+}
+
+function sellerPlaybookDefaults(
+  query: string,
+  hypothesis?: UqeCommercialHypothesis,
+): SellerPlaybookDefaults | null {
+  const kind = classifySellerPlaybook(query, hypothesis)
+  if (!kind) return null
+  const location = 'Italia'
+  if (kind === 'sales_intelligence') {
+    return {
+      sector: 'PMI B2B con team commerciale in espansione',
+      location,
+      signals: ['hiring', 'expansion'],
+      summary: 'PMI B2B che stanno investendo in sviluppo commerciale, outbound o nuova pipeline.',
+      research_questions: [
+        'Quali PMI stanno assumendo ruoli SDR/BDR/Business Developer o Sales Account new business?',
+        'Quale fonte prova outbound, prospecting, pipeline o sviluppo nuovi clienti?',
+        'Il segnale e recente, specifico e collegabile a un decisore sales/revenue?',
+      ],
+      reasoning: 'Seller-to-buyer reasoning: lead generation/sales intelligence -> dolore prospecting/pipeline -> segnali hiring sales/outbound/espansione commerciale.',
+    }
+  }
+  if (kind === 'accounting_tax') {
+    return {
+      sector: 'PMI, nuove societa e attivita in crescita con bisogno amministrativo/fiscale',
+      location,
+      signals: ['new_company', 'registry_change', 'hiring', 'expansion'],
+      summary: 'Clienti caldi per commercialista: nuove societa, aperture, crescita organico o complessita amministrativa.',
+      research_questions: [
+        'Quali nuove societa, aperture o startup hanno appena iniziato attivita e devono strutturare contabilita/fisco?',
+        'Quali PMI stanno assumendo amministrazione, contabile, back office o payroll?',
+        'Quali aziende hanno espansione, nuova sede, ecommerce o crescita che aumenta complessita fiscale/amministrativa?',
+      ],
+      reasoning: 'Seller-to-buyer reasoning: commercialista -> trigger di contabilita/fisco/paghe -> nuove aziende, crescita, hiring admin e cambi societari.',
+    }
+  }
+  if (kind === 'insurance_broker') {
+    return {
+      sector: 'PMI con rischio assicurabile, crescita operativa, personale, mezzi o appalti',
+      location,
+      signals: ['hiring', 'expansion', 'tender_won', 'new_company', 'regulatory'],
+      summary: 'Clienti caldi per broker assicurativo: aziende che stanno crescendo, assumendo, vincendo appalti o aumentando rischi operativi.',
+      research_questions: [
+        'Quali PMI stanno assumendo personale operativo, autisti, tecnici, operai o magazzinieri?',
+        'Quali aziende hanno nuova sede, mezzi, cantieri, appalti o espansione che aumenta esposizione al rischio?',
+        'Quali segnali pubblici indicano bisogno di polizze aziendali, responsabilita, fleet, cyber, welfare o infortuni?',
+      ],
+      reasoning: 'Seller-to-buyer reasoning: broker assicurativo -> rischio/asset/personale/compliance -> segnali hiring, appalti, espansione e nuove attivita.',
+    }
+  }
+  if (kind === 'web_agency') {
+    return {
+      sector: 'PMI locali con sito migliorabile, tracking assente o domanda digitale attiva',
+      location,
+      signals: ['site_stale', 'no_pixel', 'no_gtm', 'investing_marketing', 'new_company'],
+      summary: 'Clienti caldi per agenzia web: PMI con sito vecchio, tracking assente, nuova apertura o budget digitale da convertire meglio.',
+      research_questions: [
+        'Quali PMI hanno sito vecchio/lento, assenza di tracking, CTA deboli o problemi SEO verificabili?',
+        'Quali aziende stanno gia investendo in ads/marketing ma hanno sito o funnel migliorabile?',
+        'Quali nuove aperture o attivita locali hanno bisogno immediato di presenza digitale migliore?',
+      ],
+      reasoning: 'Seller-to-buyer reasoning: agenzia web/marketing -> revenue leak digitale -> audit tecnico, tracking assente, sito obsoleto, nuova apertura o ads attive.',
+    }
+  }
+  if (kind === 'software_development') {
+    return {
+      sector: 'PMI con bisogno tecnologico, assunzioni tech o trasformazione digitale',
+      location,
+      signals: ['hiring', 'tech_migration', 'new_product', 'expansion'],
+      summary: 'Clienti caldi per sviluppo software: aziende con hiring tech, digitalizzazione, nuovo prodotto o sistemi da modernizzare.',
+      research_questions: [
+        'Quali aziende stanno assumendo sviluppatori, IT manager, data o ruoli digitali?',
+        'Quali PMI annunciano migrazioni, digital transformation, nuovo prodotto o automazione processi?',
+        'Quale fonte prova urgenza tecnologica e budget potenziale?',
+      ],
+      reasoning: 'Seller-to-buyer reasoning: sviluppo software -> gap tecnico/automazione -> hiring tech, migrazione, nuovo prodotto o espansione.',
+    }
+  }
+  return {
+    sector: 'PMI con segnali recenti di crescita, budget o pain operativo coerenti con il servizio venduto',
+    location,
+    signals: ['new_company', 'expansion', 'hiring', 'seeking_supplier'],
+    summary: 'Clienti caldi con segnali pubblici recenti di bisogno, crescita o ricerca fornitori.',
+    research_questions: [
+      'Quali aziende mostrano un evento recente che crea bisogno del servizio venduto?',
+      'Quale fonte prova crescita, budget, ricerca fornitore o pain operativo?',
+      'Il lead e PMI/professionista e non un brand enterprise/famoso?',
+    ],
+    reasoning: 'Seller-to-buyer reasoning generico: offerta utente -> pain/budget osservabile -> segnali recenti prima del contatto.',
+  }
+}
+
 function sourcePlanForCommercialHypothesis(
   raw: unknown,
   query: string,
   signals: string[],
   hypothesis?: UqeCommercialHypothesis,
 ): UqeSourcePlanItem[] {
-  if (!hypothesis || !hypothesis.hiring_roles.length) return normalizeSourcePlan(raw, query, signals)
+  const defaults = sellerPlaybookDefaults(query, hypothesis)
+  const kind = classifySellerPlaybook(query, hypothesis)
+  if (!hypothesis || !defaults || !kind) return normalizeSourcePlan(raw, query, signals)
   // Seller-intent lanes are closed and deterministic. An LLM may improve the
   // wording, but cannot spend the SERP budget on registries/PDFs unrelated to
   // the observable commercial pain.
+  if (kind === 'accounting_tax') {
+    return [
+      {
+        lane: 'public_registry',
+        source_types: ['Registro Imprese', 'Camere di commercio', 'comunicati nuove aperture'],
+        query_templates: [
+          '("nuova apertura" OR "nuova attivita" OR "costituita" OR "nasce") ("Srl" OR "startup" OR "impresa") {location}',
+          '("apre" OR "inaugura" OR "nuova sede") ("negozio" OR "studio" OR "azienda" OR "ecommerce") {location}',
+        ],
+        expected_evidence: ['azienda', 'data apertura/costituzione', 'attivita', 'fonte'],
+        priority: 100,
+        llm_required: false,
+      },
+      {
+        lane: 'job_market',
+        source_types: ['careers', 'Indeed', 'InfoJobs', 'LinkedIn Jobs'],
+        query_templates: [
+          '("amministrazione" OR "contabile" OR "payroll" OR "back office") ("lavora con noi" OR "posizioni aperte") ("Srl" OR "PMI") {location}',
+          '("impiegato amministrativo" OR "addetto contabilita" OR "payroll specialist") ("Srl" OR "azienda") {location}',
+        ],
+        expected_evidence: ['azienda', 'ruolo amministrativo/fiscale', 'data annuncio', 'URL fonte'],
+        priority: 92,
+        llm_required: false,
+      },
+      {
+        lane: 'real_estate',
+        source_types: ['news locali', 'siti ufficiali', 'comunicati apertura'],
+        query_templates: [
+          '("nuova sede" OR "ampliamento" OR "trasferimento sede") ("Srl" OR "PMI") {location}',
+        ],
+        expected_evidence: ['azienda', 'evento di crescita', 'data', 'URL fonte'],
+        priority: 82,
+        llm_required: true,
+      },
+      {
+        lane: 'web_evidence',
+        source_types: ['open web', 'stampa locale', 'sito ufficiale'],
+        query_templates: ['{query}'],
+        expected_evidence: ['azienda', 'trigger fiscale/amministrativo', 'data', 'URL fonte'],
+        priority: 62,
+        llm_required: true,
+      },
+    ]
+  }
+  if (kind === 'insurance_broker') {
+    return [
+      {
+        lane: 'job_market',
+        source_types: ['careers', 'Indeed', 'InfoJobs', 'LinkedIn Jobs'],
+        query_templates: [
+          '("autisti" OR "operai" OR "tecnici" OR "magazzinieri") ("lavora con noi" OR "assume" OR "posizioni aperte") ("Srl" OR "PMI") {location}',
+          '("responsabile sicurezza" OR "HSE" OR "fleet manager" OR "logistica") ("Srl" OR "azienda") {location}',
+        ],
+        expected_evidence: ['azienda', 'ruolo che aumenta rischio/personale', 'data', 'URL fonte'],
+        priority: 100,
+        llm_required: false,
+      },
+      {
+        lane: 'public_procurement',
+        source_types: ['ANAC', 'albi pretori', 'gare aggiudicate'],
+        query_templates: [
+          '("aggiudicazione appalto" OR "appalto aggiudicato") ("Srl" OR "impresa") {location}',
+          '("gara aggiudicata" OR "contratto affidato") ("edile" OR "logistica" OR "servizi") {location}',
+        ],
+        expected_evidence: ['azienda', 'appalto/contratto', 'data', 'ente/fonte'],
+        priority: 94,
+        llm_required: false,
+      },
+      {
+        lane: 'real_estate',
+        source_types: ['comunicati aziendali', 'news locali', 'siti ufficiali'],
+        query_templates: [
+          '("nuova sede" OR "ampliamento" OR "nuovi mezzi" OR "flotta") ("Srl" OR "PMI") {location}',
+        ],
+        expected_evidence: ['azienda', 'nuovo asset/sede/flotta', 'data', 'URL fonte'],
+        priority: 86,
+        llm_required: true,
+      },
+      {
+        lane: 'compliance',
+        source_types: ['normative', 'certificazioni', 'sicurezza lavoro'],
+        query_templates: [
+          '("certificazione" OR "sicurezza sul lavoro" OR "adeguamento") ("Srl" OR "PMI") {location}',
+        ],
+        expected_evidence: ['azienda', 'obbligo/rischio/compliance', 'data', 'URL fonte'],
+        priority: 76,
+        llm_required: true,
+      },
+    ]
+  }
+  if (kind === 'web_agency') {
+    return [
+      {
+        lane: 'technology',
+        source_types: ['audit sito ufficiale', 'HTML pubblico', 'performance/SEO'],
+        query_templates: [
+          'site:.it ("copyright 2019" OR "copyright 2020" OR "copyright 2021") ("Srl" OR "azienda" OR "negozio") {location}',
+          'site:.it ("sito in costruzione" OR "coming soon" OR "under construction") ("Srl" OR "azienda") {location}',
+        ],
+        expected_evidence: ['dominio ufficiale', 'sito obsoleto/problema tecnico', 'indicatore verificabile'],
+        priority: 100,
+        llm_required: false,
+      },
+      {
+        lane: 'ads',
+        source_types: ['Meta Ad Library', 'Google Ads Transparency Center', 'landing page'],
+        query_templates: [
+          '("Meta Ads" OR "Google Ads" OR "campagne attive" OR "landing page") ("Srl" OR "PMI" OR "azienda") {location}',
+          '("richiedi preventivo" OR "prenota" OR "contattaci") ("Meta Pixel" OR "Google Tag Manager" OR "Google Ads") ("Srl" OR "azienda") {location}',
+        ],
+        expected_evidence: ['campagna/landing', 'dominio ufficiale', 'problema funnel/tracking', 'data se disponibile'],
+        priority: 90,
+        llm_required: true,
+      },
+      {
+        lane: 'public_registry',
+        source_types: ['nuove aperture', 'stampa locale', 'siti ufficiali'],
+        query_templates: [
+          '("nuova apertura" OR "inaugura" OR "apre") ("ristorante" OR "hotel" OR "negozio" OR "studio") {location}',
+        ],
+        expected_evidence: ['azienda', 'nuova apertura', 'data', 'URL fonte'],
+        priority: 78,
+        llm_required: false,
+      },
+      {
+        lane: 'web_evidence',
+        source_types: ['open web', 'sito ufficiale'],
+        query_templates: ['{query}'],
+        expected_evidence: ['azienda', 'problema digitale o budget marketing', 'URL fonte'],
+        priority: 60,
+        llm_required: true,
+      },
+    ]
+  }
+  if (kind === 'software_development') {
+    return [
+      {
+        lane: 'job_market',
+        source_types: ['careers', 'Indeed', 'InfoJobs', 'LinkedIn Jobs'],
+        query_templates: [
+          '("sviluppatore" OR developer OR "IT manager" OR "data engineer") ("lavora con noi" OR careers OR "posizioni aperte") ("Srl" OR "PMI") {location}',
+          '("digital transformation" OR "migrazione cloud" OR automazione) ("Srl" OR "PMI") {location}',
+        ],
+        expected_evidence: ['azienda', 'ruolo/progetto tech', 'data', 'URL fonte'],
+        priority: 100,
+        llm_required: false,
+      },
+      {
+        lane: 'technology',
+        source_types: ['newsroom', 'case study', 'sito ufficiale'],
+        query_templates: [
+          '("nuova piattaforma" OR "nuovo software" OR "digitalizzazione" OR "automazione processi") ("Srl" OR "PMI") {location}',
+        ],
+        expected_evidence: ['azienda', 'progetto digitale', 'data', 'URL fonte'],
+        priority: 88,
+        llm_required: true,
+      },
+    ]
+  }
+  if (kind === 'generic_consulting') {
+    return [
+      {
+        lane: 'public_registry',
+        source_types: ['nuove aperture', 'stampa locale', 'siti ufficiali'],
+        query_templates: [
+          '("nuova apertura" OR "nuova sede" OR "costituita" OR "nasce") ("Srl" OR "PMI" OR "azienda") {location}',
+        ],
+        expected_evidence: ['azienda', 'evento recente', 'data', 'URL fonte'],
+        priority: 92,
+        llm_required: false,
+      },
+      {
+        lane: 'job_market',
+        source_types: ['careers', 'Indeed', 'InfoJobs'],
+        query_templates: [
+          '("lavora con noi" OR "posizioni aperte" OR "assume") ("Srl" OR "PMI") {location}',
+        ],
+        expected_evidence: ['azienda', 'crescita/hiring', 'data', 'URL fonte'],
+        priority: 86,
+        llm_required: false,
+      },
+      {
+        lane: 'web_evidence',
+        source_types: ['open web', 'news locali'],
+        query_templates: ['{query}'],
+        expected_evidence: ['azienda', 'pain o budget coerente', 'data', 'URL fonte'],
+        priority: 65,
+        llm_required: true,
+      },
+    ]
+  }
   return [
     {
       lane: 'job_market',
@@ -296,6 +656,39 @@ function sourcePlanForCommercialHypothesis(
       expected_evidence: ['dominio ufficiale', 'ruolo sales', 'testo annuncio', 'data'],
       priority: 90,
       llm_required: false,
+    },
+    {
+      lane: 'ads',
+      source_types: ['Meta Ad Library', 'Google Ads Transparency Center', 'landing page ufficiali'],
+      query_templates: [
+        'PMI B2B Italia ("Meta Ad Library" OR "inserzioni attive" OR "campagne Meta") ("lead generation" OR demo OR "richiedi informazioni")',
+        'PMI B2B Italia ("Google Ads" OR "landing page" OR "campagna") ("contattaci" OR demo OR preventivo)',
+      ],
+      expected_evidence: ['campagna/landing attiva', 'CTA commerciale', 'dominio ufficiale', 'data quando disponibile'],
+      priority: 88,
+      llm_required: true,
+    },
+    {
+      lane: 'partnerships',
+      source_types: ['comunicati partnership', 'newsroom', 'canale vendita'],
+      query_templates: [
+        'PMI Italia ("nuova partnership" OR "accordo commerciale" OR "canale vendita" OR "rete vendita")',
+        'PMI B2B Italia ("partner commerciali" OR reseller OR "espansione commerciale")',
+      ],
+      expected_evidence: ['azienda', 'accordo/partner', 'obiettivo commerciale', 'data', 'URL fonte'],
+      priority: 82,
+      llm_required: true,
+    },
+    {
+      lane: 'events',
+      source_types: ['fiere', 'eventi B2B', 'webinar', 'sponsor'],
+      query_templates: [
+        'PMI B2B Italia (fiera OR expo OR webinar OR sponsor OR stand) ("nuovi clienti" OR "nuovi mercati" OR sales)',
+        'PMI Italia ("partecipa a" OR "sarà presente a") (fiera OR evento) ("commerciale" OR "business development")',
+      ],
+      expected_evidence: ['azienda', 'evento', 'tema commerciale', 'data', 'URL fonte'],
+      priority: 76,
+      llm_required: true,
     },
     {
       lane: 'news',
@@ -412,7 +805,126 @@ function inferCommercialHypothesis(query: string): UqeCommercialHypothesis | und
         'annuncio senza azienda identificabile',
         'ruolo puramente retail o assistenza clienti senza new business',
         'azienda non italiana o non coerente con PMI se il requisito e esplicito',
+        'azienda enterprise/famosa quando l utente chiede PMI o target locale',
         'segnale senza URL o prova testuale',
+      ],
+    }
+  }
+  if (!isSellerAbstractQuery(query)) return undefined
+  if (/\b(commercialist\w*|ragionier\w*|contabil\w*|fiscal\w*|paghe|payroll|bilancio|consulenza\s+fiscale)\b/i.test(query)) {
+    return {
+      offer: 'Servizi di commercialista, contabilita, fiscalita e gestione amministrativa',
+      target_profile: [
+        'nuove societa, nuove aperture e PMI appena entrate in fase operativa',
+        'aziende in crescita che assumono amministrazione, contabile, back office o payroll',
+        'PMI con nuova sede, ecommerce, espansione o complessita amministrativa crescente',
+      ],
+      buyer_pains: [
+        'contabilita e adempimenti fiscali da strutturare dopo apertura o crescita',
+        'paghe, contratti, fatture e scadenze fiscali che diventano difficili da gestire internamente',
+        'rischio di errori amministrativi quando l azienda cresce o assume',
+      ],
+      buying_signals: [
+        'nuova apertura, nuova societa o costituzione recente',
+        'assunzione di ruoli amministrativi, contabili, back office o payroll',
+        'nuova sede, espansione, ecommerce o aumento organico',
+      ],
+      hiring_roles: [
+        'Impiegato amministrativo',
+        'Addetto contabilita',
+        'Back office amministrativo',
+        'Payroll specialist',
+      ],
+      decision_maker_roles: ['Titolare', 'Founder', 'Amministratore', 'CFO', 'Responsabile Amministrativo'],
+      disqualifiers: [
+        'studi di commercialisti concorrenti se l utente non li ha richiesti',
+        'portali, directory o articoli senza azienda identificabile',
+        'azienda enterprise/famosa se l utente cerca PMI o clienti locali',
+        'segnale senza fonte o evento concreto recente',
+      ],
+    }
+  }
+  if (/\b(broker\s+assicur|assicurazion|polizze?|rischi?\s+aziendal|welfare|infortuni|responsabilit\w*)\b/i.test(query)) {
+    return {
+      offer: 'Servizi di brokeraggio assicurativo e polizze aziendali',
+      target_profile: [
+        'PMI con personale, mezzi, magazzini, cantieri o responsabilita operative',
+        'aziende che stanno assumendo ruoli operativi o tecnici',
+        'imprese che vincono appalti, aprono sedi, aumentano flotta o asset assicurabili',
+      ],
+      buyer_pains: [
+        'aumento del rischio operativo, responsabilita civile, infortuni, fleet o cyber',
+        'nuovi contratti, appalti o sedi che richiedono coperture aggiornate',
+        'crescita del personale che rende piu urgente protezione e welfare',
+      ],
+      buying_signals: [
+        'assunzione di autisti, tecnici, operai, magazzinieri o ruoli HSE',
+        'appalto o contratto pubblico appena aggiudicato',
+        'nuova sede, flotta, cantiere, magazzino o espansione operativa',
+      ],
+      hiring_roles: ['Autista', 'Operaio', 'Tecnico', 'Magazziniere', 'HSE', 'Responsabile sicurezza'],
+      decision_maker_roles: ['Titolare', 'Amministratore', 'CFO', 'HR Manager', 'Operations Manager'],
+      disqualifiers: [
+        'compagnie assicurative o broker concorrenti',
+        'portali generici senza azienda target',
+        'azienda enterprise/famosa se non richiesta',
+        'segnale non collegato a rischio assicurabile o crescita operativa',
+      ],
+    }
+  }
+  if (/\b(web\s*agency|agenzia\s+web|rifare\s+il\s+sito|sito\s+web|ecommerce|shopify|seo\b|google\s+ads|meta\s+ads|marketing\s+digitale|social\s+media|performance\s+marketing)\b/i.test(query)) {
+    return {
+      offer: 'Servizi di agenzia web, sito, ecommerce, SEO, advertising o funnel digitale',
+      target_profile: [
+        'PMI locali con sito obsoleto, lento, senza tracking o con funnel debole',
+        'aziende che stanno gia investendo in ads ma disperdono conversioni per sito/landing non ottimali',
+        'nuove aperture e attivita locali che devono costruire presenza digitale e acquisizione clienti',
+      ],
+      buyer_pains: [
+        'budget marketing sprecato per sito, tracking o CTA deboli',
+        'mancanza di Meta Pixel, GTM, analytics o infrastruttura conversioni',
+        'sito vecchio o non competitivo che limita richieste e prenotazioni',
+      ],
+      buying_signals: [
+        'sito obsoleto, copyright vecchio, assenza tracking o problemi SEO',
+        'campagne Meta/Google o landing attive con conversion tracking migliorabile',
+        'nuova apertura, nuovo ecommerce o attività che deve acquisire clienti online',
+      ],
+      hiring_roles: ['Marketing Specialist', 'Ecommerce Manager', 'Digital Marketing Specialist'],
+      decision_maker_roles: ['Titolare', 'Founder', 'Marketing Manager', 'Ecommerce Manager', 'Direttore Commerciale'],
+      disqualifiers: [
+        'agenzie web, agenzie marketing o consulenti concorrenti come lead',
+        'brand enterprise/famosi salvo richiesta esplicita',
+        'directory o articoli che parlano di marketing ma non identificano un cliente',
+        'azienda senza sito ufficiale verificabile per audit',
+      ],
+    }
+  }
+  if (/\b(programmatore|developer|sviluppat\w*|software\s+engineer|full[\s-]?stack|app\b|saas|software\s+su\s+misura)\b/i.test(query)) {
+    return {
+      offer: 'Sviluppo software, automazioni, app, integrazioni o consulenza tecnica',
+      target_profile: [
+        'PMI che assumono ruoli tech o digitali',
+        'aziende in trasformazione digitale, migrazione cloud o automazione processi',
+        'PMI che lanciano nuovi prodotti, ecommerce o piattaforme digitali',
+      ],
+      buyer_pains: [
+        'debito tecnico, processi manuali o sistemi non integrati',
+        'difficolta a trovare talenti tech o consegnare progetti digitali',
+        'necessita di automazione, app o software su misura durante crescita/nuovo prodotto',
+      ],
+      buying_signals: [
+        'assunzione di developer, IT manager, data o digital specialist',
+        'annuncio di digital transformation, migrazione cloud, automazione o nuovo software',
+        'lancio nuovo prodotto, ecommerce o servizio digitale',
+      ],
+      hiring_roles: ['Sviluppatore', 'Developer', 'IT Manager', 'Data Engineer', 'Digital Specialist'],
+      decision_maker_roles: ['CEO', 'Founder', 'CTO', 'IT Manager', 'Operations Manager'],
+      disqualifiers: [
+        'software house concorrenti se non sono target esplicito',
+        'annunci generici senza azienda identificabile',
+        'azienda enterprise/famosa se l utente cerca PMI',
+        'fonte senza evidenza tecnica concreta',
       ],
     }
   }
@@ -486,7 +998,13 @@ function inferEconomicIntentSignals(query: string): string[] {
     return out
   }
 
-  if (/\b(commercialist|ragioniere|contabil|consulent\w*\s+fisc|cfd\b|fiscalist)\b/i.test(q)) {
+  const sellerDefaults = sellerPlaybookDefaults(query)
+  if (sellerDefaults) {
+    for (const signal of sellerDefaults.signals) add(signal)
+    return out
+  }
+
+  if (/\b(commercialist\w*|ragionier\w*|contabil\w*|consulent\w*\s+fisc|cfd\b|fiscalist\w*)\b/i.test(q)) {
     add('new_company')
     add('funding_received')
   }
@@ -519,7 +1037,7 @@ function inferEconomicIntentSignals(query: string): string[] {
 
 /** Intento venditore astratto → solo agentic organic. */
 export function isSellerAbstractQuery(query: string): boolean {
-  return /\b(sono\s+(?:un|una)\b|potenziali\s+clienti|cerco\s+clienti|trov\w+\s+lead|lead\s+caldi|a\s+cui\s+vendere|vendere\s+(?:il|la|un|una|i|le|mio|mia)|servizi\s+da|clienti\s+per|mi\s+servono\s+clienti)\b/i.test(
+  return /\b(sono\s+(?:un|una)\b|sn\s+(?:un|una)\b|i\s+sell|we\s+sell|find\s+(?:small\s+)?(?:italian\s+)?business\s+buyers|clients?\s+for|potenziali\s+clienti|cerco\s+clienti|trov\w+\s+lead|(?:trov\w*|cerc\w*)\s+pmi\b[^.]{0,120}\bbisogno|lead\s+caldi|a\s+cui\s+vendere|vend(?:o|iamo)|offr(?:o|iamo)|vendere\s+(?:il|la|un|una|i|le|mio|mia)|servizi\s+da|clienti\s+per|mi\s+servono\s+clienti)\b/i.test(
     query.trim(),
   )
 }
@@ -532,7 +1050,7 @@ function _heuristicLooksAbstract(query: string): boolean {
 const NON_GEO_AFTER_PREP =
   'marketing|software|digitale|crescita|espansione|vendite|cloud|crm|seo|ads|pubblicit\\w*'
 const MAPS_CATEGORY_CITY_RE = new RegExp(
-  `\\b(imprese|ristoranti|bar|hotel|pizzeri|officine|negozi|agenzie|studi|ditta|ditte|aziende|lavanderie|parrucchieri|commercialisti|edili|pulizie)\\b.*\\b(a|ad|in)\\s+(?!${NON_GEO_AFTER_PREP}\\b)[A-Za-zÀ-ÿ]{3,}`,
+  `\\b(ristoranti|bar|hotel|pizzeri|officine|agenzie\\s+(?:immobiliari|viaggi|marketing|web)|studi\\s+(?:legali|dentistici|commercialisti)|lavanderie|parrucchieri|commercialisti|dentisti|idraulici|elettricisti|imprese\\s+(?:edili|pulizie)|edili|pulizie)\\b.*\\b(a|ad|in)\\s+(?!${NON_GEO_AFTER_PREP}\\b)[A-Za-zÀ-ÿ]{3,}`,
   'i',
 )
 
@@ -555,7 +1073,6 @@ export function isSignalLedAbstractQuery(query: string, requiredSignals: string[
   const q = query.trim()
   if (!q || isSellerAbstractQuery(q)) return false
   if (!requiredSignals.some((s) => SIGNAL_LED_SEARCH_SIGNALS.has(s))) return false
-  if (MAPS_CATEGORY_CITY_RE.test(q)) return false
   return true
 }
 
@@ -608,14 +1125,15 @@ export function applyRoutingGuards(plan: MiraxQueryPlan, query: string): MiraxQu
   const hasSignals = plan.required_signals.length > 0
 
   if (strategy === 'organic_web_search' && !isSellerAbstractQuery(q)) {
-    if (!isSignalLedAbstractQuery(q, plan.required_signals)) {
+    if (!signalLed) {
       strategy = hasSignals || hasSector ? 'hybrid' : 'maps'
     }
   }
 
   if (
     (MAPS_CATEGORY_CITY_RE.test(q) || (hasTech && (hasSector || hasLocation))) &&
-    !isSellerAbstractQuery(q)
+    !isSellerAbstractQuery(q) &&
+    !signalLed
   ) {
     strategy = 'maps'
   }
@@ -705,13 +1223,14 @@ export function normalizeMiraxQueryPlan(
   }
 
   const inferredHypothesis = inferCommercialHypothesis(originalQuery)
+  const inferredDefaults = sellerPlaybookDefaults(originalQuery, inferredHypothesis)
   let sector = String(raw.sector || '').trim()
   let location = String(raw.location || '').trim()
   let required_signals = normalizeSignals(asStringArray(raw.required_signals))
-  if (inferredHypothesis) {
-    sector = 'PMI B2B con team commerciale in espansione'
-    location = 'Italia'
-    required_signals = normalizeSignals(['hiring', 'expansion'])
+  if (inferredDefaults) {
+    sector = inferredDefaults.sector
+    location = inferredDefaults.location
+    required_signals = normalizeSignals(inferredDefaults.signals)
   }
   const technical_filters =
     raw.technical_filters && typeof raw.technical_filters === 'object' && !Array.isArray(raw.technical_filters)
@@ -743,11 +1262,11 @@ export function normalizeMiraxQueryPlan(
     technical_filters,
     extraction_schema: extraction_schema.length ? extraction_schema : extractionFromQuery(originalQuery),
     confidence,
-    intent_summary: String(raw.intent_summary || '').trim() || `Ricerca: ${originalQuery.slice(0, 120)}`,
+    intent_summary: inferredDefaults?.summary || String(raw.intent_summary || '').trim() || `Ricerca: ${originalQuery.slice(0, 120)}`,
     parse_source: parseSource,
     research_questions: asStringArray(raw.research_questions).length
       ? asStringArray(raw.research_questions)
-      : [`Quali organizzazioni soddisfano: ${originalQuery}?`],
+      : inferredDefaults?.research_questions || [`Quali organizzazioni soddisfano: ${originalQuery}?`],
     source_plan: sourcePlanForCommercialHypothesis(
       raw.source_plan,
       originalQuery,
@@ -763,7 +1282,7 @@ export function normalizeMiraxQueryPlan(
     commercial_hypothesis,
     ranking_policy,
     user_message: raw.user_message?.trim() || null,
-    reasoning: raw.reasoning?.trim() || null,
+    reasoning: inferredDefaults?.reasoning || raw.reasoning?.trim() || null,
   }
 
   if (!planHasExecutableTarget(plan) || confidence < 0.15) {
@@ -782,6 +1301,7 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
   const query = userInput.trim()
   const spec = parseSignalIntentHeuristic(query)
   const commercial_hypothesis = inferCommercialHypothesis(query)
+  const sellerDefaults = sellerPlaybookDefaults(query, commercial_hypothesis)
   let sector = String(spec.category || spec.sector_keywords?.[0] || '').trim()
   let location = String(spec.location || '').trim()
   const economicSignals = inferEconomicIntentSignals(query)
@@ -793,10 +1313,10 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
     (spec.technical_filters || {}) as Record<string, unknown>,
   )
 
-  if (commercial_hypothesis) {
-    sector = 'PMI B2B con team commerciale in espansione'
-    location = 'Italia'
-    required_signals = normalizeSignals(['hiring', 'expansion'])
+  if (sellerDefaults) {
+    sector = sellerDefaults.sector
+    location = sellerDefaults.location
+    required_signals = normalizeSignals(sellerDefaults.signals)
   }
 
   if (!sector && (_heuristicLooksAbstract(query) || economicSignals.length > 0)) {
@@ -823,16 +1343,12 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
     technical_filters,
     extraction_schema: extractionFromQuery(query),
     confidence: planHasExecutableTarget({ sector, location, required_signals, technical_filters }) ? 0.45 : 0.1,
-    intent_summary: commercial_hypothesis
-      ? 'PMI italiane B2B con investimento commerciale verificato: SDR/BDR, outbound, prospecting o sviluppo nuovi clienti.'
+    intent_summary: sellerDefaults
+      ? sellerDefaults.summary
       : spec.intent_summary || `Ricerca euristica: ${query.slice(0, 100)}`,
     parse_source: 'heuristic',
-    research_questions: commercial_hypothesis
-      ? [
-          'Quali PMI italiane stanno investendo adesso in sviluppo commerciale o outbound?',
-          'Quale annuncio o fonte prova SDR, BDR, prospecting, pipeline o acquisizione nuovi clienti?',
-          'Quanto e recente il segnale e chi guida Sales/Revenue nell azienda?',
-        ]
+    research_questions: sellerDefaults
+      ? sellerDefaults.research_questions
       : [`Quali organizzazioni soddisfano: ${query}?`],
     source_plan: sourcePlanForCommercialHypothesis(
       undefined,
@@ -848,8 +1364,8 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
     },
     commercial_hypothesis,
     ranking_policy,
-    reasoning: commercial_hypothesis
-      ? 'Seller-to-buyer reasoning: offerta lead generation -> costo prospecting manuale -> segnali sales hiring/outbound.'
+    reasoning: sellerDefaults
+      ? sellerDefaults.reasoning
       : spec.reasoning || 'Parser euristico offline.',
   }
 
@@ -865,99 +1381,204 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
 }
 
 async function callOpenAiQueryPlan(query: string): Promise<RawToolPlan | null> {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) return null
-
-  const model = process.env.UQE_OPENAI_MODEL || process.env.SEMANTIC_OPENAI_MODEL || 'gpt-5.5'
-
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      max_tokens: 900,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: `Query utente:\n${query}` },
-      ],
-      tools: [OPENAI_TOOL_SCHEMA],
-      tool_choice: { type: 'function', function: { name: MIRAX_QUERY_PLAN_TOOL_NAME } },
-    }),
-    signal: AbortSignal.timeout(28_000),
-  })
-
-  if (!res.ok) {
-    console.warn('[uqe-planner] OpenAI HTTP', res.status)
-    return null
-  }
-
-  const data = (await res.json()) as {
-    choices?: Array<{
-      message?: {
-        tool_calls?: Array<{ function?: { name?: string; arguments?: string } }>
-      }
-    }>
-  }
-
-  const toolCall = data.choices?.[0]?.message?.tool_calls?.find(
-    (tc) => tc.function?.name === MIRAX_QUERY_PLAN_TOOL_NAME,
-  )
-  if (!toolCall?.function?.arguments) return null
-
-  try {
-    return JSON.parse(toolCall.function.arguments) as RawToolPlan
-  } catch {
-    return null
-  }
+  return null
 }
 
-async function callAnthropicQueryPlan(query: string): Promise<RawToolPlan | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return null
+function sourceClassLane(sourceClass: string): UqeSourceLane {
+  const value = sourceClass.toLowerCase()
+  // A municipal register is a regulatory/permit source, not a procurement
+  // portal. Treating it as procurement silently changed expansion signals into
+  // tender queries and spent budget on semantically unrelated pages.
+  if (/municipal/.test(value)) return 'regulatory'
+  if (/procurement|tender|appalt/.test(value)) return 'public_procurement'
+  if (/registry|register|camera_commercio/.test(value)) return 'public_registry'
+  if (/career|job|hiring/.test(value)) return 'job_market'
+  if (/ad_library|advert|google_ads|meta_ads/.test(value)) return 'ads'
+  if (/technology|stack|builtwith/.test(value)) return 'technology'
+  if (/regulat|compliance/.test(value)) return 'compliance'
+  if (/news|press|publication/.test(value)) return 'news'
+  if (/event|trade_fair|conference/.test(value)) return 'events'
+  return 'web_evidence'
+}
 
-  const model = process.env.UQE_ANTHROPIC_MODEL || process.env.SEMANTIC_MODEL || 'claude-sonnet-4-20250514'
+function canonicalLaneQueryTemplates(
+  lane: UqeSourceLane,
+  requiredSignals: string[],
+  plan: CommercialSearchPlan,
+): string[] {
+  const signalSet = new Set(requiredSignals)
+  if (lane === 'job_market') {
+    const roleClause = signalSet.has('hiring_technology')
+      ? '(developer OR sviluppatore OR "software engineer" OR "data engineer" OR cybersecurity)'
+      : signalSet.has('hiring_sales')
+        ? '(sales OR commerciale OR venditore OR "account manager" OR "business developer")'
+        : signalSet.has('hiring_marketing')
+          ? '(marketing OR growth OR SEO OR content OR advertising)'
+          : signalSet.has('hiring_operational')
+            ? '(operai OR autisti OR magazzinieri OR installatori OR manutentori OR tecnici)'
+            : '("ruoli aperti" OR assunzioni OR "ricerca personale")'
+    return [
+      `site:.it ("lavora con noi" OR careers OR "posizioni aperte") ${roleClause} ("Srl" OR "PMI" OR azienda) {location} -site:indeed.it -site:infojobs.it -site:linkedin.com`,
+      `(site:indeed.it OR site:infojobs.it OR site:linkedin.com/jobs) ${roleClause} ("Srl" OR "PMI" OR azienda) {location}`,
+    ]
+  }
+  if (signalSet.has('production_expansion')) {
+    if (lane === 'regulatory') {
+      return [
+        '("albo pretorio" OR SUAP OR "sportello unico attività produttive" OR site:gov.it) ("ampliamento stabilimento" OR "nuovo impianto" OR "aumento capacità produttiva" OR "autorizzazione unica") (impresa OR "Srl") {location}',
+      ]
+    }
+    if (lane === 'news') {
+      return [
+        '("ampliamento produttivo" OR "nuovo stabilimento" OR "nuovo impianto" OR "aumento capacità produttiva") ("comunicato stampa" OR newsroom OR notizie) ("Srl" OR "PMI") {location}',
+      ]
+    }
+    return [
+      'site:.it ("ampliamento produttivo" OR "nuovo stabilimento" OR "nuovo impianto" OR "aumento capacità produttiva") ("Srl" OR "PMI") {location}',
+    ]
+  }
+  if (signalSet.has('new_location')) {
+    return [
+      '("nuova sede" OR "apertura filiale" OR "nuovo stabilimento" OR trasferimento OR inaugura) ("Srl" OR "PMI") {location}',
+    ]
+  }
+  if (signalSet.has('cybersecurity_exposure')) {
+    return [
+      'site:.it (ecommerce OR e-commerce OR webmail OR "area clienti" OR "servizi esposti") ("Srl" OR "PMI") {location}',
+    ]
+  }
+  if (signalSet.has('regulatory_change')) {
+    return [
+      '("nuovi requisiti" OR "adeguamento normativo" OR "obbligo normativo" OR autorizzazione) ("Srl" OR "PMI") {location}',
+    ]
+  }
+  if (signalSet.has('technology_migration') || signalSet.has('manual_processes')) {
+    return [
+      '("migrazione software" OR "nuovo ERP" OR "nuovo CRM" OR "digital transformation" OR "processi manuali") ("Srl" OR "PMI") {location}',
+    ]
+  }
+  if (lane === 'public_procurement') {
+    return ['("appalto aggiudicato" OR "gara aggiudicata" OR "contratto affidato") ("Srl" OR impresa) {location}']
+  }
+  if (lane === 'public_registry') {
+    return ['("variazione societaria" OR "nuova sede" OR costituita OR "aumento di capitale") ("Srl" OR "PMI") {location}']
+  }
+  if (lane === 'technology') {
+    return ['("migrazione software" OR "nuova piattaforma" OR "digital transformation" OR "processi manuali") ("Srl" OR "PMI") {location}']
+  }
+  if (lane === 'ads') {
+    return ['("inserzioni attive" OR "Meta Ads" OR "Google Ads" OR "conversion tracking") ("Srl" OR "PMI") {location}']
+  }
+  if (lane === 'compliance') {
+    return ['("adeguamento normativo" OR compliance OR certificazione OR autorizzazione) ("Srl" OR "PMI") {location}']
+  }
+  if (lane === 'news') {
+    return ['("comunicato stampa" OR newsroom OR "stampa locale") ("Srl" OR "PMI") {location}']
+  }
+  return [`${plan.raw_query} ("Srl" OR "PMI") {location}`]
+}
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 900,
-      temperature: 0,
-      system: SYSTEM_PROMPT,
-      tools: [ANTHROPIC_TOOL_SCHEMA],
-      tool_choice: { type: 'tool', name: MIRAX_QUERY_PLAN_TOOL_NAME },
-      messages: [{ role: 'user', content: `Query utente:\n${query}` }],
+export function canonicalPlanToLegacy(plan: CommercialSearchPlan): MiraxQueryPlan {
+  const requiredSignals = normalizeSignals(plan.signal_policy.required_signals)
+  const preferredCompatible = plan.source_policy.preferred_source_classes.filter((source) =>
+    requiredSignals.some((signal) => sourceSupportsSignal(source, signal)),
+  )
+  const allowedCompatible = plan.source_policy.allowed_source_classes.filter((source) =>
+    requiredSignals.some((signal) => sourceSupportsSignal(source, signal)),
+  )
+  const preferredSources = [...preferredCompatible]
+  for (const signal of requiredSignals) {
+    if (preferredSources.some((source) => sourceSupportsSignal(source, signal))) continue
+    const compatibleFallback = allowedCompatible.find((source) => sourceSupportsSignal(source, signal))
+    if (compatibleFallback) preferredSources.push(compatibleFallback)
+  }
+  const grouped = new Map<UqeSourceLane, string[]>()
+  for (const sourceClass of preferredSources) {
+    const lane = sourceClassLane(sourceClass)
+    grouped.set(lane, [...new Set([...(grouped.get(lane) || []), sourceClass])])
+  }
+  const firstHypothesis = plan.commercial_hypotheses[0]
+  const signalAges = Object.values(plan.signal_policy.maximum_age_days_by_signal)
+  const maxSignalAgeDays = signalAges.length ? Math.min(3650, ...signalAges) : 365
+  const sector = plan.target.industries.join(', ') || plan.target.entity_types.join(', ') || 'PMI'
+  const location = plan.target.geographies.join(', ') || 'Italia'
+  const legacy: MiraxQueryPlan = {
+    original_query: plan.raw_query,
+    search_strategy: inferStrategyFromQuery(plan.raw_query, sector, location, requiredSignals),
+    sector,
+    location,
+    required_signals: requiredSignals,
+    technical_filters: {},
+    extraction_schema: extractionFromQuery(plan.raw_query),
+    confidence: Math.max(0.15, 1 - plan.ambiguity.score),
+    intent_summary: `${plan.seller.offer_description} → ${firstHypothesis.implied_need}`,
+    parse_source: 'llm',
+    canonical_plan: plan,
+    research_questions: plan.commercial_hypotheses.map(
+      (item) => `Quale evidenza osservabile dimostra ${item.triggering_events.join(' / ')} per ${item.buyer_problem}?`,
+    ),
+    source_plan: [...grouped.entries()].map(([lane, sourceTypes], index) => {
+      const laneSignals = requiredSignals.filter((signal) =>
+        sourceTypes.some((source) => sourceSupportsSignal(source, signal)),
+      )
+      return {
+        lane,
+        source_types: sourceTypes,
+        query_templates: canonicalLaneQueryTemplates(lane, laneSignals, plan),
+        expected_evidence: laneSignals,
+        priority: Math.max(1, 100 - index * 10),
+        llm_required: true,
+      }
     }),
-    signal: AbortSignal.timeout(28_000),
-  })
-
-  if (!res.ok) {
-    console.warn('[uqe-planner] Anthropic HTTP', res.status)
-    return null
+    evidence_policy: {
+      require_source_url: plan.evidence_policy.require_source_url,
+      require_official_domain: plan.evidence_policy.require_official_domain,
+      min_signal_confidence: plan.evidence_policy.minimum_evidence_confidence,
+      max_age_days: maxSignalAgeDays,
+    },
+    commercial_hypothesis: {
+      offer: plan.seller.offer_description,
+      target_profile: [
+        ...plan.target.industries,
+        ...plan.target.company_sizes,
+        ...plan.target.required_attributes,
+      ],
+      buyer_pains: plan.commercial_hypotheses.map((item) => item.buyer_problem),
+      buying_signals: plan.commercial_hypotheses.flatMap((item) => item.signals),
+      hiring_roles: [],
+      decision_maker_roles: plan.seller.preferred_buyer_roles,
+      disqualifiers: [
+        ...plan.target.excluded_attributes,
+        ...plan.target.excluded_entities,
+        ...plan.signal_policy.negative_signals,
+      ],
+    },
+    ranking_policy: {
+      signal_match_mode: requiredSignals.length > 1 ? 'any' : 'all',
+      max_signal_age_days: maxSignalAgeDays,
+      require_concrete_evidence: true,
+      weights: {
+        intent_fit: plan.ranking_policy.weight_buyer_fit + plan.ranking_policy.weight_need_gap,
+        signal_strength: plan.ranking_policy.weight_signal_strength,
+        recency: plan.ranking_policy.weight_freshness,
+        evidence_quality: plan.ranking_policy.weight_evidence_confidence,
+        contactability: plan.ranking_policy.weight_contactability,
+      },
+    },
+    user_message: null,
+    reasoning: `Canonical commercial plan ${plan.schema_version}; prompt ${plan.planner_metadata.prompt_version}.`,
   }
-
-  const data = (await res.json()) as {
-    content?: Array<{ type?: string; name?: string; input?: RawToolPlan }>
-  }
-
-  const block = data.content?.find((c) => c.type === 'tool_use' && c.name === MIRAX_QUERY_PLAN_TOOL_NAME)
-  return block?.input ?? null
+  return applyRoutingGuards(legacy, plan.raw_query)
 }
 
 /**
  * Piano unico da linguaggio naturale — Tool Calling LLM + fallback euristico.
  * Non ritorna mai un piano "vuoto silenzioso": fallback esplicito o errore.
  */
-export async function buildMiraxQueryPlan(userInput: string): Promise<MiraxQueryPlan> {
+export async function buildMiraxQueryPlan(
+  userInput: string,
+  options: CommercialIntentCompilerOptions = {},
+): Promise<MiraxQueryPlan> {
   const query = userInput.trim()
   if (!query) {
     throw new UqePlannerError('Query vuota.', 'UQE_EMPTY_QUERY')
@@ -967,17 +1588,17 @@ export async function buildMiraxQueryPlan(userInput: string): Promise<MiraxQuery
     throw new UqePlannerError('Query troppo lunga (max 2000 caratteri).', 'UQE_QUERY_TOO_LONG')
   }
 
-  let raw: RawToolPlan | null = null
-  const parseSource: UqeParseSource = 'llm'
-
-  raw = await callOpenAiQueryPlan(query)
-  if (!raw) {
-    raw = await callAnthropicQueryPlan(query)
+  const contradictions = detectQueryContradictions(query)
+  if (contradictions.length > 0) {
+    return createFallbackPlan(
+      query,
+      'La richiesta contiene vincoli incompatibili. Correggi territorio o dimensione aziendale prima di avviare la ricerca.',
+      'fallback',
+    )
   }
 
-  if (raw) {
-    return normalizeMiraxQueryPlan(raw, query, parseSource)
-  }
+  const canonicalPlan = await compileCommercialSearchPlan(query, options)
+  if (canonicalPlan) return canonicalPlanToLegacy(canonicalPlan)
 
   const heuristic = buildHeuristicMiraxQueryPlan(query)
   if (heuristic.search_strategy === 'fallback') {

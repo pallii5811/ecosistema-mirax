@@ -22,10 +22,18 @@ logger = logging.getLogger("agentic_gap_fill")
 AGENTIC_TIMEOUT_SEC = int(os.getenv("AGENTIC_GAP_FILL_TIMEOUT_SEC", "7200") or "7200")
 STREAM_BATCH_SIZE = int(os.getenv("AGENTIC_STREAM_BATCH_SIZE", "1") or "1")
 AGENTIC_MAX_SCRAPE_PAGES = int(os.getenv("AGENTIC_MAX_SCRAPE_PAGES", "0") or "0")
-AGENTIC_PAGE_BUDGET_FACTOR = float(os.getenv("AGENTIC_PAGE_BUDGET_FACTOR", "5") or "5")
-AGENTIC_PAGE_BUDGET_MIN = int(os.getenv("AGENTIC_PAGE_BUDGET_MIN", "50") or "50")
-AGENTIC_PAGE_BUDGET_HARD_CAP = int(os.getenv("AGENTIC_PAGE_BUDGET_HARD_CAP", "20000") or "20000")
-AGENTIC_MAX_EMPTY_ROUNDS = int(os.getenv("AGENTIC_MAX_EMPTY_ROUNDS", "3") or "3")
+AGENTIC_PAGE_BUDGET_FACTOR = float(os.getenv("AGENTIC_PAGE_BUDGET_FACTOR", "12") or "12")
+AGENTIC_PAGE_BUDGET_MIN = int(os.getenv("AGENTIC_PAGE_BUDGET_MIN", "80") or "80")
+AGENTIC_PAGE_BUDGET_HARD_CAP = int(os.getenv("AGENTIC_PAGE_BUDGET_HARD_CAP", "100000") or "100000")
+AGENTIC_MAX_EMPTY_ROUNDS = int(os.getenv("AGENTIC_MAX_EMPTY_ROUNDS", "5") or "5")
+AGENTIC_MAX_QUERIES_PER_ROUND = int(os.getenv("AGENTIC_MAX_QUERIES_PER_ROUND", "12") or "12")
+AGENTIC_MAX_URLS_PER_QUERY = int(os.getenv("AGENTIC_MAX_URLS_PER_QUERY", "40") or "40")
+AGENTIC_REQUIRE_SEARCH_PROVIDER = os.getenv("AGENTIC_REQUIRE_SEARCH_PROVIDER", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def compute_agentic_page_budget(remaining_target: int) -> int:
@@ -47,6 +55,16 @@ def build_agentic_exhaustion_message(found: int, requested: int) -> str:
 def build_agentic_completion_message(found: int, requested: int, stop_reason: str) -> str:
     if found >= requested:
         return f"Target raggiunto: trovati {found} lead verificabili su {requested} richiesti."
+    if stop_reason == "provider_unavailable":
+        return (
+            "Ricerca non eseguita: provider search/AI non disponibile. "
+            "Configura SERPER_API_KEY o BRAVE_SEARCH_API_KEY oppure riabilita un provider AI con budget cap."
+        )
+    if stop_reason == "provider_rate_limited":
+        return (
+            "Ricerca interrotta: provider AI/search in rate-limit o credito insufficiente. "
+            "Nessun retry costoso eseguito dopo il blocco provider."
+        )
     if stop_reason == "sources_exhausted":
         return build_agentic_exhaustion_message(found, requested)
     if stop_reason == "time_budget":
@@ -94,6 +112,9 @@ def build_mirax_query_plan_from_job(
             hiring_roles.append(role.strip())
 
     uqe_plan = intent.get("uqe_plan") if isinstance(intent.get("uqe_plan"), dict) else {}
+    canonical_plan = uqe_plan.get("canonical_plan") if isinstance(uqe_plan.get("canonical_plan"), dict) else {}
+    previous_stats = intent.get("agentic_stats") if isinstance(intent.get("agentic_stats"), dict) else {}
+    previous_cost = previous_stats.get("cost_governor") if isinstance(previous_stats.get("cost_governor"), dict) else {}
     commercial_hypothesis = (
         uqe_plan.get("commercial_hypothesis")
         if isinstance(uqe_plan.get("commercial_hypothesis"), dict)
@@ -175,6 +196,8 @@ def build_mirax_query_plan_from_job(
         "confidence": float(intent.get("confidence") or uqe_plan.get("confidence") or 0.5),
         "intent_summary": str(intent.get("intent_summary") or uqe_plan.get("intent_summary") or query).strip(),
         "parse_source": "worker",
+        "canonical_plan": canonical_plan,
+        "_prior_cost_eur": float(previous_cost.get("committed_cost_eur") or 0.0),
     }
 
 
@@ -185,6 +208,8 @@ def _normalize_domain(url: str) -> str:
 
 def _normalize_signal_name(value: Any) -> str:
     signal = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if signal.startswith("hiring_"):
+        return "hiring"
     aliases = {
         "funding": "funding_received",
         "financing": "funding_received",
@@ -223,6 +248,13 @@ def _iron_dome_blocked_host(domain: str) -> bool:
     d = (domain or "").lower().strip()
     if not d:
         return True
+    try:
+        from .portal_blacklist import is_blacklisted_domain
+
+        if is_blacklisted_domain(d):
+            return True
+    except Exception:
+        pass
     for root in _IRON_DOME_PORTAL_ROOTS + _IRON_DOME_GIANT_ROOTS:
         if root in d:
             return True
@@ -235,7 +267,7 @@ def is_valid_b2b_lead(name: str, url: str) -> bool:
     False = scarta in silenzio (log [IRON DOME]) senza bloccare il worker.
     """
     from .domain_resolver import validate_url_reachable
-    from .portal_blacklist import is_blacklisted_name, normalize_domain
+    from .portal_blacklist import is_blacklisted_domain, is_blacklisted_name, normalize_domain
 
     label = (name or "").strip()
     target = (url or "").strip()
@@ -261,6 +293,169 @@ def is_valid_b2b_lead(name: str, url: str) -> bool:
     return True
 
 
+def _name_tokens_for_evidence(name: str) -> List[str]:
+    stop = {
+        "srl", "sr", "spa", "s", "p", "a", "group", "italia", "italy", "the", "and",
+        "societa", "società", "cooperativa", "company",
+    }
+    tokens = []
+    for token in re.findall(r"[a-z0-9à-öø-ÿ]+", (name or "").lower()):
+        if len(token) >= 4 and token not in stop:
+            tokens.append(token)
+    return tokens[:6]
+
+
+def _portal_evidence_mentions_company(name: str, extracted: Dict[str, Any]) -> bool:
+    haystack = " ".join(
+        str(extracted.get(key) or "")
+        for key in ("evidence", "signal_detail", "why_now", "source_url")
+    ).lower()
+    tokens = _name_tokens_for_evidence(name)
+    if not tokens:
+        return False
+    return any(token in haystack for token in tokens)
+
+
+_NON_TARGET_ORG_PATTERNS = tuple(
+    re.compile(pattern, re.I)
+    for pattern in (
+        r"^\s*(business|sales|account|inside)\s+(development|representative|executive)\s*$",
+        r"^\s*(commerciale|venditore|sales|marketing|developer|sviluppatore)\s*$",
+        r"\b(comune|municipio|regione|provincia|ministero|agenzia\s+delle\s+entrate)\b",
+        r"\b(universit[aà]|politecnico|ospedale|asl|ats|azienda\s+sanitaria)\b",
+        r"\b(camera\s+di\s+commercio|registro\s+imprese|infocamere|anac)\b",
+        r"\b(associazione\s+di\s+categoria|confindustria|confcommercio|confartigianato)\b",
+    )
+)
+_ACTIVE_HIRING_EVIDENCE_RE = re.compile(
+    r"\b(ricerca|cerchiamo|cerca|assume|assunzion|seleziona|selezioni|"
+    r"posizion[ei]\s+apert[ae]|opportunit[aà]\s+lavorativ|lavora\s+con\s+noi|"
+    r"jobs?|careers?|stage\s+con\s+finalit[aà]\s+di\s+inserimento|"
+    r"partita\s+iva|contratto|candidati|invia\s+la\s+tua\s+candidatura)\b",
+    re.I,
+)
+_STALE_HIRING_CONTEXT_RE = re.compile(
+    r"\b(career\s+story|storia|intervista|case\s+study|articolo|blog|press|news)\b",
+    re.I,
+)
+_ACTIVE_MARKETING_INVESTMENT_RE = re.compile(
+    r"\b(meta\s+ads?|facebook\s+ads?|google\s+ads?|ad\s+library|inserzion[ei]\s+attiv[ae]|"
+    r"campagn[ae]\s+(?:marketing|pubblicitarie|ads?)|landing\s+page|lead\s+ads?|"
+    r"budget\s+(?:marketing|ads?|pubblicit[aà])|paid\s+media|remarketing|"
+    r"pixel|conversion\s+tracking|richiedi\s+(?:demo|preventivo|informazioni))\b",
+    re.I,
+)
+_NEGATIVE_MARKETING_ONLY_RE = re.compile(
+    r"\b(no|non|senza|manca|assente|nessun[oa]?)\s+"
+    r"(?:meta\s+)?(?:pixel|ads?|campagn[ae]|tracking|conversioni?|pubblicit[aÃ ])\b",
+    re.I,
+)
+_STRONG_ACTIVE_MARKETING_RE = re.compile(
+    r"\b(meta\s+ads?|facebook\s+ads?|google\s+ads?|ad\s+library|libreria\s+inserzion[ei]|"
+    r"inserzion[ei]\s+attiv[ae]|campagn[ae]\s+(?:marketing|pubblicitarie|ads?)|"
+    r"budget\s+(?:marketing|ads?|pubblicit[aÃ ])|paid\s+media|remarketing|"
+    r"lead\s+ads?|conversion\s+tracking|landing\s+page\s+(?:ads?|campagn[ae]|lead|conversion))\b",
+    re.I,
+)
+_MARKETING_SERVICE_PROVIDER_RE = re.compile(
+    r"\b("
+    r"agenzia\s+(?:web|marketing|digital|social|seo|comunicazione)|"
+    r"web\s+agency|digital\s+agency|seo\s+agency|marketing\s+agency|"
+    r"servizi\s+(?:di\s+)?(?:web\s+)?marketing|consulenza\s+(?:web\s+)?marketing|"
+    r"gestione\s+(?:pagina\s+facebook|social|campagne|google\s+ads|facebook\s+ads|meta\s+ads)|"
+    r"social\s+media\s+marketing|performance\s+marketing|"
+    r"corso\s+(?:di\s+)?marketing|guida\s+(?:a|al|alla|su)|"
+    r"come\s+funziona|cos['’]?\s*[eè]"
+    r")\b",
+    re.I,
+)
+_MARKETING_CLIENT_EVIDENCE_RE = re.compile(
+    r"\b(case\s+study|success\s+story|portfolio|risultati\s+ottenuti|"
+    r"abbiamo\s+(?:aiutato|realizzato|gestito)|campagna\s+per)\b",
+    re.I,
+)
+
+
+def _has_active_marketing_investment_evidence(text: str) -> bool:
+    """Positive spend/funnel evidence only; do not treat "no pixel" as spend."""
+    blob = re.sub(r"\s+", " ", text or "").strip()
+    if not blob:
+        return False
+    if _STRONG_ACTIVE_MARKETING_RE.search(blob):
+        return True
+    has_cta = re.search(r"\brichiedi\s+(?:demo|preventivo|informazioni)\b", blob, re.I)
+    has_funnel = re.search(r"\b(ads?|campagn[ae]|paid|funnel|conversion|landing)\b", blob, re.I)
+    if has_cta and has_funnel and not _NEGATIVE_MARKETING_ONLY_RE.search(blob):
+        return True
+    return False
+
+
+def _looks_like_marketing_provider_noise(text: str) -> bool:
+    blob = re.sub(r"[^0-9A-Za-zÀ-ÿ]+", " ", text or "").strip()
+    blob = re.sub(r"\s+", " ", blob)
+    if not blob:
+        return False
+    if not _MARKETING_SERVICE_PROVIDER_RE.search(blob):
+        return False
+    return not _MARKETING_CLIENT_EVIDENCE_RE.search(blob)
+
+
+def _looks_like_non_target_org_name(name: str) -> bool:
+    label = (name or "").strip()
+    if not label:
+        return True
+    if len(label) < 3:
+        return True
+    return any(rx.search(label) for rx in _NON_TARGET_ORG_PATTERNS)
+
+
+def _quality_contract_snapshot(
+    *,
+    evidence: str,
+    source_url: str,
+    website: str,
+    required: Set[str],
+    satisfied: Set[str],
+    match_mode: str,
+    identity: Dict[str, Any],
+) -> Dict[str, Any]:
+    coverage = (
+        1.0
+        if match_mode == "any" and satisfied
+        else len(satisfied) / len(required)
+        if required
+        else 1.0
+    )
+    identity_status = str(identity.get("status") or "").strip().lower()
+    identity_confidence = float(identity.get("confidence") or 0.0)
+    source_present = bool(source_url)
+    website_present = bool(website)
+    evidence_present = len((evidence or "").strip()) >= 10
+    score = round(
+        100
+        * (
+            0.32 * min(1.0, coverage)
+            + 0.26 * (1.0 if identity_status == "verified" else 0.75 if identity_status == "probable" else 0.0)
+            + 0.18 * min(1.0, identity_confidence)
+            + 0.14 * (1.0 if evidence_present else 0.0)
+            + 0.10 * (1.0 if source_present and website_present else 0.5 if source_present or website_present else 0.0)
+        )
+    )
+    return {
+        "version": 1,
+        "score": max(0, min(100, score)),
+        "evidence_present": evidence_present,
+        "source_url_present": source_present,
+        "official_domain_present": website_present,
+        "domain_status": identity_status or None,
+        "domain_confidence": round(identity_confidence, 3),
+        "required_signals": sorted(required),
+        "satisfied_signals": sorted(satisfied),
+        "signal_coverage": round(min(1.0, coverage), 3),
+        "policy": "PMI/local-business-first; reject famous enterprises, portals, generic roles and non-target public entities.",
+    }
+
+
 def prepare_agentic_extracted_item(
     extracted: Dict[str, Any],
     *,
@@ -277,12 +472,20 @@ def prepare_agentic_extracted_item(
         return None
 
     from .domain_resolver import resolve_company_identity
-    from .portal_blacklist import is_blacklisted_name
+    from .portal_blacklist import is_blacklisted_domain, is_blacklisted_name, is_source_portal_url, normalize_domain
 
-    if is_blacklisted_name(name):
+    if is_blacklisted_name(name) or _looks_like_non_target_org_name(name):
         return None
 
     out = dict(extracted)
+    source_url = str(out.get("source_url") or "").strip()
+    evidence = str(out.get("evidence") or "").strip()
+    if len(evidence) < 10:
+        logger.info("prepare_agentic: missing/weak evidence for %r", name[:60])
+        return None
+    if is_source_portal_url(source_url) and not _portal_evidence_mentions_company(name, out):
+        logger.info("prepare_agentic: portal evidence does not mention company %r", name[:60])
+        return None
     required = {
         _normalize_signal_name(value)
         for value in out.get("_required_signals") or []
@@ -296,10 +499,53 @@ def prepare_agentic_extracted_item(
     if required:
         satisfied = _satisfied_required_signals(required, matched)
         match_mode = str(out.get("_signal_match_mode") or "all").strip().lower()
+        if "hiring" in required and "hiring" not in matched:
+            logger.info("prepare_agentic: required hiring signal missing for %r", name[:60])
+            return None
+        if "investing_marketing" in required and not matched.intersection(
+            {"investing_marketing", "meta_ads_started", "google_ads_started"}
+        ):
+            logger.info("prepare_agentic: required marketing investment signal missing for %r", name[:60])
+            return None
         signal_ok = bool(satisfied) if match_mode == "any" else len(satisfied) == len(required)
         if not signal_ok:
             logger.info("prepare_agentic: evidence does not match required signals for %r", name[:60])
             return None
+        if "investing_marketing" in satisfied or "investing_marketing" in required:
+            marketing_blob = " ".join(
+                str(value or "")
+                for value in (
+                    out.get("signal_detail"),
+                    evidence,
+                    source_url,
+                    out.get("why_now"),
+                    out.get("pitch_angle"),
+                )
+            )
+            if not _has_active_marketing_investment_evidence(marketing_blob):
+                logger.info("prepare_agentic: weak marketing investment evidence for %r", name[:60])
+                return None
+            if _looks_like_marketing_provider_noise(marketing_blob):
+                logger.info("prepare_agentic: marketing provider page noise for %r", name[:60])
+                return None
+        if "hiring" in satisfied or "hiring" in required:
+            hiring_blob = " ".join(
+                str(value or "")
+                for value in (
+                    out.get("hiring_title"),
+                    evidence,
+                    source_url,
+                    out.get("why_now"),
+                )
+            )
+            active_hiring = bool(_ACTIVE_HIRING_EVIDENCE_RE.search(hiring_blob))
+            stale_context = bool(_STALE_HIRING_CONTEXT_RE.search(hiring_blob))
+            years = [int(value) for value in re.findall(r"\b20\d{2}\b", hiring_blob)]
+            current_year = datetime.now(timezone.utc).year
+            old_year_only = bool(years) and max(years) < current_year - 1
+            if not active_hiring or (stale_context and old_year_only):
+                logger.info("prepare_agentic: weak/stale hiring evidence for %r", name[:60])
+                return None
     ranking_policy = out.get("_ranking_policy") if isinstance(out.get("_ranking_policy"), dict) else {}
     evidence_date = str(out.get("evidence_date") or "").strip()
     if evidence_date:
@@ -319,8 +565,31 @@ def prepare_agentic_extracted_item(
     if not identity:
         logger.info("prepare_agentic: no resolvable domain for %r", name[:60])
         return None
-    out["website"] = str(identity.get("url") or "")
+    resolved_website = str(identity.get("url") or "")
+    resolved_domain = normalize_domain(resolved_website)
+    if _iron_dome_blocked_host(resolved_domain) or is_blacklisted_domain(resolved_domain) or is_blacklisted_name(name):
+        logger.info("prepare_agentic: rejected blacklisted resolved identity %r %s", name[:60], resolved_domain)
+        return None
+    identity_status = str(identity.get("status") or "").strip().lower()
+    if identity_status != "verified":
+        logger.info("prepare_agentic: weak domain identity %r status=%s", name[:60], identity_status)
+        return None
+    contract = _quality_contract_snapshot(
+        evidence=evidence,
+        source_url=source_url,
+        website=resolved_website,
+        required=required,
+        satisfied=satisfied if required else matched,
+        match_mode=match_mode if required else "all",
+        identity=identity,
+    )
+    min_contract_score = 82 if required else 70
+    if contract["score"] < min_contract_score:
+        logger.info("prepare_agentic: quality contract failed %r score=%s", name[:60], contract["score"])
+        return None
+    out["website"] = resolved_website
     out["domain_verification"] = identity
+    out["lead_quality_contract"] = contract
     out["matched_signals"] = sorted(matched)
     return out
 
@@ -413,6 +682,19 @@ def extracted_to_lead_stub(
         kw in ev_lower
         for kw in ("finanziament", "round di", "investimento", "capitale", "seed", "serie a", "fondo")
     )
+    has_marketing_investment = bool(
+        {"investing_marketing", "meta_ads_started", "google_ads_started"} & set(signal_list)
+    ) and _has_active_marketing_investment_evidence(
+        " ".join(
+            str(value or "")
+            for value in (
+                evidence,
+                extracted.get("signal_detail"),
+                extracted.get("why_now"),
+                extracted.get("pitch_angle"),
+            )
+        )
+    )
 
     business_signals: List[Dict[str, Any]] = []
     business_hiring_jobs: Optional[List[Dict[str, str]]] = None
@@ -463,6 +745,18 @@ def extracted_to_lead_stub(
             }
         )
 
+    if has_marketing_investment:
+        business_signals.append(
+            {
+                "type": "investing_marketing",
+                "status": "confirmed",
+                "label": "Investimento marketing verificato",
+                "source": "agentic_web_search",
+                "confidence": 0.88,
+                "evidence": evidence[:300] if evidence else None,
+            }
+        )
+
     structured_signal = extracted.get("structured_signal")
     if isinstance(structured_signal, dict) and structured_signal.get("type"):
         structured_type = str(structured_signal.get("type"))
@@ -471,10 +765,17 @@ def extracted_to_lead_stub(
 
     if not business_signals:
         for s in signal_list:
-            if s in {"hiring", "new_company", "funding_received"}:
+            if s in {"hiring", "new_company", "funding_received", "investing_marketing", "meta_ads_started", "google_ads_started"}:
                 continue
             business_signals.append(
-                {"type": s, "label": s, "source": "agentic_web_search", "confidence": 0.75}
+                {
+                    "type": s,
+                    "status": "confirmed" if evidence else "contextual",
+                    "label": s,
+                    "source": "agentic_web_search",
+                    "confidence": 0.75 if evidence else 0.45,
+                    "evidence": evidence[:300] if evidence else None,
+                }
             )
 
     city = str(extracted.get("city") or extracted.get("citta") or extracted.get("localita") or "").strip()
@@ -545,6 +846,8 @@ def extracted_to_lead_stub(
     evidence_confidence = 1.0 if evidence and source_url else 0.5 if evidence else 0.0
     query_match_score = round((coverage * 0.6 + domain_confidence * 0.25 + evidence_confidence * 0.15) * 100)
     stub["query_match_score"] = max(0, min(100, query_match_score))
+    if isinstance(extracted.get("lead_quality_contract"), dict):
+        stub["lead_quality_contract"] = extracted.get("lead_quality_contract")
     identity_status = str(verification.get("status") or "")
     stub["query_match_status"] = (
         "verified"
@@ -619,8 +922,9 @@ async def run_agentic_discovery(plan: Dict[str, Any], remaining_target: int) -> 
     """WebResearcher → DataExtractor (batch finale — legacy)."""
     collected: List[Dict[str, Any]] = []
 
-    def _collect(batch: List[Dict[str, Any]]) -> None:
+    def _collect(batch: List[Dict[str, Any]]) -> int:
         collected.extend(batch)
+        return len(batch)
 
     await run_agentic_discovery_streaming(
         plan,
@@ -631,7 +935,7 @@ async def run_agentic_discovery(plan: Dict[str, Any], remaining_target: int) -> 
     return collected
 
 
-OnBatchCallback = Callable[[List[Dict[str, Any]]], None]
+OnBatchCallback = Callable[[List[Dict[str, Any]]], Optional[int]]
 OnCheckpointCallback = Callable[[Dict[str, Any]], None]
 
 
@@ -704,6 +1008,8 @@ async def run_agentic_discovery_streaming(
     stats_out: Optional[Dict[str, Any]] = None,
     checkpoint: Optional[Dict[str, Any]] = None,
     on_checkpoint: Optional[OnCheckpointCallback] = None,
+    cost_client: Any = None,
+    search_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Pipeline streaming long-running: nuove query → scrape → estrai fino a target o esaurimento SERP.
@@ -721,6 +1027,7 @@ async def run_agentic_discovery_streaming(
     raw_signals_by_key: Dict[str, Set[str]] = {}
     all_leads: List[Dict[str, Any]] = []
     pending_flush: List[Dict[str, Any]] = []
+    accepted_leads = 0
     batch_size = max(1, min(batch_size, 20))
     restored = decode_agentic_checkpoint(plan, checkpoint)
     pages_scraped = int(restored["pages_scraped"])
@@ -730,10 +1037,29 @@ async def run_agentic_discovery_streaming(
     empty_rounds = 0
     stop_reason = "target_reached"
 
-    extractor = DataExtractor(plan, [])
+    from cost_governor import ResearchBudgetExceeded, ResearchCostGovernor
+    cost_governor = ResearchCostGovernor.from_plan(
+        plan,
+        remaining_target,
+        persistent_client=cost_client,
+        search_id=search_id,
+    )
+    from cost_context import set_current_cost_governor
+    set_current_cost_governor(cost_governor)
+    extractor = DataExtractor(plan, [], cost_governor=cost_governor)
+    strict_marketing_signal = bool(
+        {
+            _normalize_signal_name(value)
+            for value in plan.get("required_signals") or []
+            if _normalize_signal_name(value)
+        }.intersection({"investing_marketing", "meta_ads_started", "google_ads_started"})
+    )
     query_yield: Dict[str, Dict[str, int]] = {}
     base_search_queries: Optional[List[str]] = None
     search_query_generation_calls = 0
+
+    def _effective_found() -> int:
+        return accepted_leads if on_batch else len(all_leads)
 
     def _update_runtime_stats(reason: str) -> None:
         if stats_out is None:
@@ -741,7 +1067,8 @@ async def run_agentic_discovery_streaming(
         stats_out.update(
             {
                 "pages_scraped": pages_scraped,
-                "found": len(all_leads),
+                "found": _effective_found(),
+                "raw_found": len(all_leads),
                 "target": remaining_target,
                 "rounds": round_idx,
                 "page_budget": page_budget,
@@ -757,16 +1084,19 @@ async def run_agentic_discovery_streaming(
                         reverse=True,
                     )[:20]
                 ),
+                "cost_governor": cost_governor.snapshot(),
             }
         )
 
     def _flush_pending() -> None:
-        nonlocal pending_flush
+        nonlocal pending_flush, accepted_leads
         if not pending_flush or not on_batch:
             pending_flush = []
             return
         try:
-            on_batch(list(pending_flush))
+            accepted = on_batch(list(pending_flush))
+            if isinstance(accepted, int) and accepted > 0:
+                accepted_leads += accepted
         except Exception as exc:
             logger.warning("on_batch callback failed: %s", exc)
         pending_flush = []
@@ -788,15 +1118,68 @@ async def run_agentic_discovery_streaming(
             logger.warning("agentic checkpoint callback failed: %s", exc)
 
     structured_found = 0
+    if AGENTIC_REQUIRE_SEARCH_PROVIDER:
+        try:
+            from .search_serp import search_provider_status
+
+            provider_status = search_provider_status()
+            if not provider_status.get("configured"):
+                stop_reason = "provider_unavailable"
+                if stats_out is not None:
+                    stats_out.update(
+                        {
+                            "pages_scraped": pages_scraped,
+                            "found": 0,
+                            "raw_found": 0,
+                            "target": remaining_target,
+                            "rounds": round_idx,
+                            "page_budget": page_budget,
+                            "stop_reason": stop_reason,
+                            "unique_urls": len(shared_seen_urls),
+                            "structured_found": 0,
+                            "search_query_generation_calls": 0,
+                            "extraction": extractor.telemetry_snapshot(),
+                            "query_yield": {},
+                            "provider_status": provider_status,
+                            "exhausted": True,
+                        }
+                    )
+                logger.error("agentic discovery blocked: search provider unavailable status=%s", provider_status)
+                return []
+        except Exception as exc:
+            logger.warning("provider status check failed: %s", exc)
+    run_structured_lanes = True
+    structured_reservation_active = False
+    structured_reservation_eur = 0.0
+    normalized_required = {
+        _normalize_signal_name(value) for value in plan.get("required_signals") or []
+    }
+    if "hiring" in normalized_required:
+        structured_queries = min(10, max(2, len(plan.get("hiring_roles") or []) * 2))
+        structured_reservation_eur = structured_queries * 0.005
+        try:
+            structured_reservation = cost_governor.reserve(
+                "structured:hiring-search", "search_jobs", structured_reservation_eur
+            )
+            structured_reservation_active = structured_reservation.status == "reserved"
+            if not structured_reservation_active:
+                run_structured_lanes = False
+        except ResearchBudgetExceeded:
+            run_structured_lanes = False
+            logger.info("structured hiring lane skipped: insufficient hard budget")
     try:
         from .structured_lanes import discover_structured_leads
 
-        structured = await asyncio.wait_for(
-            discover_structured_leads(plan, remaining_target),
-            timeout=min(180.0, max(30.0, remaining_target * 0.2)),
+        structured = (
+            await asyncio.wait_for(
+                discover_structured_leads(plan, remaining_target),
+                timeout=min(180.0, max(30.0, remaining_target * 0.2)),
+            )
+            if run_structured_lanes
+            else []
         )
         for item in structured:
-            if len(all_leads) >= remaining_target or not isinstance(item, dict):
+            if _effective_found() >= remaining_target or not isinstance(item, dict):
                 break
             item_name = str(item.get("name") or "").strip()
             item_url = str(item.get("website") or "").strip()
@@ -832,13 +1215,76 @@ async def run_agentic_discovery_streaming(
     except Exception as exc:
         logger.warning("structured discovery lanes failed: %s", exc)
 
-    while len(all_leads) < remaining_target and pages_scraped < page_budget:
+    if structured_reservation_active:
+        try:
+            cost_governor.settle(
+                "structured:hiring-search",
+                structured_reservation_eur,
+                metadata={"outcome": "completed", "leads_found": structured_found},
+            )
+        except ResearchBudgetExceeded:
+            stop_reason = "budget_exhausted"
+            _save_checkpoint(stop_reason)
+            if stats_out is not None:
+                _update_runtime_stats(stop_reason)
+                stats_out["exhausted"] = True
+            return all_leads
+
+    while _effective_found() < remaining_target and pages_scraped < page_budget:
         round_idx += 1
         pages_left = page_budget - pages_scraped
-        max_queries = min(7, max(3, pages_left // 6))
-        max_urls = min(25, max(5, pages_left))
+        target_left = max(1, remaining_target - _effective_found())
+        if target_left <= 25:
+            desired_queries = 7
+        elif target_left <= 200:
+            desired_queries = 10
+        else:
+            desired_queries = 12
+        max_queries = min(
+            max(3, AGENTIC_MAX_QUERIES_PER_ROUND),
+            max(3, desired_queries, min(max(3, AGENTIC_MAX_QUERIES_PER_ROUND), max(1, pages_left // 6))),
+        )
+        max_urls = max(
+            1,
+            min(
+                max(1, AGENTIC_MAX_URLS_PER_QUERY),
+                max(1, (pages_left + max(max_queries, 1) - 1) // max(max_queries, 1)),
+            ),
+        )
+        # Reserve before scheduling external operations. Scale the research
+        # breadth down when the remaining hard budget cannot cover the plan.
+        search_unit_cost = max(0.0, float(os.getenv("MIRAX_SERP_COST_EUR_PER_QUERY", "0.005") or "0.005"))
+        crawl_unit_cost = max(0.0, float(os.getenv("MIRAX_CRAWL_COST_EUR_PER_PAGE", "0.0002") or "0.0002"))
+        crawl_reserve = max_urls * max_queries * crawl_unit_cost
+        affordable_queries = int(max(0.0, cost_governor.remaining_eur - crawl_reserve) / max(search_unit_cost, 0.000001))
+        max_queries = min(max_queries, affordable_queries)
+        if max_queries <= 0:
+            stop_reason = "budget_exhausted"
+            break
+        max_urls = max(1, min(max_urls, int(max(crawl_unit_cost, cost_governor.remaining_eur - max_queries * search_unit_cost) / (max_queries * max(crawl_unit_cost, 0.000001)))))
+        try:
+            search_reservation = cost_governor.reserve(
+                f"search-round:{round_idx}", "search_web", max_queries * search_unit_cost
+            )
+            crawl_reservation = cost_governor.reserve(
+                f"crawl-round:{round_idx}", "open_page", max_queries * max_urls * crawl_unit_cost
+            )
+            if search_reservation.status != "reserved" or crawl_reservation.status != "reserved":
+                if search_reservation.status == "reserved":
+                    cost_governor.release(f"search-round:{round_idx}", error_code="DUPLICATE_ROUND")
+                if crawl_reservation.status == "reserved":
+                    cost_governor.release(f"crawl-round:{round_idx}", error_code="DUPLICATE_ROUND")
+                stop_reason = "duplicate_round_prevented"
+                break
+        except ResearchBudgetExceeded:
+            stop_reason = "budget_exhausted"
+            break
         round_plan = dict(plan)
         round_plan["_discovery_round"] = round_idx
+        round_plan["_remaining_target"] = target_left
+        round_plan["_requested_target"] = remaining_target
+        round_plan["_page_budget"] = page_budget
+        round_plan["_max_total_urls"] = pages_left
         if base_search_queries:
             round_plan["_search_queries_override"] = base_search_queries
 
@@ -846,20 +1292,27 @@ async def run_agentic_discovery_streaming(
             round_plan,
             max_queries=max_queries,
             max_urls_per_query=max_urls,
+            max_total_urls=pages_left,
             seen_urls=shared_seen_urls,
+            cost_governor=cost_governor,
         )
         pages_this_round = 0
-        leads_before_round = len(all_leads)
+        leads_before_round = _effective_found()
+        target_reached_in_round = False
 
         async for page in researcher.iter_scraped_pages():
+            if _effective_found() >= remaining_target:
+                target_reached_in_round = True
+                break
             pages_scraped += 1
             pages_this_round += 1
-            if len(all_leads) >= remaining_target:
-                break
             if pages_scraped > page_budget:
                 break
             try:
                 extracted = await extractor.extract_page(page)
+            except ResearchBudgetExceeded:
+                stop_reason = "budget_exhausted"
+                break
             except Exception as exc:
                 logger.warning(
                     "extract_page failed url=%s: %s",
@@ -867,6 +1320,13 @@ async def run_agentic_discovery_streaming(
                     exc,
                 )
                 continue
+            if strict_marketing_signal and int(extractor.telemetry.get("llm_budget_exhausted") or 0):
+                stop_reason = "budget_exhausted"
+                logger.warning(
+                    "agentic discovery strict marketing stop: LLM budget exhausted after %s pages",
+                    pages_scraped,
+                )
+                break
 
             query_source = str(page.get("query_source") or "unknown")[:240]
             query_metrics = query_yield.setdefault(query_source, {"pages": 0, "leads": 0})
@@ -875,7 +1335,7 @@ async def run_agentic_discovery_streaming(
             _update_runtime_stats("running")
 
             for item in extracted:
-                if len(all_leads) >= remaining_target:
+                if _effective_found() >= remaining_target:
                     break
                 if not isinstance(item, dict):
                     continue
@@ -903,6 +1363,29 @@ async def run_agentic_discovery_streaming(
                 pending_flush.append(item)
                 if len(pending_flush) >= batch_size:
                     _flush_pending()
+                    if _effective_found() >= remaining_target:
+                        target_reached_in_round = True
+                        break
+
+            if target_reached_in_round:
+                break
+
+        try:
+            cost_governor.settle(
+                f"search-round:{round_idx}",
+                researcher.search_queries_executed * search_unit_cost,
+                metadata={"queries_executed": researcher.search_queries_executed},
+            )
+            cost_governor.settle(
+                f"crawl-round:{round_idx}",
+                researcher.pages_scheduled * crawl_unit_cost,
+                metadata={"pages_scheduled": researcher.pages_scheduled, "pages_yielded": pages_this_round},
+            )
+        except ResearchBudgetExceeded:
+            stop_reason = "budget_exhausted"
+
+        if researcher.cost_failure:
+            stop_reason = "budget_exhausted"
 
         if not base_search_queries and researcher.generated_base_queries:
             base_search_queries = list(researcher.generated_base_queries)
@@ -910,27 +1393,50 @@ async def run_agentic_discovery_streaming(
 
         if pending_flush:
             _flush_pending()
+            if _effective_found() >= remaining_target:
+                target_reached_in_round = True
 
         _save_checkpoint("round_complete")
-        if len(all_leads) >= remaining_target:
+        if stop_reason == "budget_exhausted":
+            break
+        if target_reached_in_round or _effective_found() >= remaining_target:
             break
         if pages_scraped >= page_budget:
             stop_reason = "page_budget"
             break
-        if pages_this_round == 0 or len(all_leads) == leads_before_round:
+        if pages_this_round == 0 or _effective_found() == leads_before_round:
             empty_rounds += 1
         else:
             empty_rounds = 0
-        if empty_rounds >= max(1, AGENTIC_MAX_EMPTY_ROUNDS):
-            stop_reason = "sources_exhausted"
+        empty_round_limit = max(1, AGENTIC_MAX_EMPTY_ROUNDS)
+        missing_after_round = max(0, remaining_target - _effective_found())
+        if _effective_found() > 0 and missing_after_round <= max(2, int(remaining_target * 0.25)):
+            empty_round_limit += 3
+        if empty_rounds >= empty_round_limit:
+            try:
+                from .search_serp import search_provider_status
+
+                provider_status = search_provider_status()
+                if provider_status.get("openai_rate_limited"):
+                    stop_reason = "provider_rate_limited"
+                    if stats_out is not None:
+                        stats_out["provider_status"] = provider_status
+                elif AGENTIC_REQUIRE_SEARCH_PROVIDER and not provider_status.get("configured"):
+                    stop_reason = "provider_unavailable"
+                    if stats_out is not None:
+                        stats_out["provider_status"] = provider_status
+                else:
+                    stop_reason = "sources_exhausted"
+            except Exception:
+                stop_reason = "sources_exhausted"
             logger.info("agentic discovery: no pages round=%s — stop", round_idx)
             break
 
-    if len(all_leads) >= remaining_target:
+    if _effective_found() >= remaining_target:
         stop_reason = "target_reached"
     elif pages_scraped >= page_budget:
         stop_reason = "page_budget"
-    exhausted = stop_reason == "sources_exhausted" and len(all_leads) < remaining_target
+    exhausted = stop_reason in {"sources_exhausted", "provider_unavailable", "provider_rate_limited", "budget_exhausted"} and _effective_found() < remaining_target
     _save_checkpoint(stop_reason)
     if stats_out is not None:
         _update_runtime_stats(stop_reason)
@@ -938,7 +1444,7 @@ async def run_agentic_discovery_streaming(
     if exhausted:
         logger.info(
             "agentic discovery exhausted: found=%s target=%s pages=%s",
-            len(all_leads),
+            _effective_found(),
             remaining_target,
             pages_scraped,
         )

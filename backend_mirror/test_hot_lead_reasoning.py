@@ -99,6 +99,8 @@ def test_research_queries_target_observable_sales_signal() -> None:
     joined = " ".join(queries).lower()
     assert "sales development representative" in joined
     assert "outbound" in joined or "pipeline" in joined
+    assert "sviluppatore python" not in joined
+    assert len(queries) >= 5
     assert all("-site:github.com" in query and "-site:medium.com" in query for query in queries)
 
 

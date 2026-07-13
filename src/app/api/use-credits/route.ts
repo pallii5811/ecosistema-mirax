@@ -11,6 +11,23 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
+    const searchId = typeof body.search_id === 'string' ? body.search_id.trim() : ''
+    if (searchId) {
+      const limit = Math.max(1, Math.min(10000, Math.trunc(Number(body.limit) || 100)))
+      const { data, error } = await supabase.rpc('charge_search_publications', {
+        p_search_id: searchId,
+        p_limit: limit,
+      })
+      if (error) {
+        return NextResponse.json({ error: error.message || 'Errore addebito pubblicazioni' }, { status: 400 })
+      }
+      const payload = data && typeof data === 'object' ? data : {}
+      return NextResponse.json({
+        credits: Number((payload as Record<string, unknown>).credits || 0),
+        used: Number((payload as Record<string, unknown>).charged || 0),
+        billing_basis: 'evidence_gated_publications',
+      })
+    }
     const amount = typeof body.amount === 'number' && body.amount > 0 ? body.amount : 1
 
     // Atomic credit deduction: read + check + update in one step to prevent race conditions.

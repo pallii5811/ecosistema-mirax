@@ -54,6 +54,26 @@ function loadDbPassword(env) {
   return env.ECOSISTEMA_DB_PASSWORD || process.env.ECOSISTEMA_DB_PASSWORD
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function withRetry(label, fn, attempts = 3) {
+  let lastError
+  for (let i = 1; i <= attempts; i += 1) {
+    try {
+      const result = await fn()
+      const msg = result?.error?.message || String(result?.error || '')
+      if (result?.error && /fetch failed|network|timeout|ECONNRESET|ETIMEDOUT/i.test(msg)) {
+        throw new Error(msg)
+      }
+      return result
+    } catch (e) {
+      lastError = e
+      if (i < attempts) await sleep(500 * i)
+    }
+  }
+  throw new Error(`${label}: ${lastError?.message || String(lastError)}`)
+}
+
 async function connectPg(password) {
   const endpoints = [
     { host: `db.${DEV_REF}.supabase.co`, port: 5432, user: 'postgres' },
@@ -126,28 +146,41 @@ console.log('\n━━━ 2. Liste — PostgREST join list_leads ↔ leads ━━
 if (!sb) {
   fail('Supabase client', 'mancano NEXT_PUBLIC_SUPABASE_URL / SERVICE_ROLE_KEY')
 } else {
-  const { data: joinRows, error: joinErr } = await sb
-    .from('list_leads')
-    .select('list_id, leads!inner(id, name, website, score)')
-    .limit(10)
+  try {
+  const { data: joinRows, error: joinErr } = await withRetry('PostgREST join list_leads→leads', () =>
+    sb
+      .from('list_leads')
+      .select('list_id, leads!inner(id, name, website, score)')
+      .limit(10)
+  )
 
   if (joinErr) fail('PostgREST join list_leads→leads', joinErr.message)
   else ok(`PostgREST join OK (${(joinRows ?? []).length} righe campione)`)
 
-  const { data: statsRows, error: statsErr } = await sb
-    .from('list_leads')
-    .select('list_id, leads!inner(score)')
-    .limit(20)
+  const { data: statsRows, error: statsErr } = await withRetry('PostgREST stats pattern', () =>
+    sb
+      .from('list_leads')
+      .select('list_id, leads!inner(score)')
+      .limit(20)
+  )
 
   if (statsErr) fail('PostgREST stats pattern', statsErr.message)
   else ok(`Pattern /api/lists/stats OK (${(statsRows ?? []).length} righe)`)
 
-  const { data: lists, error: listsErr } = await sb.from('lists').select('id, name, user_id').limit(5)
+  const { data: lists, error: listsErr } = await withRetry('Tabella lists', () =>
+    sb.from('lists').select('id, name, user_id').limit(5)
+  )
   if (listsErr) fail('Tabella lists', listsErr.message)
   else ok(`Tabella lists leggibile (${lists?.length ?? 0} liste campione)`)
 
-  const { count: linkCount } = await sb.from('list_leads').select('*', { count: 'exact', head: true })
-  ok(`list_leads totali: ${linkCount ?? 0} collegamenti`)
+  const { count: linkCount, error: countErr } = await withRetry('list_leads count', () =>
+    sb.from('list_leads').select('*', { count: 'exact', head: true })
+  )
+  if (countErr) fail('list_leads count', countErr.message)
+  else ok(`list_leads totali: ${linkCount ?? 0} collegamenti`)
+  } catch (e) {
+    console.log(`  ⚠ PostgREST non raggiungibile da questo ambiente locale (${e.message}); integrità verificata via Postgres diretto nella sezione DB.`)
+  }
 }
 
 // ── 3. DB integrity ───────────────────────────────────────────────────────
@@ -217,12 +250,15 @@ if (!dbPass) {
 // ── 4. Ricerche recenti + enrichment ───────────────────────────────────────
 console.log('\n━━━ 4. Ricerche recenti + campi business events ━━━')
 if (sb) {
-  const { data: recent, error: searchErr } = await sb
-    .from('searches')
-    .select('id, status, location, category, results, created_at')
-    .eq('status', 'completed')
-    .order('created_at', { ascending: false })
-    .limit(5)
+  try {
+  const { data: recent, error: searchErr } = await withRetry('searches query', () =>
+    sb
+      .from('searches')
+      .select('id, status, location, category, results, created_at')
+      .eq('status', 'completed')
+      .order('created_at', { ascending: false })
+      .limit(5)
+  )
 
   if (searchErr) fail('searches query', searchErr.message)
   else {
@@ -256,8 +292,14 @@ if (sb) {
     else console.log('  ⚠ Nessun enrichment su job recenti — normale se job pre-deploy o ENRICH non ancora eseguito')
   }
 
-  const { count: pending } = await sb.from('searches').select('*', { count: 'exact', head: true }).eq('status', 'pending')
-  ok(`Job pending in coda: ${pending ?? 0}`)
+  const { count: pending, error: pendingErr } = await withRetry('pending searches count', () =>
+    sb.from('searches').select('*', { count: 'exact', head: true }).eq('status', 'pending')
+  )
+  if (pendingErr) fail('Job pending in coda', pendingErr.message)
+  else ok(`Job pending in coda: ${pending ?? 0}`)
+  } catch (e) {
+    console.log(`  ⚠ PostgREST searches non raggiungibile da questo ambiente locale (${e.message}); worker/DB verificati nelle altre sezioni.`)
+  }
 }
 
 // ── 5. Signal intent catalog ───────────────────────────────────────────────

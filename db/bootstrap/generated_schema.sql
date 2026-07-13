@@ -198,6 +198,27 @@ create table if not exists public.searches (
   created_at timestamptz default timezone('utc', now()) not null
 );
 
+alter table public.searches add column if not exists worker_id text;
+alter table public.searches add column if not exists heartbeat_at timestamptz;
+alter table public.searches add column if not exists lease_expires_at timestamptz;
+alter table public.searches add column if not exists attempt_count integer not null default 0;
+alter table public.searches add column if not exists progress jsonb not null default '{}'::jsonb;
+alter table public.searches add column if not exists updated_at timestamptz not null default now();
+create index if not exists searches_processing_lease_idx
+  on public.searches (lease_expires_at)
+  where status = 'processing';
+create or replace function public.searches_touch_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+drop trigger if exists tr_searches_touch_updated_at on public.searches;
+create trigger tr_searches_touch_updated_at
+  before update on public.searches
+  for each row execute function public.searches_touch_updated_at();
+
 create table if not exists public.lead_enrichments (
   id uuid default gen_random_uuid() primary key,
   user_id uuid,

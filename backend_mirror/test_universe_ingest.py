@@ -48,9 +48,9 @@ class MockUniverseRepository:
 
     def __init__(self):
         self.entities = {}
-        self.observations = []
-        self.relationships = []
-        self.events = []
+        self.observations = {}
+        self.relationships = {}
+        self.events = {}
         self._counter = 0
 
     def _next_id(self):
@@ -71,16 +71,32 @@ class MockUniverseRepository:
         return self.entities.get((canonical_id, entity_type))
 
     def create_observations(self, observations):
-        self.observations.extend(observations)
-        return len(observations)
+        inserted = 0
+        for o in observations:
+            row = o.to_dict()
+            if row["dedup_key"] not in self.observations:
+                self.observations[row["dedup_key"]] = row
+                inserted += 1
+        return inserted
 
     def create_relationships(self, relationships):
-        self.relationships.extend(relationships)
-        return len(relationships)
+        inserted = 0
+        for r in relationships:
+            row = r.to_dict()
+            key = (row["source_entity_id"], row["target_entity_id"], row["relationship_type"])
+            if key not in self.relationships:
+                self.relationships[key] = row
+                inserted += 1
+        return inserted
 
     def append_events(self, events):
-        self.events.extend(events)
-        return len(events)
+        inserted = 0
+        for e in events:
+            row = e.to_dict()
+            if row["dedup_key"] not in self.events:
+                self.events[row["dedup_key"]] = row
+                inserted += 1
+        return inserted
 
 
 class TestIngest(unittest.TestCase):
@@ -115,6 +131,114 @@ class TestIngest(unittest.TestCase):
         r2 = ingest_mirax_lead(repo, lead, "test")
         self.assertTrue(r1.is_new)
         self.assertFalse(r2.is_new)
+
+    def test_reingest_does_not_duplicate_observations_and_events(self):
+        repo = MockUniverseRepository()
+        lead = {
+            "azienda": "Test Python Srl",
+            "sito": "https://www.test-python.it",
+            "telefono": "+39 333 999 8888",
+            "citta": "Milano",
+            "categoria": "Software House",
+            "meta_pixel": False,
+            "ssl": True,
+            "tech_stack": ["wordpress"],
+            "business_hiring_jobs": [{"title": "Python Dev", "url": "https://test-python.it/jobs/python"}],
+        }
+        r1 = ingest_mirax_lead(repo, lead, "test")
+        r2 = ingest_mirax_lead(repo, lead, "test")
+        self.assertGreater(r1.observations_created, 0)
+        self.assertGreater(r1.events_created, 0)
+        self.assertEqual(r2.observations_created, 0)
+        self.assertEqual(r2.events_created, 0)
+        self.assertEqual(len(repo.observations), r1.observations_created)
+        self.assertEqual(len(repo.events), r1.events_created)
+
+    def test_google_ads_started_maps_to_ads_started(self):
+        repo = MockUniverseRepository()
+        lead = {
+            "azienda": "Ads Startup Srl",
+            "sito": "https://ads-startup.it",
+            "business_signals": [
+                {
+                    "type": "google_ads_started",
+                    "title": "Google Ads campaign started",
+                    "source": "signals",
+                    "detected_at": "2026-07-06T10:00:00+00:00",
+                }
+            ],
+        }
+        ingest_mirax_lead(repo, lead, "test")
+        events = list(repo.events.values())
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_type"], "ads_started")
+        self.assertEqual(events[0]["payload"]["signal_type"], "google_ads_started")
+
+    def test_business_signal_relations(self):
+        repo = MockUniverseRepository()
+        lead = {
+            "azienda": "Growth Tech Spa",
+            "sito": "https://growth-tech.it",
+            "citta": "Milano",
+            "business_signals": [
+                {
+                    "type": "tender_won",
+                    "title": "Appalto software PA",
+                    "cig": "ABC1234567",
+                    "authority": "Comune di Milano",
+                    "amount": 150000,
+                    "date": "2026-06-01",
+                    "source": "anac",
+                },
+                {
+                    "type": "funding_received",
+                    "title": "Round seed",
+                    "investor": "VC Italiano",
+                    "amount": 2000000,
+                    "round": "seed",
+                    "date": "2026-05-15",
+                    "source": "news",
+                },
+                {
+                    "type": "partnership",
+                    "title": "Partnership con PartnerCo",
+                    "partner_name": "PartnerCo Srl",
+                    "partner_domain": "partnerco.it",
+                    "date": "2026-04-20",
+                    "source": "news",
+                },
+                {
+                    "type": "executive_change",
+                    "title": "Nuovo CTO",
+                    "executive_name": "Mario Rossi",
+                    "role": "CTO",
+                    "date": "2026-03-10",
+                    "source": "registry",
+                },
+            ],
+        }
+        result = ingest_mirax_lead(repo, lead, "test")
+        rels = list(repo.relationships.values())
+
+        # Tender
+        self.assertTrue(any(r["relationship_type"] == "awarded_to" for r in rels))
+        self.assertTrue(any(r["relationship_type"] == "awarded_by" for r in rels))
+
+        # Funding
+        self.assertTrue(any(r["relationship_type"] == "received_investment_from" for r in rels))
+
+        # Partnership (bidirectional)
+        self.assertEqual(sum(1 for r in rels if r["relationship_type"] == "partner_of"), 2)
+
+        # Executive
+        self.assertTrue(any(r["relationship_type"] == "has" for r in rels))
+
+        # Entities created
+        entity_types = {e.entity_type for e in repo.entities.values()}
+        self.assertIn("tender", entity_types)
+        self.assertIn("investor", entity_types)
+        self.assertIn("person", entity_types)
+        self.assertGreaterEqual(result.relationships_created, 6)
 
 
 if __name__ == "__main__":

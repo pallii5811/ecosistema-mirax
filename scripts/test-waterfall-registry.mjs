@@ -46,6 +46,13 @@ const hFirst = ordered.get('hiring')?.[0]?.name
 if (hFirst === 'mirax_audit') ok('orderedWaterfall: audit first')
 else fail('orderedWaterfall audit', hFirst)
 
+if (getSignalConfig('hiring')?.max_sources_to_try === 5) ok('hiring: max_sources_to_try=5')
+else fail('hiring max_sources', String(getSignalConfig('hiring')?.max_sources_to_try))
+
+const hiringNames = getSourcesForSignal('hiring').map((s) => s.name)
+if (hiringNames.includes('google_jobs')) ok('hiring: google_jobs in registry')
+else fail('hiring google_jobs missing')
+
 if (getSignalConfig('hiring')?.parallel === false) ok('hiring cascade (non parallel)')
 if (getSignalConfig('funding_received')?.parallel === true) ok('funding parallel')
 

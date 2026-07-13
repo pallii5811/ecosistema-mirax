@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirax.internal/contracts/commercial-search-plan/v1.0.0",
+  "title": "MIRAX Commercial Search Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "search_id",
+    "raw_query",
+    "language",
+    "seller",
+    "target",
+    "commercial_hypotheses",
+    "signal_policy",
+    "source_policy",
+    "evidence_policy",
+    "audit_policy",
+    "ranking_policy",
+    "budget_policy",
+    "ambiguity",
+    "planner_metadata"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "search_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "raw_query": { "type": "string", "minLength": 2, "maxLength": 4000 },
+    "language": { "type": "string", "minLength": 2, "maxLength": 16 },
+    "seller": { "$ref": "#/$defs/seller" },
+    "target": { "$ref": "#/$defs/target" },
+    "commercial_hypotheses": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": { "$ref": "#/$defs/commercialHypothesis" }
+    },
+    "signal_policy": { "$ref": "#/$defs/signalPolicy" },
+    "source_policy": { "$ref": "#/$defs/sourcePolicy" },
+    "evidence_policy": { "$ref": "#/$defs/evidencePolicy" },
+    "audit_policy": { "$ref": "#/$defs/auditPolicy" },
+    "ranking_policy": { "$ref": "#/$defs/rankingPolicy" },
+    "budget_policy": { "$ref": "#/$defs/budgetPolicy" },
+    "ambiguity": { "$ref": "#/$defs/ambiguity" },
+    "planner_metadata": { "$ref": "#/$defs/plannerMetadata" }
+  },
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 },
+      "uniqueItems": true
+    },
+    "seller": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offer_description", "products_or_services", "problems_solved", "preferred_buyer_roles"],
+      "properties": {
+        "offer_category": { "type": ["string", "null"], "maxLength": 200 },
+        "offer_description": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "products_or_services": { "$ref": "#/$defs/stringArray" },
+        "problems_solved": { "$ref": "#/$defs/stringArray" },
+        "sales_motion": { "type": ["string", "null"], "maxLength": 200 },
+        "preferred_buyer_roles": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entity_types", "industries", "company_sizes", "geographies", "local_business_preference", "required_attributes", "excluded_attributes", "excluded_entities"],
+      "properties": {
+        "entity_types": { "$ref": "#/$defs/stringArray" },
+        "industries": { "$ref": "#/$defs/stringArray" },
+        "company_sizes": { "$ref": "#/$defs/stringArray" },
+        "employee_range": { "$ref": "#/$defs/numberRange" },
+        "revenue_range": { "$ref": "#/$defs/moneyRange" },
+        "geographies": { "$ref": "#/$defs/stringArray" },
+        "local_business_preference": { "type": "boolean" },
+        "required_attributes": { "$ref": "#/$defs/stringArray" },
+        "excluded_attributes": { "$ref": "#/$defs/stringArray" },
+        "excluded_entities": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "numberRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min": { "type": "integer", "minimum": 0 },
+        "max": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "moneyRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min": { "type": "number", "minimum": 0 },
+        "max": { "type": "number", "minimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+      }
+    },
+    "commercialHypothesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "buyer_problem", "triggering_events", "signals", "implied_need", "relevance_to_offer", "confidence"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "buyer_problem": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "triggering_events": { "$ref": "#/$defs/stringArray" },
+        "signals": { "$ref": "#/$defs/stringArray" },
+        "implied_need": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "relevance_to_offer": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "signalPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_signals", "optional_signals", "negative_signals", "maximum_age_days_by_signal", "minimum_signal_confidence"],
+      "properties": {
+        "required_signals": { "$ref": "#/$defs/stringArray" },
+        "optional_signals": { "$ref": "#/$defs/stringArray" },
+        "negative_signals": { "$ref": "#/$defs/stringArray" },
+        "maximum_age_days_by_signal": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 1, "maximum": 3650 }
+        },
+        "minimum_signal_confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "sourcePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preferred_source_classes", "allowed_source_classes", "excluded_source_classes", "minimum_independent_sources", "primary_source_required_for"],
+      "properties": {
+        "preferred_source_classes": { "$ref": "#/$defs/stringArray" },
+        "allowed_source_classes": { "$ref": "#/$defs/stringArray" },
+        "excluded_source_classes": { "$ref": "#/$defs/stringArray" },
+        "minimum_independent_sources": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "primary_source_required_for": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "evidencePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["require_official_domain", "require_source_url", "require_observed_at", "minimum_evidence_confidence", "corroboration_required_above_risk"],
+      "properties": {
+        "require_official_domain": { "type": "boolean" },
+        "require_source_url": { "type": "boolean" },
+        "require_observed_at": { "type": "boolean" },
+        "minimum_evidence_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "corroboration_required_above_risk": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "auditPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modules", "crawl_depth", "maximum_pages", "collect_contacts", "collect_social_profiles", "detect_technologies", "detect_commercial_signals"],
+      "properties": {
+        "modules": { "$ref": "#/$defs/stringArray" },
+        "crawl_depth": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "maximum_pages": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "collect_contacts": { "type": "boolean" },
+        "collect_social_profiles": { "type": "boolean" },
+        "detect_technologies": { "type": "boolean" },
+        "detect_commercial_signals": { "type": "boolean" }
+      }
+    },
+    "rankingPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["weight_buyer_fit", "weight_signal_strength", "weight_freshness", "weight_evidence_confidence", "weight_contactability", "weight_need_gap"],
+      "properties": {
+        "weight_buyer_fit": { "type": "number", "minimum": 0, "maximum": 1 },
+        "weight_signal_strength": { "type": "number", "minimum": 0, "maximum": 1 },
+        "weight_freshness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "weight_evidence_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "weight_contactability": { "type": "number", "minimum": 0, "maximum": 1 },
+        "weight_need_gap": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "budgetPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_cost_eur", "hard_cost_eur", "maximum_search_calls", "maximum_pages_opened", "maximum_llm_evaluations"],
+      "properties": {
+        "target_cost_eur": { "type": "number", "minimum": 0 },
+        "hard_cost_eur": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_search_calls": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "maximum_pages_opened": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "maximum_llm_evaluations": { "type": "integer", "minimum": 0, "maximum": 10000 }
+      }
+    },
+    "ambiguity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "assumptions", "unresolved_fields"],
+      "properties": {
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "assumptions": { "$ref": "#/$defs/stringArray" },
+        "unresolved_fields": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "plannerMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planner", "prompt_version", "model", "generated_at"],
+      "properties": {
+        "planner": { "enum": ["llm", "heuristic_fallback", "repaired_llm"] },
+        "prompt_version": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "model": { "type": ["string", "null"], "maxLength": 200 },
+        "generated_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

@@ -117,7 +117,7 @@ export async function GET(req: NextRequest) {
 
   const summary = agent.summary
 
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = (['1','true','yes','on'].includes(String(process.env.UQE_OPENAI_ENABLED || '').toLowerCase()) ? '' : '')
   const total = Number(summary.total) || 0
 
   if (!apiKey || total === 0) {
@@ -150,7 +150,7 @@ ${JSON.stringify(summary, null, 2)}`
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 12000)
 
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res = await fetch('data:,mirax-legacy-provider-removed', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
