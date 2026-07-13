@@ -1,12 +1,48 @@
 # MIRAX Master Implementation State
 
-Ultimo aggiornamento verificato: 2026-07-13 17:10 (Europe/Rome)
+Ultimo aggiornamento verificato: 2026-07-13 23:25 (Europe/Rome)
+
+## Checkpoint corrente — riconciliazione post-Cursor e harness prepare hardening — 2026-07-13 23:25 +02:00
+
+### Git e runtime riconciliati
+
+- Branch `safety/mirax-v5-11-codex-checkpoint`, HEAD e remote `8ad8622`; parent checkpoint `ee9c569`; branch già pushato, nessuna divergenza dal remote.
+- Frontend marker `2026-07-13-complete-signal-lane-coverage-v5-11`, brake `production_search_disabled=true`.
+- Backend live `20260712_201500_v4`; staging `20260713_171207`; rollback `/home/worker/backups/staging-pre-20260713_171207`.
+- Hash locali/staging identici per contratti e runtime (`web_researcher`, `data_extractor`, `search_serp`, `commercial_lifecycle`, `worker_supabase`).
+- Tutti i worker general/staging `inactive+disabled`; processi one-shot 0; open/stale reservation 0/0; active job/canary 0/0.
+- Secret scan rigoroso su working tree e commit: nessuna credenziale rilevata.
+
+### Due quarantene workplace verificate
+
+- Run precedente: search `6ecc8d72-db71-4b06-a215-9cc0fb92f303`, canary `8e0297c9-8724-45c0-8a9f-5de17ff48be8`, evaluation `0dd16cf5-f1a9-4e0f-a0f7-49f4a0240285`: cancelled/quarantined/failed; `€0,05` settled; candidati/pubblicazioni/charge 0/0/0.
+- Primo prepare controllato Cursor: search `af7380bc-731e-40c9-963e-8682184807ce`, canary `333614f9-42a7-4a11-bfc6-72ac2474de61`, evaluation `87d033dc-0a0d-42d1-b6b4-2a8f59304d75`: fallito sul solo gate `buyer_coherent`; `€0,05` settled; repair/fonti/candidati/pubblicazioni/charge 0.
+- Root cause harness: il gate richiedeva la stringa letterale `company`, respingendo entity class valide `PMI/impresa`; non era un difetto del piano commerciale.
+
+### Hardening harness controllato
+
+- Import type e narrowing TypeScript corretti; `tsc` nuovamente PASS.
+- `buyer_coherent` accetta soltanto classi aziendali esplicite (`company|PMI|impresa|azienda|società`) e mantiene il vincolo micro/small/medium.
+- `offer_preserved` verifica il piano canonico, non la query sorgente.
+- Fixture future univoche per search ID, senza sovrascrivere replay precedenti.
+- Quarantena failure usa la transazione PostgreSQL idempotente esistente e verifica gli stati terminali.
+- Gate ledger pre-ready: esattamente 1 compiler, 0 repair, costo `<=€0,05`, reservation/candidati/pubblicazioni/charge tutti 0.
+
+### Suite Fase 0
+
+- `test:commercial-contract`: PASS (24/24 + 9 pytest); routing 13/13; signal floor 10/10; high-value 10/10; workplace metamorphic A–E PASS; ontology↔registry PASS; query matrix 137/137.
+- Pytest cost/contract/agentic: 64/64; TypeScript: PASS; preflight canary completo: PASS.
+- Gold v5 resta 0; legacy human baseline 7. Nessuna certificazione qualità v5 dichiarabile.
+
+### Prossimo comando sicuro
+
+Creare checkpoint atomico e pushare il branch di sicurezza. Poi eseguire un solo nuovo prepare `workplace_safety` tramite `scripts/prepare-workplace-safety-controlled.ts`, con nuova search/canary/run, una chiamata compiler, 0 repair, cap compiler `€0,05`, hard cap canary `€0,125`, nessun worker/fonte/pubblicazione/charge.
 
 ## Checkpoint corrente — workplace_safety fix + registry alignment + staging deploy — 2026-07-13 17:10 +02:00
 
 ### Commit
 
-- **Hash**: `b7446e4`
+- **Hash**: `8ad8622`
 - **Message**: `fix: complete workplace safety source coverage without signal overfitting`
 - **Branch**: `safety/mirax-v5-11-codex-checkpoint`
 

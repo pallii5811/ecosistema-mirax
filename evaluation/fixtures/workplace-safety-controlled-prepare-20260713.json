@@ -1,0 +1,358 @@
+{
+  "search_id": "af7380bc-731e-40c9-963e-8682184807ce",
+  "canary_id": "333614f9-42a7-4a11-bfc6-72ac2474de61",
+  "evaluation_run_id": "87d033dc-0a0d-42d1-b6b4-2a8f59304d75",
+  "query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane con cantieri, produzione, appalti o crescita del personale operativo",
+  "failure_reason": "PREPARE_GATE_FAILED:buyer_coherent",
+  "compiler_diagnostics": [],
+  "gates": [
+    {
+      "id": "seller_explicit",
+      "passed": true,
+      "detail": "seller offer must remain explicit for workplace safety"
+    },
+    {
+      "id": "offer_preserved",
+      "passed": true,
+      "detail": "manifest query must frame seller offer"
+    },
+    {
+      "id": "buyer_coherent",
+      "passed": false,
+      "detail": "buyer must be PMI company profile"
+    },
+    {
+      "id": "required_signals_exact",
+      "passed": true,
+      "detail": "hiring_operational, contract_awarded, production_expansion"
+    },
+    {
+      "id": "parse_source_llm",
+      "passed": true
+    },
+    {
+      "id": "no_repair_call",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "semantic_validation",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "source_plan_present",
+      "passed": true
+    },
+    {
+      "id": "templates_non_empty",
+      "passed": true
+    },
+    {
+      "id": "lane_per_required_signal",
+      "passed": true
+    },
+    {
+      "id": "dedicated_single_signal_lane",
+      "passed": true
+    },
+    {
+      "id": "no_lane_signal_contamination",
+      "passed": true
+    },
+    {
+      "id": "source_registry_valid",
+      "passed": true
+    },
+    {
+      "id": "freshness_per_signal",
+      "passed": true,
+      "detail": "{\"hiring_operational\":60,\"contract_awarded\":365,\"production_expansion\":365}"
+    },
+    {
+      "id": "research_questions_coherent",
+      "passed": true
+    },
+    {
+      "id": "why_now_causal",
+      "passed": true
+    },
+    {
+      "id": "budget_valid",
+      "passed": true,
+      "detail": "0.105/0.125"
+    },
+    {
+      "id": "not_maps",
+      "passed": true
+    },
+    {
+      "id": "compiler_diagnostics_clean",
+      "passed": true
+    }
+  ],
+  "plan": {
+    "required_signals": [
+      "hiring_operational",
+      "contract_awarded",
+      "production_expansion"
+    ],
+    "parse_source": "llm",
+    "source_plan": [
+      {
+        "lane": "job_market",
+        "source_types": [
+          "company_careers"
+        ],
+        "query_templates": [
+          "site:.it (\"lavora con noi\" OR careers OR \"posizioni aperte\") (operai OR autisti OR magazzinieri OR installatori OR manutentori OR tecnici) (\"Srl\" OR \"PMI\" OR azienda) {location} -site:indeed.it -site:infojobs.it -site:linkedin.com",
+          "(site:indeed.it OR site:infojobs.it OR site:linkedin.com/jobs) (operai OR autisti OR magazzinieri OR installatori OR manutentori OR tecnici) (\"Srl\" OR \"PMI\" OR azienda) {location}"
+        ],
+        "expected_evidence": [
+          "hiring_operational"
+        ],
+        "priority": 100,
+        "llm_required": true
+      },
+      {
+        "lane": "public_procurement",
+        "source_types": [
+          "public_procurement_portal"
+        ],
+        "query_templates": [
+          "(\"appalto aggiudicato\" OR \"gara aggiudicata\" OR \"contratto affidato\") (\"Srl\" OR impresa) {location}"
+        ],
+        "expected_evidence": [
+          "contract_awarded"
+        ],
+        "priority": 90,
+        "llm_required": true
+      },
+      {
+        "lane": "web_evidence",
+        "source_types": [
+          "official_company_website"
+        ],
+        "query_templates": [
+          "site:.it (\"ampliamento produttivo\" OR \"nuovo stabilimento\" OR \"nuovo impianto\" OR \"aumento capacità produttiva\") (\"Srl\" OR \"PMI\") {location}"
+        ],
+        "expected_evidence": [
+          "production_expansion"
+        ],
+        "priority": 80,
+        "llm_required": true
+      }
+    ],
+    "canonical_plan": {
+      "schema_version": "1.0.0",
+      "search_id": "af7380bc-731e-40c9-963e-8682184807ce",
+      "raw_query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane con cantieri, produzione, appalti o crescita del personale operativo",
+      "language": "it",
+      "seller": {
+        "offer_category": "Consulenza sicurezza sul lavoro / HSE compliance",
+        "offer_description": "Consulenza in materia di sicurezza sul lavoro (D.Lgs. 81/08): valutazione dei rischi, redazione DVR, formazione obbligatoria, nomina RSPP/ASPP, sicurezza in cantiere e conformità normativa per aziende con attività operative.",
+        "products_or_services": [
+          "Valutazione dei rischi e DVR",
+          "Formazione sicurezza lavoratori e preposti",
+          "Servizio RSPP/ASPP esterno",
+          "Sicurezza nei cantieri temporanei o mobili",
+          "Audit di conformità D.Lgs. 81/08"
+        ],
+        "problems_solved": [
+          "Mancanza di conformità normativa in materia di sicurezza sul lavoro",
+          "Rischio di sanzioni o fermo cantiere per carenze documentali HSE",
+          "Assenza di competenze interne per la gestione della sicurezza durante la crescita operativa",
+          "Gestione della sicurezza in appalti e subappalti con obblighi di coordinamento (DUVRI)",
+          "Onboarding sicurezza per nuovo personale operativo assunto rapidamente"
+        ],
+        "sales_motion": "outbound B2B consulenziale",
+        "preferred_buyer_roles": [
+          "Titolare/Amministratore",
+          "Responsabile di produzione",
+          "Direttore di cantiere",
+          "HR/Responsabile del personale",
+          "Responsabile HSE interno",
+          "Ufficio acquisti/appalti"
+        ]
+      },
+      "target": {
+        "entity_types": [
+          "PMI",
+          "impresa di costruzioni",
+          "impresa manifatturiera",
+          "impresa di appalti/subappalti",
+          "impresa di impiantistica"
+        ],
+        "industries": [
+          "Costruzioni",
+          "Produzione industriale/manifatturiera",
+          "Impiantistica",
+          "Logistica operativa",
+          "Servizi in appalto"
+        ],
+        "company_sizes": [
+          "micro",
+          "piccola",
+          "media"
+        ],
+        "geographies": [
+          "Italia"
+        ],
+        "local_business_preference": true,
+        "required_attributes": [
+          "presenza di cantieri o siti produttivi attivi",
+          "attività soggetta a obblighi D.Lgs. 81/08",
+          "personale operativo in crescita o appalti in corso"
+        ],
+        "excluded_attributes": [
+          "grandi imprese multinazionali",
+          "attività puramente d'ufficio senza personale operativo"
+        ],
+        "excluded_entities": []
+      },
+      "commercial_hypotheses": [
+        {
+          "id": "ontology-hiring_operational",
+          "buyer_problem": "Il buyer affronta operational_risk; il seller risolve Mancanza di conformità normativa in materia di sicurezza sul lavoro.",
+          "triggering_events": [
+            "operational_job_posting"
+          ],
+          "signals": [
+            "hiring_operational"
+          ],
+          "implied_need": "Valutare Valutazione dei rischi e DVR per gestire operational_risk nel momento in cui il segnale viene verificato.",
+          "relevance_to_offer": "Hiring of operational, field, warehouse or driving staff rende attuale Mancanza di conformità normativa in materia di sicurezza sul lavoro e giustifica la valutazione di Valutazione dei rischi e DVR.",
+          "confidence": 0.82
+        },
+        {
+          "id": "ontology-contract_awarded",
+          "buyer_problem": "Il buyer affronta delivery_capacity; il seller risolve Mancanza di conformità normativa in materia di sicurezza sul lavoro.",
+          "triggering_events": [
+            "award_notice"
+          ],
+          "signals": [
+            "contract_awarded"
+          ],
+          "implied_need": "Valutare Valutazione dei rischi e DVR per gestire delivery_capacity nel momento in cui il segnale viene verificato.",
+          "relevance_to_offer": "Public or private contract awarded to the target company rende attuale Mancanza di conformità normativa in materia di sicurezza sul lavoro e giustifica la valutazione di Valutazione dei rischi e DVR.",
+          "confidence": 0.95
+        },
+        {
+          "id": "ontology-production_expansion",
+          "buyer_problem": "Il buyer affronta capacity; il seller risolve Mancanza di conformità normativa in materia di sicurezza sul lavoro.",
+          "triggering_events": [
+            "plant_expansion",
+            "capacity_increase"
+          ],
+          "signals": [
+            "production_expansion"
+          ],
+          "implied_need": "Valutare Valutazione dei rischi e DVR per gestire capacity nel momento in cui il segnale viene verificato.",
+          "relevance_to_offer": "Increase in production capacity or plant footprint rende attuale Mancanza di conformità normativa in materia di sicurezza sul lavoro e giustifica la valutazione di Valutazione dei rischi e DVR.",
+          "confidence": 0.9
+        }
+      ],
+      "signal_policy": {
+        "required_signals": [
+          "hiring_operational",
+          "contract_awarded",
+          "production_expansion"
+        ],
+        "optional_signals": [],
+        "negative_signals": [],
+        "maximum_age_days_by_signal": {
+          "hiring_operational": 60,
+          "contract_awarded": 365,
+          "production_expansion": 365
+        },
+        "minimum_signal_confidence": 0.75
+      },
+      "source_policy": {
+        "preferred_source_classes": [
+          "company_careers",
+          "public_procurement_portal",
+          "official_company_website"
+        ],
+        "allowed_source_classes": [
+          "company_careers",
+          "job_board",
+          "public_procurement_portal",
+          "municipal_register",
+          "official_company_website",
+          "industry_publication"
+        ],
+        "excluded_source_classes": [
+          "search_snippet",
+          "generic_blog",
+          "directory"
+        ],
+        "minimum_independent_sources": 1,
+        "primary_source_required_for": []
+      },
+      "evidence_policy": {
+        "require_official_domain": true,
+        "require_source_url": true,
+        "require_observed_at": true,
+        "minimum_evidence_confidence": 0.75,
+        "corroboration_required_above_risk": 0.65
+      },
+      "audit_policy": {
+        "modules": [
+          "contacts",
+          "social_profiles",
+          "company_identity",
+          "commercial_signals"
+        ],
+        "crawl_depth": 1,
+        "maximum_pages": 8,
+        "collect_contacts": true,
+        "collect_social_profiles": true,
+        "detect_technologies": false,
+        "detect_commercial_signals": true
+      },
+      "ranking_policy": {
+        "weight_buyer_fit": 0.25,
+        "weight_signal_strength": 0.2,
+        "weight_freshness": 0.15,
+        "weight_evidence_confidence": 0.2,
+        "weight_contactability": 0.1,
+        "weight_need_gap": 0.1
+      },
+      "budget_policy": {
+        "target_cost_eur": 0.105,
+        "hard_cost_eur": 0.125,
+        "maximum_search_calls": 4,
+        "maximum_pages_opened": 15,
+        "maximum_llm_evaluations": 2
+      },
+      "ambiguity": {
+        "score": 0.5,
+        "assumptions": [],
+        "unresolved_fields": []
+      },
+      "planner_metadata": {
+        "planner": "llm",
+        "prompt_version": "commercial-intent-v1.1.0",
+        "model": "claude-sonnet-5",
+        "generated_at": "2026-07-13T15:39:31.907Z"
+      }
+    }
+  },
+  "ledger": [
+    {
+      "operation_type": "intent_compilation",
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "estimated_cost_eur": 0.05,
+      "actual_cost_eur": 0.05,
+      "status": "settled",
+      "metadata": {
+        "call_kind": "initial",
+        "input_tokens": 5941,
+        "pricing_mode": "conservative_reservation",
+        "output_tokens": 1600,
+        "prompt_version": "commercial-intent-v1.1.0"
+      }
+    }
+  ]
+}
