@@ -114,6 +114,7 @@ def test_runtime_binding_is_registered_without_claiming_other_adapters() -> None
     assert ids == {
         "legacy_digital_audit_v1", "public_procurement_v1", "structured_hiring_v1",
         "official_growth_signals_v1",
+        "generic_web_research_v1",
     }
     assert source_runtime_coverage("public_procurement_portal") == "supported"
     assert source_runtime_coverage("company_careers") == "supported"

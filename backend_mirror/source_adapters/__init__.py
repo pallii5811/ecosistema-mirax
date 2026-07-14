@@ -17,6 +17,7 @@ from .contracts import (
 from .digital_audit import DigitalAuditAdapter
 from .hiring import HiringAdapter, HiringProviderResult
 from .growth import GrowthProviderResult, GrowthSignalsAdapter
+from .generic_web import GenericWebProviderResult, GenericWebResearchAdapter
 from .procurement import ProcurementAdapter, ProcurementProviderResult
 
 __all__ = [
@@ -31,6 +32,8 @@ __all__ = [
     "HiringProviderResult",
     "GrowthProviderResult",
     "GrowthSignalsAdapter",
+    "GenericWebProviderResult",
+    "GenericWebResearchAdapter",
     "OpportunityCandidate",
     "ProcurementAdapter",
     "ProcurementProviderResult",

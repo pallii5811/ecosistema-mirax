@@ -1,0 +1,37 @@
+{
+  "defaults": {
+    "official_domain_verified": true,
+    "entity_class": "operating_company",
+    "source_class": "official_company_website",
+    "matched_signal_ids": ["seeking_supplier"],
+    "geography": "Lombardia",
+    "extraction_method": "deterministic_primary_page",
+    "company_size": "small",
+    "employee_count": 35,
+    "query_origin": "PMI Lombardia che cercano nuovi fornitori",
+    "parent_query": "PMI Lombardia che cercano nuovi fornitori",
+    "discovery_round": 1
+  },
+  "positive": [
+    {"company_name":"Fallback Fixture 01 Srl","official_domain":"fallback-fixture-01.test","evidence_excerpt":"Fallback Fixture 01 Srl avvia una ricerca fornitori per nuovi componenti.","days_ago":1},
+    {"company_name":"Fallback Fixture 02 Srl","official_domain":"fallback-fixture-02.test","evidence_excerpt":"Fallback Fixture 02 Srl apre l'albo fornitori per il prossimo progetto.","days_ago":2},
+    {"company_name":"Fallback Fixture 03 Srl","official_domain":"fallback-fixture-03.test","evidence_excerpt":"Fallback Fixture 03 Srl seleziona nuovi fornitori in Lombardia.","days_ago":3},
+    {"company_name":"Fallback Fixture 04 Srl","official_domain":"fallback-fixture-04.test","evidence_excerpt":"Fallback Fixture 04 Srl pubblica una ricerca fornitori qualificati.","days_ago":4},
+    {"company_name":"Fallback Fixture 05 Srl","official_domain":"fallback-fixture-05.test","evidence_excerpt":"Fallback Fixture 05 Srl aggiorna l'albo fornitori aziendale.","days_ago":5},
+    {"company_name":"Fallback Fixture 06 Srl","official_domain":"fallback-fixture-06.test","evidence_excerpt":"Fallback Fixture 06 Srl invita nuovi fornitori a candidarsi.","days_ago":6},
+    {"company_name":"Fallback Fixture 07 Srl","official_domain":"fallback-fixture-07.test","evidence_excerpt":"Fallback Fixture 07 Srl annuncia una ricerca fornitori per la Lombardia.","days_ago":7},
+    {"company_name":"Fallback Fixture 08 Srl","official_domain":"fallback-fixture-08.test","evidence_excerpt":"Fallback Fixture 08 Srl amplia il proprio albo fornitori.","days_ago":8},
+    {"company_name":"Fallback Fixture 09 Srl","official_domain":"fallback-fixture-09.test","evidence_excerpt":"Fallback Fixture 09 Srl cerca nuovi fornitori per materiali tecnici.","days_ago":9},
+    {"company_name":"Fallback Fixture 10 Srl","official_domain":"fallback-fixture-10.test","evidence_excerpt":"Fallback Fixture 10 Srl formalizza la ricerca fornitori in Lombardia.","days_ago":10},
+    {"company_name":"Fallback Fixture 11 Srl","official_domain":"fallback-fixture-11.test","evidence_excerpt":"Fallback Fixture 11 Srl apre un nuovo albo fornitori.","days_ago":11},
+    {"company_name":"Fallback Fixture 12 Srl","official_domain":"fallback-fixture-12.test","evidence_excerpt":"Fallback Fixture 12 Srl richiede nuovi fornitori per la produzione.","days_ago":12}
+  ],
+  "negative": [
+    {"company_name":"Directory Fixture","official_domain":"paginegialle.it","evidence_excerpt":"Directory con ricerca fornitori.","days_ago":1,"expected_rejection":"OFFICIAL_DOMAIN_UNRESOLVED"},
+    {"company_name":"Undated Fallback Fixture Srl","official_domain":"undated-fallback-fixture.test","evidence_excerpt":"Undated Fallback Fixture Srl cerca nuovi fornitori.","days_ago":null,"expected_rejection":"SIGNAL_DATE_MISSING"},
+    {"company_name":"Weak Fallback Fixture Srl","official_domain":"weak-fallback-fixture.test","matched_signal_ids":[],"evidence_excerpt":"Weak Fallback Fixture Srl cresce e innova.","days_ago":2,"expected_rejection":"ALL_SIGNALS_INCOMPLETE"},
+    {"company_name":"Secondary Fallback Fixture Srl","official_domain":"secondary-fallback-fixture.test","source_class":"recognized_local_news","evidence_excerpt":"Secondary Fallback Fixture Srl cerca nuovi fornitori.","days_ago":2,"expected_rejection":"NON_PRIMARY_SOURCE"},
+    {"company_name":"Enterprise Fallback Fixture Spa","official_domain":"enterprise-fallback-fixture.test","company_size":"enterprise","employee_count":9000,"evidence_excerpt":"Enterprise Fallback Fixture Spa cerca nuovi fornitori.","days_ago":2,"expected_rejection":"ENTERPRISE_OUT_OF_TARGET"},
+    {"company_name":"Wrong Geo Fallback Fixture Srl","official_domain":"wrong-geo-fallback-fixture.test","geography":"Lazio","evidence_excerpt":"Wrong Geo Fallback Fixture Srl cerca nuovi fornitori.","days_ago":2,"expected_rejection":"GEOGRAPHY_MISMATCH"}
+  ]
+}

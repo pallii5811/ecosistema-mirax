@@ -33,8 +33,12 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - Proxy deboli, stale, publisher, fonti secondarie non corroborate, rumore agenzie, geografia ed enterprise sono respinti.
 - Semantica `any` verificata; `all` fallisce chiuso se un record non prova ogni segnale richiesto.
 - Registry runtime: Digital Audit, Procurement, Hiring e Growth; Ad Library resta esplicitamente non coperta.
+- Fase 6 Generic Web: runtime `generic_web_research_v1` sempre `generic_fallback_partial`.
+- 12 replay primari: lineage, query origin, parent, round, signal ID, date, evidence e dominio canonici.
+- Directory, fonti secondarie, segnali impliciti, stale, geografia ed enterprise sono respinti prima della promozione.
+- Exhaustion globale non viene mai dichiarata da SERP campionate; hard cap verificato prima di ogni query.
 - Test Hiring, forensic legacy, lifecycle, contratti e compile Python/TypeScript: verdi; costo provider reale `EUR 0`.
 - Test Fase 3, regressioni strutturate, contratti e compile Python/TypeScript: verdi; costo provider `EUR 0`.
 
 ## Prossimo passo sicuro
-- Rafforzare il Generic Web Research Fallback come copertura parziale dichiarata; nessun canary/provider live.
+- Implementare orchestrazione universale breadth-first sugli adapter registrati; nessun canary/provider live.
