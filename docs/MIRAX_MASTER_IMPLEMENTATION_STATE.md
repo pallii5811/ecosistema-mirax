@@ -35,7 +35,8 @@ Ultimo aggiornamento verificato: 2026-07-14 08:57 (Europe/Rome)
 
 - Nessun nuovo paid retry autorizzato. Shadow canary 10 verticali e pubblicazione cliente restano bloccati.
 - Verifica completata: suite backend `176/176` senza skip; commercial contract, Python compile e preflight completo PASS. Vercel marker/brake corretti, 0 brand globali nella cache recente, worker server 116 tutti `inactive+disabled`, paid extraction disattivata, active job/canary/reservation stale `0/0/0`.
-- Creare checkpoint Git e distribuirlo soltanto su staging con worker sempre `inactive+disabled`.
+- Safety soak post-fix: PASS, 23 check, 5/5 iterazioni, 147,9 s, 0 provider pagati, 0 worker avviati, 0 publication cliente; runtime finale conferma 0 job/canary/reservation stale, 0 saldi negativi e 0 charge duplicati.
+- Checkpoint locale `74c7d52`; push remoto bloccato perché `gh auth status` non ha una sessione GitHub. Dopo `gh auth login`, pushare il branch e distribuire soltanto su staging con worker sempre `inactive+disabled`.
 - Un eventuale nuovo paid canary richiede una nuova autorizzazione esplicita dopo checkpoint remoto e deve mantenere cap `€0,125`, one-shot UUID-bound, 0 repair e 0 customer publication/charge.
 
 ## Checkpoint corrente — Human Gold v5 atomic review + strict acceptance — 2026-07-14 05:58 +02:00
