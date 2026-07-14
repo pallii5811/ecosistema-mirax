@@ -805,6 +805,10 @@ def extracted_to_lead_stub(
         "source_lane": extracted.get("source_lane") or (
             "anac_structured" if isinstance(structured_signal, dict) else "web_research"
         ),
+        "source_types": list(extracted.get("source_types") or [])[:10],
+        "query_source": str(extracted.get("query_source") or "")[:500],
+        "source_publisher": str(extracted.get("source_publisher") or "")[:255],
+        "source_observation_date": str(extracted.get("source_observation_date") or observed_at)[:40],
         "agentic_evidence": evidence[:300],
         "agentic_source_url": source_url,
         "agentic_evidence_records": [
@@ -814,6 +818,9 @@ def extracted_to_lead_stub(
                 "matched_signals": signal_list,
                 "evidence_date": evidence_date or None,
                 "observed_at": observed_at,
+                "source_lane": extracted.get("source_lane") or "web_research",
+                "source_types": list(extracted.get("source_types") or [])[:10],
+                "query": str(extracted.get("query_source") or "")[:500],
                 "domain_verification_status": (
                     extracted.get("domain_verification") or {}
                 ).get("status") if isinstance(extracted.get("domain_verification"), dict) else None,
@@ -1054,7 +1061,7 @@ async def run_agentic_discovery_streaming(
             if _normalize_signal_name(value)
         }.intersection({"investing_marketing", "meta_ads_started", "google_ads_started"})
     )
-    query_yield: Dict[str, Dict[str, int]] = {}
+    query_yield: Dict[str, Dict[str, Any]] = {}
     base_search_queries: Optional[List[str]] = None
     search_query_generation_calls = 0
 
@@ -1363,9 +1370,31 @@ async def run_agentic_discovery_streaming(
                 break
 
             query_source = str(page.get("query_source") or "unknown")[:240]
-            query_metrics = query_yield.setdefault(query_source, {"pages": 0, "leads": 0})
+            query_metrics = query_yield.setdefault(
+                query_source,
+                {
+                    "pages": 0,
+                    "leads": 0,
+                    "source_lane": str(page.get("source_lane") or "supplemental")[:120],
+                    "source_types": list(page.get("source_types") or [])[:10],
+                    "expected_signals": list(page.get("expected_signals") or [])[:20],
+                    "source_urls": [],
+                    "source_observations": [],
+                },
+            )
             query_metrics["pages"] += 1
             query_metrics["leads"] += len(extracted)
+            page_url = str(page.get("url") or "").strip()
+            if page_url and page_url not in query_metrics["source_urls"]:
+                query_metrics["source_urls"].append(page_url[:1000])
+                query_metrics["source_urls"] = query_metrics["source_urls"][:25]
+                query_metrics["source_observations"].append(
+                    {
+                        "url": page_url[:1000],
+                        "observed_at": str(page.get("observed_at") or "")[:40] or None,
+                    }
+                )
+                query_metrics["source_observations"] = query_metrics["source_observations"][:25]
             _update_runtime_stats("running")
 
             for item in extracted:
@@ -1403,6 +1432,28 @@ async def run_agentic_discovery_streaming(
 
             if target_reached_in_round:
                 break
+
+        for execution in researcher.query_execution_log:
+            executed_query = str(execution.get("query") or "unknown")[:240]
+            query_metrics = query_yield.setdefault(
+                executed_query,
+                {
+                    "pages": 0,
+                    "leads": 0,
+                    "source_lane": str(execution.get("source_lane") or "supplemental")[:120],
+                    "source_types": list(execution.get("source_types") or [])[:10],
+                    "expected_signals": list(execution.get("expected_signals") or [])[:20],
+                    "source_urls": [],
+                    "source_observations": [],
+                },
+            )
+            query_metrics["query_status"] = str(execution.get("status") or "unknown")[:40]
+            query_metrics["urls_discovered"] = int(execution.get("urls_discovered") or 0)
+            for source_url in execution.get("urls_scheduled") or []:
+                normalized_url = str(source_url).strip()[:1000]
+                if normalized_url and normalized_url not in query_metrics["source_urls"]:
+                    query_metrics["source_urls"].append(normalized_url)
+            query_metrics["source_urls"] = query_metrics["source_urls"][:25]
 
         try:
             cost_governor.settle(

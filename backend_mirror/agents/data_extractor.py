@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
@@ -908,6 +909,22 @@ class DataExtractor:
                 )
                 continue
             for lead in leads:
+                lead["source_lane"] = str(page.get("source_lane") or "supplemental")[:120]
+                lead["source_types"] = [
+                    str(value).strip()[:120]
+                    for value in page.get("source_types") or []
+                    if str(value).strip()
+                ][:10]
+                lead["query_source"] = str(page.get("query_source") or "")[:500]
+                lead["expected_signals"] = [
+                    str(value).strip().lower().replace("-", "_")[:120]
+                    for value in page.get("expected_signals") or []
+                    if str(value).strip()
+                ][:20]
+                lead["source_publisher"] = _normalize_domain(source_url)
+                lead["source_observation_date"] = str(
+                    page.get("observed_at") or datetime.now(timezone.utc).isoformat()
+                )[:40]
                 key = _lead_dedupe_key(lead)
                 if key in seen:
                     continue

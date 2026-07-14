@@ -17,11 +17,17 @@ try {
     select distinct on (e.source_url,coalesce(e.candidate_ref,''))
       e.evaluation_run_id,e.search_id,e.vertical,e.source_id,e.source_url,e.publisher,
       e.candidate_ref,e.signal_type,e.observation_date,e.extraction_method,e.cost_eur,
-      e.selection_reason,e.metadata,r.release_id
+      e.selection_reason,e.metadata,r.release_id,
+      e.metadata->>'company' candidate_name,
+      e.metadata->>'candidate_website' candidate_website,
+      e.metadata->>'canonical_domain' candidate_domain
     from public.evaluation_source_events e
     join public.evaluation_runs r on r.id=e.evaluation_run_id
     where e.event_type='candidate_rejected' and e.source_url ~ '^https://'
       and coalesce(e.publisher,'')<>'' and r.dataset_version='mirax-gold-v5'
+      and coalesce(e.candidate_ref,'')<>''
+      and e.candidate_ref !~ '^extraction-[0-9]+$'
+      and coalesce(e.metadata->>'company','')<>''
     order by e.source_url,coalesce(e.candidate_ref,''),e.created_at desc
     limit 15
   `)
@@ -35,9 +41,9 @@ try {
       seller_profile: { vertical: row.vertical, adversarial_negative_control: true },
       query: `Adversarial replay: verify rejected ${row.vertical} candidate`,
       candidate_snapshot: {
-        name: row.candidate_ref || row.publisher,
-        website: row.source_url,
-        domain: row.publisher,
+        name: row.candidate_name,
+        website: row.candidate_website || '',
+        domain: row.candidate_domain || '',
         source_class: row.source_id,
         signal_type: row.signal_type,
         rejection_reason: row.selection_reason,

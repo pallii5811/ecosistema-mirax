@@ -345,6 +345,14 @@ def test_required_signal_lanes_are_all_executed_before_global_url_cap(monkeypatc
     }
     assert researcher.executed_required_signals == _required_source_signals(plan)
     assert researcher.search_queries_executed == 3
+    assert [entry["query"] for entry in researcher.query_execution_log] == queries
+    assert all(entry["status"] == "completed" for entry in researcher.query_execution_log)
+    assert {entry["source_lane"] for entry in researcher.query_execution_log} == {
+        "job_market",
+        "public_procurement",
+        "web_evidence",
+    }
+    assert all(len(entry["urls_scheduled"]) == 1 for entry in researcher.query_execution_log)
 
 
 def test_accountant_source_plan_does_not_degrade_to_hiring_or_retail_careers() -> None:

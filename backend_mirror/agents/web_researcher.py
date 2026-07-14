@@ -750,6 +750,7 @@ class WebResearcher:
         self.required_source_signals = _required_source_signals(plan)
         self.executed_required_signals: Set[str] = set()
         self.executed_source_lanes: Set[str] = set()
+        self.query_execution_log: List[Dict[str, Any]] = []
         try:
             self.scrape_workers = max(1, min(8, int(os.getenv("AGENTIC_SCRAPE_WORKERS", "4") or "4")))
         except ValueError:
@@ -844,6 +845,7 @@ class WebResearcher:
                 capacity = max(0, url_job_limit - len(url_jobs) - reserved_slots)
                 per_query_limit = min(self.max_urls_per_query, capacity)
                 added = 0
+                scheduled_urls: List[str] = []
                 for url in found:
                     if added >= per_query_limit:
                         break
@@ -852,11 +854,35 @@ class WebResearcher:
                         continue
                     self.seen_urls.add(key)
                     url_jobs.append((url, query, metadata))
+                    scheduled_urls.append(url)
                     added += 1
+                self.query_execution_log.append(
+                    {
+                        "query": query[:500],
+                        "status": "completed",
+                        "source_lane": str(metadata.get("source_lane") or "supplemental"),
+                        "source_types": list(metadata.get("source_types") or []),
+                        "expected_signals": sorted(expected),
+                        "urls_discovered": len(found),
+                        "urls_scheduled": scheduled_urls[: self.max_urls_per_query],
+                    }
+                )
             except ResearchBudgetExceeded:
                 raise
             except Exception as exc:
                 logger.warning("search failed query=%r: %s", query[:80], exc)
+                self.query_execution_log.append(
+                    {
+                        "query": query[:500],
+                        "status": "failed",
+                        "source_lane": str(metadata.get("source_lane") or "supplemental"),
+                        "source_types": list(metadata.get("source_types") or []),
+                        "expected_signals": sorted(expected),
+                        "urls_discovered": 0,
+                        "urls_scheduled": [],
+                        "error_class": type(exc).__name__,
+                    }
+                )
 
             if (
                 len(url_jobs) >= url_job_limit
@@ -1081,6 +1107,7 @@ class WebResearcher:
                             "url": url,
                             "raw_text": text,
                             "query_source": query_source,
+                            "observed_at": datetime.now(timezone.utc).isoformat(),
                             **query_metadata,
                         }
                     finally:

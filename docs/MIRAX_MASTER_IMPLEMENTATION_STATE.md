@@ -1,6 +1,36 @@
 # MIRAX Master Implementation State
 
-Ultimo aggiornamento verificato: 2026-07-14 08:57 (Europe/Rome)
+Ultimo aggiornamento verificato: 2026-07-14 11:05 (Europe/Rome)
+
+## Checkpoint corrente — provenance v5 fail-closed + source cost accounting — 2026-07-14 11:05 +02:00
+
+### Correzione dataset e verità misurata
+
+- Audit DB ha dimostrato che i 3 casi precedentemente indicati come adversariali erano artefatti `extraction-1/2`: derivavano da chiamate `llm_extract` senza alcun candidato azienda prodotto o lifecycle row corrispondente.
+- I 3 casi e i 3 source event fittizi sono stati rimossi in transazione con predicate stretto; giudizi umani rimossi `0`. Il cleanup è idempotente e il secondo dry-run rileva `0` artefatti.
+- Stato gold corretto: legacy baseline `7/25` giudizi, output v5 `0/160`, adversarial reali `0/15`, totale giudizi `7/200`. Precisione v5 non calcolabile e `production_acceptance_ready=false`.
+- Il promotore adversarial ora accetta soltanto lifecycle reject reali con azienda, candidate reference non sintetica, URL fonte e motivo di scarto; una mera estrazione LLM non può creare un caso gold.
+
+### Provenienza e costo per fonte
+
+- Ogni query eseguita conserva lane, source class, segnali attesi, stato, URL scoperti/schedulati, URL realmente osservati e timestamp; anche una fonte interrogata con resa zero resta misurabile.
+- La provenance viaggia pagina → estrazione → lead stub → lifecycle payload → source event/gold candidate: query, URL, publisher, source class/lane, data, metodo e segnali non vengono più ricostruiti da un fallback generico.
+- I costi source-level usano soltanto ledger `settled|failed`; `released|reserved` non vengono conteggiati. Search/planning/crawl/extraction vengono attribuiti alle query/URL reali e la somma deve coincidere col ledger entro `1e-7` oppure il canary fallisce.
+- Reservation aperta, attribution mismatch, pubblicazione cliente, costo sopra cap o meno di 3 lead qualificati fanno fallire e quarantinare il canary. Il finalizer è idempotente sugli eventi generati e non duplica i casi dello stesso run.
+
+### Evidenza di validazione
+
+- Test mirati: 45/45 Python PASS; source telemetry/cost PASS; TypeScript `tsc --noEmit` PASS.
+- Suite backend isolata completa: 176/176 PASS. Commercial contract, ontology, compiler normalization, human-review security, gold gates e Python compile PASS.
+- Preflight live: PASS; Vercel HTTP 200 e brake `MIRAX_SEARCH_DISABLED=1`; cache recente senza brand globali; server 116 con tutti i 6 worker `inactive+disabled` e paid extraction OFF.
+- Safety soak post-fix: PASS, 23 check, 5/5 iterazioni, 248,1 s, 0 provider pagati, 0 worker avviati, 0 publication cliente.
+- Runtime finale: active job `0`, active canary `0`, reservation stale `0`, negative balance `0`, duplicate charge `0`; RLS/ACL service-only sui gate critici verificati.
+
+### Stato Git e prossimo comando sicuro
+
+- Branch `safety/mirax-v5-11-codex-checkpoint`; prima di questo checkpoint HEAD locale `bd2afe8`, branch ahead di 3 sul remote. Nessun nuovo paid canary è stato eseguito.
+- Push ancora bloccato: `gh auth status` conferma nessuna sessione GitHub. Prossimo passo obbligatorio: `gh auth login`, commit/push del checkpoint, quindi deploy **solo staging** con worker ancora `inactive+disabled`.
+- Soltanto dopo checkpoint remoto e staging verificata: un solo nuovo canary controllato, ID nuovi, cap `€0,125`, one-shot, 0 repair e 0 customer publication/charge. I 10 shadow verticali restano vietati finché il canary non produce 3–5 lead qualificati.
 
 ## Checkpoint corrente — controlled canary fail-closed + lane-starvation remediation — 2026-07-14 08:57 +02:00
 
@@ -36,7 +66,7 @@ Ultimo aggiornamento verificato: 2026-07-14 08:57 (Europe/Rome)
 - Nessun nuovo paid retry autorizzato. Shadow canary 10 verticali e pubblicazione cliente restano bloccati.
 - Verifica completata: suite backend `176/176` senza skip; commercial contract, Python compile e preflight completo PASS. Vercel marker/brake corretti, 0 brand globali nella cache recente, worker server 116 tutti `inactive+disabled`, paid extraction disattivata, active job/canary/reservation stale `0/0/0`.
 - Safety soak post-fix: PASS, 23 check, 5/5 iterazioni, 147,9 s, 0 provider pagati, 0 worker avviati, 0 publication cliente; runtime finale conferma 0 job/canary/reservation stale, 0 saldi negativi e 0 charge duplicati.
-- Checkpoint locale `74c7d52`; push remoto bloccato perché `gh auth status` non ha una sessione GitHub. Dopo `gh auth login`, pushare il branch e distribuire soltanto su staging con worker sempre `inactive+disabled`.
+- Checkpoint remediation `74c7d52` seguito dal safety-soak `bd2afe8`; vedere il checkpoint provenance sopra per lo stato locale corrente. Push remoto ancora bloccato perché `gh auth status` non ha una sessione GitHub.
 - Un eventuale nuovo paid canary richiede una nuova autorizzazione esplicita dopo checkpoint remoto e deve mantenere cap `€0,125`, one-shot UUID-bound, 0 repair e 0 customer publication/charge.
 
 ## Checkpoint corrente — Human Gold v5 atomic review + strict acceptance — 2026-07-14 05:58 +02:00
@@ -45,7 +75,7 @@ Ultimo aggiornamento verificato: 2026-07-14 08:57 (Europe/Rome)
 
 - Legacy baseline: 200 casi disponibili, 7 giudizi umani completati; resta solo baseline di calibrazione/regressione.
 - MIRAX v5 output: 0 casi / 0 giudizi; nessuna precisione v5 calcolabile.
-- Adversarial: 3 casi reali promossi da `candidate_rejected` v5 con URL/publisher/costo/motivo, 0 giudizi; nessuna label automatica creata.
+- Adversarial: **0 casi reali**. I 3 casi precedentemente promossi erano artefatti di estrazione senza candidato e sono stati rimossi senza cancellare giudizi umani; vedere il checkpoint provenance sopra.
 - Progresso finale: 7/200 giudizi, 193 mancanti; `production_acceptance_ready=false`.
 - Il dataset finale resta esattamente 160 output v5 + 25 legacy + 15 adversariali. Casi extra non possono gonfiare il denominatore.
 
@@ -62,13 +92,13 @@ Ultimo aggiornamento verificato: 2026-07-14 08:57 (Europe/Rome)
 - Reporter separa precisione legacy, precisione v5, rejection accuracy adversarial, precisione per verticale e Wilson 95%.
 - Gate: precisione v5 `>=90%`; top-tier `>=95%` con denominatore minimo 20; dominio/evidenza/URL/freshness `100%`; contatti `>=90%` quando disponibili; adversarial rejection `100%`.
 - Legacy non entra mai nella precisione v5. Il gate produzione resta falso senza cold-cache, warm-cache e costo ponderato reale `<=€0,025/lead`.
-- Promotore adversarial idempotente usa soltanto eventi v5 realmente scartati e conserva `selection_is_not_ground_truth=true`.
+- Promotore adversarial idempotente usa soltanto lifecycle reject v5 realmente scartati, esclude reference `extraction-*`, richiede identità azienda e conserva `selection_is_not_ground_truth=true`.
 
 ### Evidenza tecnica
 
 - Atomic human review DB validator: PASS con rollback; retry 1 expected/1 judgment e failure non-ready 0/0.
 - Evaluation review security: 15/15 PASS; gold metric composition/isolation/gates PASS.
-- Preflight completo: PASS; evaluation cohort rilevata `legacy=7`, `v5_output=0`, `adversarial=3`; worker e freni invariati.
+- Preflight completo aggiornato: PASS; evaluation cohort `legacy=7`, `v5_output=0`, `adversarial=0`; worker e freni invariati.
 - Next.js production build: PASS, TypeScript PASS.
 - Safety soak finale aggiornata: PASS, 23 check, 5/5 iterazioni, 717,9 s, 0 provider pagati, 0 worker, 0 publication cliente.
 

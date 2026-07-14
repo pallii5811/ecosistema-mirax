@@ -113,11 +113,20 @@ def test_official_signal_page_uses_zero_cost_identity_extraction(monkeypatch):
             "con una nuova linea produttiva in Italia. " * 5
         ),
         "expected_signals": ["production_expansion"],
+        "source_lane": "web_evidence",
+        "source_types": ["official_company_website"],
+        "query_source": "nuovo stabilimento PMI Italia",
+        "observed_at": "2026-07-14T10:00:00+00:00",
     }))
 
     assert len(leads) == 1
     assert leads[0]["website"] == "https://officine-rossi.it/"
     assert leads[0]["matched_signals"] == ["production_expansion"]
+    assert leads[0]["source_lane"] == "web_evidence"
+    assert leads[0]["source_types"] == ["official_company_website"]
+    assert leads[0]["query_source"] == "nuovo stabilimento PMI Italia"
+    assert leads[0]["source_publisher"] == "officine-rossi.it"
+    assert leads[0]["source_observation_date"] == "2026-07-14T10:00:00+00:00"
 
 
 def test_known_enterprise_careers_page_is_rejected_before_paid_extraction(monkeypatch):

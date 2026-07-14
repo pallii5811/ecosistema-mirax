@@ -6,6 +6,14 @@ import { buildMiraxQueryPlan } from '../src/lib/uqe/mirax-query-planner'
 import { PersistentResearchCostGovernor } from '../src/lib/research/persistent-cost-governor'
 import { MIRAX_RELEASE_ID } from '../src/app/api/ops/release/route'
 import { SOURCE_BY_ID, sourceSupportsSignal } from '../src/lib/source-intelligence/registry'
+import {
+  buildQueriedSourceEvents,
+  canonicalDomain,
+  leadEvidenceUrl,
+  sourceMetadataFromLead,
+  type CostLedgerRow,
+  type QueryYieldStats,
+} from '../src/lib/evaluation/v5-source-telemetry'
 
 config({ path: '.env.local' })
 config({ path: '.env' })
@@ -39,10 +47,6 @@ function db(): SupabaseClient {
   })
 }
 
-function canonicalDomain(value: unknown): string {
-  try { return new URL(String(value || '')).hostname.toLowerCase().replace(/^www\./, '') } catch { return '' }
-}
-
 function leadName(row: Record<string, unknown>) {
   return String(row.azienda || row.nome || row.name || '').trim()
 }
@@ -52,11 +56,7 @@ function leadWebsite(row: Record<string, unknown>) {
 }
 
 function leadSourceUrl(row: Record<string, unknown>) {
-  const direct = String(row.source_url || row.evidence_url || '').trim()
-  if (direct.startsWith('https://') || direct.startsWith('http://')) return direct
-  const jobs = Array.isArray(row.business_hiring_jobs) ? row.business_hiring_jobs : []
-  const job = jobs.find((item) => item && typeof item === 'object' && String((item as Record<string, unknown>).url || '').startsWith('http'))
-  return job ? String((job as Record<string, unknown>).url) : ''
+  return leadEvidenceUrl(row)
 }
 
 function leadSignals(row: Record<string, unknown>): string[] {
@@ -65,16 +65,6 @@ function leadSignals(row: Record<string, unknown>): string[] {
   return [...new Set([...direct, ...business.map((item) =>
     item && typeof item === 'object' ? String((item as Record<string, unknown>).type || '') : '',
   )].filter(Boolean))]
-}
-
-function sourceFromQuery(query: string, fallback: string): string {
-  if (/indeed|infojobs|linkedin\.com\/jobs|career|lavora con noi/i.test(query)) return 'job_board'
-  if (/anac|ted\.europa|appalt|gara|procurement/i.test(query)) return 'public_procurement_portal'
-  if (/registro imprese|camera di commercio|bilanc|societar/i.test(query)) return 'official_registry'
-  if (/news|notizie|comunicato|stampa/i.test(query)) return 'recognized_local_news'
-  if (/meta ads|facebook ads|google ads|ad library/i.test(query)) return 'ad_transparency_library'
-  if (/linkedin|instagram|facebook/i.test(query)) return 'official_social_profile'
-  return fallback
 }
 
 async function activeGuards(service: SupabaseClient) {
@@ -254,101 +244,117 @@ async function finalize() {
     .map((row) => row.payload)
     .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
     .filter((row) => leadName(row) && canonicalDomain(leadWebsite(row)) && leadSourceUrl(row) && leadSignals(row).length > 0)
-  const actualCost = (ledger || []).reduce((sum, row) => sum + Number(row.actual_cost_eur ?? row.estimated_cost_eur ?? 0), 0)
-  const extractionCost = (ledger || []).filter((row) => row.operation_type === 'llm_extract')
-    .reduce((sum, row) => sum + Number(row.actual_cost_eur ?? row.estimated_cost_eur ?? 0), 0)
-  const queryAttributableCost = Math.max(0, actualCost - extractionCost)
   const queryYield = (search?.intent as any)?.agentic_stats?.query_yield || {}
   const allowedSources = ((search?.intent as any)?.uqe_plan?.canonical_plan?.source_policy?.allowed_source_classes || ['official_company_website']) as string[]
   const fallbackSource = allowedSources[0] || 'official_company_website'
-  const queryEntries = Object.entries(queryYield) as Array<[string, { pages?: number; leads?: number }]>
-  const queriedEvents = queryEntries.map(([query, stats]) => ({
-    evaluation_run_id: runId, canary_run_id: canaryId, search_id: searchId, vertical,
-    source_id: sourceFromQuery(query, fallbackSource), event_type: 'queried',
-    extraction_method: SOURCE_BY_ID.get(sourceFromQuery(query, fallbackSource))?.extraction_method || 'search_and_http',
-    cost_eur: queryEntries.length ? queryAttributableCost / queryEntries.length : 0,
-    selection_reason: 'Executed query emitted by canonical source planner',
-    metadata: { query, pages: Number(stats?.pages || 0), candidates_produced: Number(stats?.leads || 0) },
-  }))
+  const sourceTelemetry = buildQueriedSourceEvents({
+    runId, canaryId, searchId, vertical, fallbackSource,
+    queryYield: queryYield as Record<string, QueryYieldStats>,
+    ledger: (ledger || []) as CostLedgerRow[],
+  })
+  const queriedEvents = sourceTelemetry.events
+  const actualCost = sourceTelemetry.actualCostEur
+  const attributionMatchesLedger = Math.abs(sourceTelemetry.attributedCostEur - actualCost) <= 0.0000001
+  const hasOpenReservation = (ledger || []).some((row) => row.status === 'reserved')
   const candidateEvents = candidates.map((row, index) => {
     const url = leadSourceUrl(row)
     const signals = leadSignals(row)
+    const source = sourceMetadataFromLead(row, url, fallbackSource)
     return {
       evaluation_run_id: runId, canary_run_id: canaryId, search_id: searchId, vertical,
-      source_id: sourceFromQuery(url, fallbackSource), source_url: url || null,
-      publisher: canonicalDomain(url), event_type: 'candidate_produced',
+      source_id: source.sourceId, source_url: url || null,
+      publisher: source.publisher, event_type: 'candidate_produced',
       candidate_ref: canonicalDomain(leadWebsite(row)) || `result-${index + 1}`,
-      signal_type: signals[0] || null, observation_date: String(row.evidence_date || row.observed_at || new Date().toISOString()),
-      extraction_method: String(row.source_lane || 'worker_evidence_pipeline'), cost_eur: 0,
+      signal_type: signals[0] || null, observation_date: source.observationDate,
+      extraction_method: source.extractionMethod, cost_eur: 0,
       selection_reason: 'Produced by isolated v5 shadow worker from executed source query',
-      metadata: { query: spec.query, company: leadName(row), signals },
+      metadata: { query: source.query || spec.query, company: leadName(row), signals, source_types: row.source_types || [] },
     }
   })
-  const rejectedEvents = lifecycleRows.filter((row) => row.stage === 'rejected').map((row) => ({
-    evaluation_run_id: runId, canary_run_id: canaryId, search_id: searchId, vertical,
-    source_id: fallbackSource, event_type: 'candidate_rejected', candidate_ref: row.canonical_domain || row.id,
-    extraction_method: 'commercial_lifecycle_gate', cost_eur: 0,
-    selection_reason: String(row.rejection_detail || row.rejection_code || 'quality_gate_failed').slice(0, 1000),
-    metadata: { company: row.entity_name, rejection_code: row.rejection_code, rejection_detail: row.rejection_detail },
-  }))
-  const extractionRejectedEvents = (ledger || []).filter((row) =>
-    row.operation_type === 'llm_extract' && String((row.metadata as Record<string, unknown> | null)?.source_url || '').startsWith('http'),
-  ).map((row, index) => {
-    const sourceUrl = String((row.metadata as Record<string, unknown>).source_url)
+  const rejectedEvents = lifecycleRows.filter((row) => row.stage === 'rejected').map((row) => {
+    const payload = row.payload && typeof row.payload === 'object' ? row.payload as Record<string, unknown> : {}
+    const sourceUrl = leadSourceUrl(payload)
+    const source = sourceMetadataFromLead(payload, sourceUrl, fallbackSource)
     return {
       evaluation_run_id: runId, canary_run_id: canaryId, search_id: searchId, vertical,
-      source_id: sourceFromQuery(sourceUrl, fallbackSource), source_url: sourceUrl,
-      publisher: canonicalDomain(sourceUrl), event_type: 'candidate_rejected',
-      candidate_ref: `extraction-${index + 1}`, extraction_method: 'llm_extract_then_quality_gate',
-      cost_eur: Number(row.actual_cost_eur ?? row.estimated_cost_eur ?? 0),
-      selection_reason: 'Raw extraction did not pass requested-signal/entity/SME validation and was not retained',
-      metadata: { operation_type: row.operation_type, outcome: (row.metadata as Record<string, unknown>).outcome || null },
+      source_id: source.sourceId, source_url: sourceUrl || null,
+      publisher: source.publisher, event_type: 'candidate_rejected',
+      candidate_ref: row.canonical_domain || canonicalDomain(leadWebsite(payload)) || row.id,
+      observation_date: source.observationDate,
+      extraction_method: 'commercial_lifecycle_gate', cost_eur: 0,
+      selection_reason: String(row.rejection_detail || row.rejection_code || 'quality_gate_failed').slice(0, 1000),
+      metadata: {
+        query: source.query || spec.query, company: row.entity_name || leadName(payload),
+        candidate_website: leadWebsite(payload) || null,
+        canonical_domain: row.canonical_domain || canonicalDomain(leadWebsite(payload)) || null,
+        rejection_code: row.rejection_code, rejection_detail: row.rejection_detail,
+        source_types: payload.source_types || [], source_lane: payload.source_lane || null,
+      },
     }
   })
-  const confirmedEvents = validated.map((row) => ({
-    evaluation_run_id: runId, canary_run_id: canaryId, search_id: searchId, vertical,
-    source_id: sourceFromQuery(leadSourceUrl(row), fallbackSource), source_url: leadSourceUrl(row),
-    publisher: canonicalDomain(leadSourceUrl(row)), event_type: 'signal_confirmed',
-    candidate_ref: canonicalDomain(leadWebsite(row)), signal_type: leadSignals(row)[0],
-    observation_date: String(row.evidence_date || row.observed_at || new Date().toISOString()),
-    extraction_method: String(row.source_lane || 'worker_evidence_pipeline'), cost_eur: 0,
-    selection_reason: 'Machine validation retained official domain, source URL and requested signal',
-    metadata: { query: spec.query, company: leadName(row), signals: leadSignals(row) },
-  }))
-  const eventRows = [...queriedEvents, ...candidateEvents, ...rejectedEvents, ...extractionRejectedEvents, ...confirmedEvents]
+  const confirmedEvents = validated.map((row) => {
+    const sourceUrl = leadSourceUrl(row)
+    const source = sourceMetadataFromLead(row, sourceUrl, fallbackSource)
+    return {
+      evaluation_run_id: runId, canary_run_id: canaryId, search_id: searchId, vertical,
+      source_id: source.sourceId, source_url: sourceUrl,
+      publisher: source.publisher, event_type: 'signal_confirmed',
+      candidate_ref: canonicalDomain(leadWebsite(row)), signal_type: leadSignals(row)[0],
+      observation_date: source.observationDate,
+      extraction_method: source.extractionMethod, cost_eur: 0,
+      selection_reason: 'Machine validation retained official domain, source URL and requested signal',
+      metadata: { query: source.query || spec.query, company: leadName(row), signals: leadSignals(row), source_types: row.source_types || [] },
+    }
+  })
+  const eventRows = [...queriedEvents, ...candidateEvents, ...rejectedEvents, ...confirmedEvents]
+  const { error: cleanupError } = await service.from('evaluation_source_events').delete()
+    .eq('evaluation_run_id', runId).neq('event_type', 'selected')
+  if (cleanupError) throw cleanupError
   if (eventRows.length) {
     const { error } = await service.from('evaluation_source_events').insert(eventRows)
     if (error) throw error
   }
-  const existing = await service.from('evaluation_cases').select('case_number').eq('dataset_version', datasetVersion).eq('vertical', vertical).order('case_number', { ascending: false }).limit(1).maybeSingle()
+  const [{ data: existingRunCases, error: existingRunError }, existing] = await Promise.all([
+    service.from('evaluation_cases').select('id,review_status').eq('dataset_version', datasetVersion).eq('source_run_id', runId),
+    service.from('evaluation_cases').select('case_number').eq('dataset_version', datasetVersion).eq('vertical', vertical).order('case_number', { ascending: false }).limit(1).maybeSingle(),
+  ])
+  if (existingRunError || existing.error) throw existingRunError || existing.error
   let number = Number(existing.data?.case_number || 0)
-  const caseRows = validated.map((row) => ({
-    dataset_version: datasetVersion, cohort: 'v5_output', origin_release_id: MIRAX_RELEASE_ID,
-    source_run_id: runId, vertical, case_number: ++number,
-    seller_profile: { vertical, query: spec.query }, query: spec.query,
-    candidate_snapshot: row,
-    provenance: {
-      engine: 'MIRAX_v5', shadow_only: true, customer_visible: false, search_id: searchId,
-      evaluation_run_id: runId, source_url: leadSourceUrl(row), publisher: canonicalDomain(leadSourceUrl(row)),
-      observation_date: row.evidence_date || row.observed_at || null,
-      extraction_method: row.source_lane || 'worker_evidence_pipeline',
-      cost_eur_total_run: actualCost, selection_reason: 'Passed machine validation; human ground truth still required',
-      human_ground_truth_required: true, selection_is_not_ground_truth: true,
-    },
-    review_status: 'candidate_ready',
-  }))
+  const caseRows = (existingRunCases || []).length ? [] : validated.map((row) => {
+    const sourceUrl = leadSourceUrl(row)
+    const source = sourceMetadataFromLead(row, sourceUrl, fallbackSource)
+    return {
+      dataset_version: datasetVersion, cohort: 'v5_output', origin_release_id: MIRAX_RELEASE_ID,
+      source_run_id: runId, vertical, case_number: ++number,
+      seller_profile: { vertical, query: spec.query }, query: spec.query,
+      candidate_snapshot: row,
+      provenance: {
+        engine: 'MIRAX_v5', shadow_only: true, customer_visible: false, search_id: searchId,
+        evaluation_run_id: runId, source_id: source.sourceId, source_url: sourceUrl,
+        publisher: source.publisher, observation_date: source.observationDate,
+        extraction_method: source.extractionMethod, source_query: source.query,
+        cost_eur_total_run: actualCost, selection_reason: 'Passed machine validation; human ground truth still required',
+        human_ground_truth_required: true, selection_is_not_ground_truth: true,
+      },
+      review_status: 'candidate_ready',
+    }
+  })
   if (caseRows.length) {
     const { error } = await service.from('evaluation_cases').insert(caseRows)
     if (error) throw error
   }
-  const passed = validated.length >= 3 && validated.length <= 5 && actualCost <= hardBudgetEur && (publicationCount || 0) === 0 && search?.status === 'completed'
+  const passed = validated.length >= 3 && validated.length <= 5 && actualCost <= hardBudgetEur &&
+    (publicationCount || 0) === 0 && search?.status === 'completed' && attributionMatchesLedger && !hasOpenReservation
   const metrics = {
     vertical, status: search?.status, candidates_produced: candidates.length,
     candidates_validated: validated.length, lifecycle_qualified: qualifiedLifecycle.length,
-    candidates_rejected: rejectedEvents.length + extractionRejectedEvents.length,
-    sources_selected: allowedSources, sources_queried: queryEntries.map(([query]) => query),
+    candidates_rejected: rejectedEvents.length,
+    sources_selected: allowedSources, sources_queried: Object.keys(queryYield),
     cost_eur: actualCost, cost_per_candidate_eur: candidates.length ? actualCost / candidates.length : null,
     cost_per_validated_lead_eur: validated.length ? actualCost / validated.length : null,
+    source_cost_attributed_eur: sourceTelemetry.attributedCostEur,
+    source_cost_matches_ledger: attributionMatchesLedger,
+    open_cost_reservations: hasOpenReservation ? 1 : 0,
     customer_publications: publicationCount || 0, agentic_stats: (search?.intent as any)?.agentic_stats || {},
   }
   await service.from('evaluation_runs').update({ status: passed ? 'completed' : 'failed', metrics, completed_at: new Date().toISOString() }).eq('id', runId)
