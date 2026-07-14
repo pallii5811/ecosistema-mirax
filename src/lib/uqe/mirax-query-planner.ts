@@ -269,6 +269,12 @@ function defaultSourcePlan(query: string, signals: string[]): UqeSourcePlanItem[
       ['sito ufficiale', 'tag manager', 'pixel', 'landing page'],
       ['pixel/tag ads', 'form lead', 'call tracking o CTA commerciale'],
     )
+    add(
+      'company_web',
+      ['newsroom aziendale', 'comunicati ufficiali', 'case study con cliente nominato'],
+      ['investing_marketing'],
+      true,
+    )
   }
   if (signals.some((signal) => ['seeking_supplier', 'tender_won'].includes(signal))) {
     add('compliance', ['bandi', 'albi fornitori', 'normative di settore'], ['bisogno/obbligo', 'scadenza o data', 'ente/azienda'])

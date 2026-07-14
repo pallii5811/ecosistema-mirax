@@ -16,6 +16,7 @@ from .contracts import (
 )
 from .digital_audit import DigitalAuditAdapter
 from .hiring import HiringAdapter, HiringProviderResult
+from .growth import GrowthProviderResult, GrowthSignalsAdapter
 from .procurement import ProcurementAdapter, ProcurementProviderResult
 
 __all__ = [
@@ -28,6 +29,8 @@ __all__ = [
     "EvidenceRecord",
     "HiringAdapter",
     "HiringProviderResult",
+    "GrowthProviderResult",
+    "GrowthSignalsAdapter",
     "OpportunityCandidate",
     "ProcurementAdapter",
     "ProcurementProviderResult",

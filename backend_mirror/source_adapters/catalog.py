@@ -111,6 +111,9 @@ class SourceCapabilityRegistry:
 def default_source_capability_registry() -> SourceCapabilityRegistry:
     from .digital_audit import DigitalAuditAdapter
     from .hiring import HiringAdapter
+    from .growth import GrowthSignalsAdapter
     from .procurement import ProcurementAdapter
 
-    return SourceCapabilityRegistry((DigitalAuditAdapter(), ProcurementAdapter(), HiringAdapter()))
+    return SourceCapabilityRegistry((
+        DigitalAuditAdapter(), ProcurementAdapter(), HiringAdapter(), GrowthSignalsAdapter()
+    ))

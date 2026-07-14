@@ -19,6 +19,8 @@ assert.ok(marketing.required_signals.includes('investing_marketing'))
 assert.ok(!marketing.required_signals.includes('hiring'))
 assert.ok(!marketing.required_signals.includes('expansion'))
 assert.ok(marketing.source_plan?.some((lane) => lane.lane === 'ads'))
+assert.equal(marketing.source_plan?.find((lane) => lane.lane === 'company_web')?.coverage_status, 'supported')
+assert.deepEqual(marketing.source_plan?.find((lane) => lane.lane === 'company_web')?.adapter_ids, ['official_growth_signals_v1'])
 assert.equal(marketing.source_coverage?.status, 'generic_fallback_partial')
 
 const hiring = buildHeuristicMiraxQueryPlan(

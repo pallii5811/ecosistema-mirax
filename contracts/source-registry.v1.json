@@ -3,6 +3,9 @@
   "sources": [
     {
       "id": "official_company_website",
+      "implementation_id": "official_growth_signals_v1",
+      "capability_version": "1.0.0",
+      "runtime_coverage": "generic_fallback_partial",
       "signals_supported": ["*"],
       "trust_level": 0.9,
       "primary": true,
@@ -135,6 +138,9 @@
     },
     {
       "id": "recognized_local_news",
+      "implementation_id": "official_growth_signals_v1",
+      "capability_version": "1.0.0",
+      "runtime_coverage": "generic_fallback_partial",
       "signals_supported": ["new_location", "geographic_expansion", "production_expansion", "fleet_expansion", "funding", "financing", "product_launch", "service_launch", "internationalization", "new_equipment", "acquisition", "merger", "rebranding", "rapid_demand_growth"],
       "trust_level": 0.68,
       "primary": false,
@@ -150,6 +156,9 @@
     },
     {
       "id": "industry_publication",
+      "implementation_id": "official_growth_signals_v1",
+      "capability_version": "1.0.0",
+      "runtime_coverage": "generic_fallback_partial",
       "signals_supported": ["product_launch", "service_launch", "internationalization", "certification", "partnership_search", "distributor_search", "new_equipment"],
       "trust_level": 0.72,
       "primary": false,

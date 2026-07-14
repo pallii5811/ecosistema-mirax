@@ -217,9 +217,36 @@ export const HIRING_CAPABILITY: SourceCapability = {
   coverage_status: 'supported',
 }
 
+export const GROWTH_SIGNALS_CAPABILITY: SourceCapability = {
+  adapter_id: 'official_growth_signals_v1',
+  adapter_version: '1.0.0',
+  supported_intents: ['organic_web_search', 'commercial_search', 'hybrid', 'growth_signals'],
+  supported_signals: [
+    'investing_marketing', 'active_advertising', 'meta_ads_started', 'google_ads_started', 'rebranding',
+    'expansion', 'new_location', 'geographic_expansion', 'production_expansion', 'product_launch',
+    'service_launch', 'internationalization', 'new_equipment', 'market_entry',
+  ],
+  source_classes: ['official_company_website', 'recognized_local_news', 'industry_publication'],
+  geographic_coverage: ['global'],
+  freshness_max_age_days: 1,
+  discovery_mode: 'discovery_first',
+  supports_pagination: true,
+  supports_cursor_resume: true,
+  max_results_per_page: 100,
+  max_results_per_run: null,
+  estimated_cost_eur_per_operation: 0.005,
+  authentication_requirements: ['search_provider_with_cost_governor'],
+  rate_limit_per_minute: 20,
+  provenance_guarantees: ['company', 'official_domain', 'publisher', 'source_url', 'published_at'],
+  evidence_guarantees: ['signal_id', 'proof_level', 'excerpt', 'freshness', 'company_relation'],
+  exhaustion_semantics: 'best_effort',
+  coverage_status: 'supported',
+}
+
 export const SOURCE_CAPABILITY_REGISTRY = new SourceCapabilityRegistry([
   DIGITAL_AUDIT_CAPABILITY,
   PROCUREMENT_CAPABILITY,
   HIRING_CAPABILITY,
+  GROWTH_SIGNALS_CAPABILITY,
   GENERIC_WEB_RESEARCH_CAPABILITY,
 ])

@@ -176,6 +176,9 @@ def test_registry_binds_both_hiring_source_classes_to_real_runtime() -> None:
     from backend_mirror.source_adapters.catalog import default_source_capability_registry
 
     ids = {item.adapter_id for item in default_source_capability_registry().capabilities()}
-    assert ids == {"legacy_digital_audit_v1", "public_procurement_v1", "structured_hiring_v1"}
+    assert ids == {
+        "legacy_digital_audit_v1", "public_procurement_v1", "structured_hiring_v1",
+        "official_growth_signals_v1",
+    }
     assert source_runtime_coverage("company_careers") == "supported"
     assert source_runtime_coverage("job_board") == "supported"

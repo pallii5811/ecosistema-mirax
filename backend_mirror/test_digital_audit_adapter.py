@@ -96,7 +96,8 @@ def test_any_mode_and_domain_dedup_are_deterministic() -> None:
 def test_runtime_registry_and_source_bindings_are_truthful() -> None:
     capabilities = default_source_capability_registry().capabilities()
     assert {item.adapter_id for item in capabilities} == {
-        "legacy_digital_audit_v1", "public_procurement_v1", "structured_hiring_v1"
+        "legacy_digital_audit_v1", "public_procurement_v1", "structured_hiring_v1",
+        "official_growth_signals_v1",
     }
     assert source_runtime_coverage("technology_audit") == "supported"
     assert source_runtime_coverage("google_business_maps") == "supported"

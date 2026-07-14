@@ -28,9 +28,13 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - 20 replay PMI positivi; pagine generiche, scadute, enterprise, ruoli errati, publisher e recruiter proxy restano respinti.
 - Dominio, azienda diretta, ruolo, luogo, data, stato attivo, freshness, PMI, dedup e provenance sono fail-closed.
 - Hard cap pre-query verificato: budget `EUR 0,009` consente una sola reservation/query da `EUR 0,005`.
-- Registry runtime: Digital Audit, Procurement e Hiring supported; fallback web resta esplicitamente parziale.
+- Fase 5 Growth: adapter `official_growth_signals_v1` su siti ufficiali e fonti editoriali strutturate.
+- Replay offline: 20/20 Marketing Investment e 20/20 Expansion con prova diretta/proxy forte e freshness.
+- Proxy deboli, stale, publisher, fonti secondarie non corroborate, rumore agenzie, geografia ed enterprise sono respinti.
+- Semantica `any` verificata; `all` fallisce chiuso se un record non prova ogni segnale richiesto.
+- Registry runtime: Digital Audit, Procurement, Hiring e Growth; Ad Library resta esplicitamente non coperta.
 - Test Hiring, forensic legacy, lifecycle, contratti e compile Python/TypeScript: verdi; costo provider reale `EUR 0`.
 - Test Fase 3, regressioni strutturate, contratti e compile Python/TypeScript: verdi; costo provider `EUR 0`.
 
 ## Prossimo passo sicuro
-- Implementare Marketing Investment/Expansion Adapter composito su fixture deterministiche; nessun canary/provider live.
+- Rafforzare il Generic Web Research Fallback come copertura parziale dichiarata; nessun canary/provider live.
