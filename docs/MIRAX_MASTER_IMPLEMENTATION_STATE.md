@@ -1,6 +1,42 @@
 # MIRAX Master Implementation State
 
-Ultimo aggiornamento verificato: 2026-07-14 05:58 (Europe/Rome)
+Ultimo aggiornamento verificato: 2026-07-14 08:57 (Europe/Rome)
+
+## Checkpoint corrente — controlled canary fail-closed + lane-starvation remediation — 2026-07-14 08:57 +02:00
+
+### Canary v5 eseguito una sola volta
+
+- Search `e77d2d08-e300-4e19-82a8-27ff532c60b5`; canary `da7ad658-ad9d-423b-a177-be097029d6ac`; evaluation run `3ae9aa50-2314-44a3-8b2b-c8a2c67813fe`.
+- Prepare semantico: PASS 19/19; seller/buyer corretti, PMI Italia micro/small/medium, tre segnali esatti e tre lane dedicate, Maps escluso, una sola chiamata compiler e zero repair.
+- One-shot isolato: FAIL chiuso. Costo totale reale `€0,111111` sul cap `€0,125`; 2 query eseguite su 3 lane, 48 pagine schedulate, 24 scrapeate, 5 estrazioni grezze, 0 candidati qualificati.
+- Nessun risultato cliente: 0 publication, 0 credit charge, 0 evidence pubblicata. Search `cancelled`, canary `quarantined`, evaluation run `failed`; active job/canary e reservation stale `0/0/0`.
+- Fixture sanitizzata: `reports/workplace-safety-controlled-canary-20260714-0601.json`.
+
+### Root cause generale
+
+- Il loop URL fermava l'intera discovery quando le prime lane riempivano il cap globale; l'ordinamento coverage-first non garantiva quindi l'esecuzione di tutte le lane.
+- La metrica confrontava il numero totale di query, non l'insieme dei required signal realmente interrogati.
+- Il pass hiring strutturato legacy duplicava la lane canonica `job_market` e consumava `€0,01` prima delle altre lane.
+- Il primo round programmava 48 pagine anziché fare breadth-first minimo.
+- Una singola estrazione Sonnet sulla careers page enterprise di MINI ha consumato `€0,026511` prima del reject downstream.
+
+### Correzione offline dimostrata
+
+- L'executor misura `executed_required_signals`; un segnale è coperto soltanto dopo che la sua query termina. Errori provider non contano come copertura.
+- Tutte le query required vengono eseguite prima che il cap URL possa fermare il loop; gli slot sono riservati alle lane ancora mancanti.
+- Primo round con lane required: massimo una pagina per query. L'espansione è consentita solo nei round successivi.
+- Il pass hiring legacy non parte se il source planner v5 ha già una lane `job_market`.
+- Query già semanticamente scoped non ricevono contesto lane contraddittorio.
+- Pagine ufficiali con segnale esplicito usano estrazione deterministica gratuita; enterprise/brand noti sono scartati prima dell'LLM.
+- Prompt di estrazione ridotto al solo contratto di evidenza; massimo 3 aziende e 700 output token.
+- Regressioni mirate: 61/61 PASS. Suite backend: 174 PASS, 2 test async legacy inizialmente skipped; gli stessi sono stati convertiti in test sincroni reali e passano 4/4.
+
+### Stato e prossimo comando sicuro
+
+- Nessun nuovo paid retry autorizzato. Shadow canary 10 verticali e pubblicazione cliente restano bloccati.
+- Verifica completata: suite backend `176/176` senza skip; commercial contract, Python compile e preflight completo PASS. Vercel marker/brake corretti, 0 brand globali nella cache recente, worker server 116 tutti `inactive+disabled`, paid extraction disattivata, active job/canary/reservation stale `0/0/0`.
+- Creare checkpoint Git e distribuirlo soltanto su staging con worker sempre `inactive+disabled`.
+- Un eventuale nuovo paid canary richiede una nuova autorizzazione esplicita dopo checkpoint remoto e deve mantenere cap `€0,125`, one-shot UUID-bound, 0 repair e 0 customer publication/charge.
 
 ## Checkpoint corrente — Human Gold v5 atomic review + strict acceptance — 2026-07-14 05:58 +02:00
 

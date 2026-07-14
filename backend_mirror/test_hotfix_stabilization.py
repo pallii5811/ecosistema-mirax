@@ -26,22 +26,30 @@ def test_no_website():
     assert _lead_has_valid_website(lead2)
 
 
-async def test_anac_no_crash():
+async def _anac_no_crash():
     # Must not raise or print errors — empty list OK
     out = await detect_tender_signals("Impresa Edile Test XYZ Non Esiste")
     assert isinstance(out, list)
 
 
-async def test_poor_fallback_no_piva():
+async def _poor_fallback_no_piva():
     out = await enrich_poor_lead_fallback({"sito": "NO WEBSITE"}, "Modena")
     assert out == []
+
+
+def test_anac_no_crash():
+    asyncio.run(_anac_no_crash())
+
+
+def test_poor_fallback_no_piva():
+    asyncio.run(_poor_fallback_no_piva())
 
 
 def main() -> int:
     test_lead_name()
     test_no_website()
-    asyncio.run(test_anac_no_crash())
-    asyncio.run(test_poor_fallback_no_piva())
+    test_anac_no_crash()
+    test_poor_fallback_no_piva()
     print("test_hotfix_stabilization: 4/4 OK")
     return 0
 

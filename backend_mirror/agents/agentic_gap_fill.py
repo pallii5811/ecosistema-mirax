@@ -1148,13 +1148,21 @@ async def run_agentic_discovery_streaming(
                 return []
         except Exception as exc:
             logger.warning("provider status check failed: %s", exc)
-    run_structured_lanes = True
+    planned_lanes = {
+        str(lane.get("lane") or "").strip().lower()
+        for lane in plan.get("source_plan") or []
+        if isinstance(lane, dict)
+    }
+    # A canonical job_market lane already owns hiring discovery. Running the
+    # legacy structured lane first duplicates paid searches and can starve the
+    # remaining required source lanes under a small hard cap.
+    run_structured_lanes = "job_market" not in planned_lanes
     structured_reservation_active = False
     structured_reservation_eur = 0.0
     normalized_required = {
         _normalize_signal_name(value) for value in plan.get("required_signals") or []
     }
-    if "hiring" in normalized_required:
+    if "hiring" in normalized_required and run_structured_lanes:
         structured_queries = min(10, max(2, len(plan.get("hiring_roles") or []) * 2))
         structured_reservation_eur = structured_queries * 0.005
         try:
@@ -1256,6 +1264,10 @@ async def run_agentic_discovery_streaming(
         search_unit_cost = max(0.0, float(os.getenv("MIRAX_SERP_COST_EUR_PER_QUERY", "0.005") or "0.005"))
         crawl_unit_cost = max(0.0, float(os.getenv("MIRAX_CRAWL_COST_EUR_PER_PAGE", "0.0002") or "0.0002"))
         required_lane_queries = _required_source_lane_count(plan)
+        if required_lane_queries > 0 and round_idx == 1:
+            # Phase A is evidence breadth, not crawl breadth: schedule at most
+            # one page per query until every required semantic lane has run.
+            max_urls = 1
         minimum_lane_cost = required_lane_queries * (search_unit_cost + crawl_unit_cost)
         if required_lane_queries > 0 and cost_governor.remaining_eur + 1e-9 < minimum_lane_cost:
             stop_reason = "insufficient_budget_for_required_lane_coverage"
@@ -1408,12 +1420,17 @@ async def run_agentic_discovery_streaming(
 
         if researcher.cost_failure:
             stop_reason = "budget_exhausted"
-        if researcher.search_queries_executed < required_lane_queries:
+        missing_required_source_signals = sorted(
+            researcher.required_source_signals.difference(
+                researcher.executed_required_signals
+            )
+        )
+        if missing_required_source_signals:
             stop_reason = "incomplete_required_signal_lane_execution"
             logger.error(
-                "required source lane execution incomplete required=%s executed=%s",
-                required_lane_queries,
-                researcher.search_queries_executed,
+                "required source lane execution incomplete missing_signals=%s executed_signals=%s",
+                missing_required_source_signals,
+                sorted(researcher.executed_required_signals),
             )
 
         if not base_search_queries and researcher.generated_base_queries:

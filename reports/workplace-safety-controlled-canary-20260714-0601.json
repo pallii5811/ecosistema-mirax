@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-07-14T08:57:37+02:00",
+  "customer_visible": false,
+  "search_id": "e77d2d08-e300-4e19-82a8-27ff532c60b5",
+  "canary_id": "da7ad658-ad9d-423b-a177-be097029d6ac",
+  "evaluation_run_id": "3ae9aa50-2314-44a3-8b2b-c8a2c67813fe",
+  "query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane con cantieri, produzione, appalti o crescita del personale operativo",
+  "hard_budget_eur": 0.125,
+  "actual_cost_eur": 0.111111,
+  "compiler_calls": 1,
+  "repair_calls": 0,
+  "required_signals": ["hiring_operational", "contract_awarded", "production_expansion"],
+  "source_lanes_selected": ["job_market", "public_procurement", "web_evidence"],
+  "source_queries_executed": 2,
+  "pages_scheduled": 48,
+  "pages_scraped": 24,
+  "raw_extractions": 5,
+  "qualified_candidates": 0,
+  "publications": 0,
+  "credit_charges": 0,
+  "terminal_state": {
+    "search": "cancelled",
+    "canary": "quarantined",
+    "evaluation_run": "failed",
+    "reason": "incomplete_required_signal_lane_execution"
+  },
+  "semantic_errors": [
+    "production_expansion source lane was selected but never queried",
+    "the first two source lanes filled the global URL cap before mandatory lane coverage completed",
+    "48 pages were scheduled before minimum breadth-first lane coverage",
+    "one Anthropic extraction on a known enterprise careers page consumed EUR 0.026511"
+  ],
+  "root_cause": "URL discovery treated the global URL cap as a loop termination condition instead of reserving and measuring one execution slot per required signal lane. The legacy structured hiring pass duplicated the canonical job_market lane, and official-domain evidence was sent to the LLM before deterministic identity extraction and enterprise rejection.",
+  "offline_remediation": [
+    "measure executed required signals instead of comparing aggregate query counts",
+    "execute every required source query before honoring the global URL cap",
+    "reserve URL capacity for still-missing required signals",
+    "limit first-round breadth to one page per query",
+    "disable duplicate legacy structured hiring when canonical job_market is present",
+    "extract explicit signals on official domains deterministically before paid LLM use",
+    "reject known non-SME official domains before paid extraction",
+    "cap extraction output to three companies and 700 output tokens",
+    "remove non-essential canonical-plan fields from paid extraction prompts"
+  ],
+  "paid_retry_authorized": false
+}

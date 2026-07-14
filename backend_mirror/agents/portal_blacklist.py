@@ -41,7 +41,7 @@ SOURCE_PORTAL_DOMAINS = frozenset({
     "leroymerlin.it", "skyscanner.it", "jeffersonwells.it", "manpower.it",
     "randstad.it", "gigroupholding.it", "gigroup.it", "hays.it",
     "michaelpage.it",
-    "nike.com", "nike.it", "ferrari.com", "store.ferrari.com",
+    "nike.com", "nike.it", "ferrari.com", "store.ferrari.com", "mini.it", "mini.com",
     "uniqlo.com", "uniqlo.it", "primark.com", "urbanoutfitters.com",
     "urbanoutfitters.it", "yesmilano.it", "galleriavittorioemanueleii.com",
     "youtrend.it", "unicusano.it",
@@ -52,6 +52,19 @@ SOURCE_PORTAL_DOMAINS = frozenset({
     "github.com", "github.io", "gitlab.com", "stackoverflow.com", "stackexchange.com",
     "npmjs.com", "pypi.org", "medium.com", "substack.com", "brave.com",
     "mozilla.org", "mozilla.com", "opera.com",
+})
+
+# Evidence portals are allowed as sources but never as target domains. Keep
+# them separate from famous enterprise/brand domains: a brand's own careers
+# page is not a portal and must be rejected before paid extraction.
+EVIDENCE_SOURCE_PORTAL_DOMAINS = frozenset({
+    "indeed.it", "indeed.com", "infojobs.it", "linkedin.com", "glassdoor.com",
+    "jobeka.com", "talent.com", "monster.it", "jooble.org", "helplavoro.it",
+    "ilsole24ore.com", "repubblica.it", "corriere.it", "ansa.it", "lastampa.it",
+    "startupitalia.eu", "startupitalia.it", "italian.tech", "italiantech.info",
+    "wired.it", "milanofinanza.it", "forbes.it", "fortune.com", "huffingtonpost.it",
+    "pmi.com", "registroimprese.it", "infocamere.it", "anac.gov.it",
+    "gazzettaufficiale.it", "ted.europa.eu", "paginegialle.it", "paginebianche.it",
 })
 
 # Evidence sources and lead websites are different trust domains. News, job
@@ -74,7 +87,7 @@ BLACKLIST_DOMAIN_ROOTS = (
     "confindustria.", "simest.", "italiaonline.", "adecco.", "glassdoor.",
     "wuerth.", "leroymerlin.", "skyscanner.", "jeffersonwells.", "manpower.",
     "randstad.", "gigroup.", "hays.", "michaelpage.",
-    "nike.", "ferrari.", "uniqlo.", "primark.", "urbanoutfitters.",
+    "nike.", "ferrari.", "mini.", "uniqlo.", "primark.", "urbanoutfitters.",
     "yesmilano.",
     "youtrend.", "unicusano.",
     "jobcentre.", "prontopro.",
@@ -108,7 +121,7 @@ BLACKLIST_NAME_PATTERNS = (
     r"\bq8\b", r"\blactalis\b", r"\bleroy\s*merlin\b", r"\bskyscanner\b",
     r"\bjefferson\s*wells\b", r"\bmanpower\b", r"\brandstad\b",
     r"\bgi\s*group\b", r"\bhays\b", r"\bmichael\s*page\b",
-    r"\bnike\b", r"\bferrari\b", r"\buniqlo\b", r"\bprimark\b",
+    r"\bnike\b", r"\bferrari\b", r"\bmini\b", r"\buniqlo\b", r"\bprimark\b",
     r"\burban\s*outfitters\b", r"\bgalleria\s+vittorio\s+emanuele\b",
     r"\byes\s*milano\b",
     r"\byoutrend\b", r"\bunicusano\b",
@@ -171,4 +184,14 @@ def is_blacklisted_name(name: str) -> bool:
 
 
 def is_source_portal_url(url: str) -> bool:
-    return is_blacklisted_domain(normalize_domain(url))
+    domain = normalize_domain(url)
+    return any(
+        domain == portal or domain.endswith("." + portal)
+        for portal in EVIDENCE_SOURCE_PORTAL_DOMAINS
+    )
+
+
+def is_known_non_sme_domain(url: str) -> bool:
+    """True for a known enterprise/brand domain, never an evidence portal."""
+    domain = normalize_domain(url)
+    return bool(domain and is_blacklisted_domain(domain) and not is_source_portal_url(url))

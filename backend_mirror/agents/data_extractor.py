@@ -21,6 +21,7 @@ from .portal_blacklist import (
     is_blacklisted_domain,
     is_blacklisted_name,
     is_extraction_blocked_source,
+    is_known_non_sme_domain,
     is_source_portal_url,
     normalize_domain,
 )
@@ -680,23 +681,20 @@ def _extraction_user_prompt(
     chunk_index: int,
     chunk_total: int,
 ) -> str:
+    # Extraction only needs the observable fact contract for this page. The
+    # canonical planner already validated seller/buyer semantics, so copying
+    # hypotheses, ranking and the full source plan here wastes paid tokens.
+    evidence_policy = plan.get("evidence_policy") if isinstance(plan.get("evidence_policy"), dict) else {}
     plan_ctx = {
         "original_query": plan.get("original_query"),
         "sector": plan.get("sector"),
         "location": plan.get("location"),
         "required_signals": plan.get("required_signals"),
-        "extraction_schema": plan.get("extraction_schema"),
-        "intent_summary": plan.get("intent_summary"),
-        "research_questions": plan.get("research_questions"),
-        "expected_evidence": [
-            evidence
-            for lane in (plan.get("source_plan") or [])
-            if isinstance(lane, dict)
-            for evidence in (lane.get("expected_evidence") or [])
-        ][:20],
-        "evidence_policy": plan.get("evidence_policy"),
-        "commercial_hypothesis": plan.get("commercial_hypothesis"),
-        "ranking_policy": plan.get("ranking_policy"),
+        "evidence_policy": {
+            "require_source_url": evidence_policy.get("require_source_url", True),
+            "min_signal_confidence": evidence_policy.get("min_signal_confidence", 0.75),
+            "max_age_days": evidence_policy.get("max_age_days"),
+        },
     }
     return f"""MiraxQueryPlan (contesto ricerca):
 {json.dumps(plan_ctx, ensure_ascii=False, indent=2)}
@@ -797,6 +795,10 @@ class DataExtractor:
             self.telemetry["blocked_pages"] += 1
             logger.info("extract skip blocked source url=%s", source_url[:80])
             return []
+        if is_known_non_sme_domain(source_url):
+            self.telemetry["prefilter_skips"] += 1
+            logger.info("extract skip known non-SME source url=%s", source_url[:80])
+            return []
         if _is_non_entity_listing_page(source_url, self.plan):
             self.telemetry["prefilter_skips"] += 1
             logger.info("extract skip non-entity listing url=%s", source_url[:80])
@@ -861,7 +863,22 @@ class DataExtractor:
         paid_chunks_used = 0
         for original_idx, chunk in indexed_chunks:
             try:
-                if allow_paid_extraction and paid_chunks_used < llm_chunks_per_page:
+                deterministic = (
+                    _heuristic_extract_companies(page_plan, source_url, chunk)
+                    if _env_bool("MIRAX_HEURISTIC_OFFICIAL_FIRST", True)
+                    and _is_official_source_url(source_url)
+                    and not _plan_requires_marketing_signal(page_plan)
+                    else []
+                )
+                if deterministic:
+                    # The official domain plus explicit signal text already
+                    # establishes identity; an LLM call adds cost, not evidence.
+                    leads = [
+                        lead
+                        for company in deterministic
+                        if (lead := _sanitize_company(company, source_url))
+                    ]
+                elif allow_paid_extraction and paid_chunks_used < llm_chunks_per_page:
                     if expected_signals:
                         self._llm_signal_allocations.update(expected_signals)
                     paid_chunks_used += 1
@@ -954,6 +971,7 @@ def _tool_schema_openai() -> Dict[str, Any]:
                 "properties": {
                     "companies": {
                         "type": "array",
+                        "maxItems": 3,
                         "items": {
                             "type": "object",
                             "additionalProperties": False,
@@ -1056,7 +1074,7 @@ async def _call_openai_extract(
                     json={
                         "model": model,
                         "temperature": 0,
-                        "max_tokens": 1500,
+                        "max_tokens": _env_int("MIRAX_LLM_EXTRACT_MAX_TOKENS", 700, 200, 1500),
                         "messages": [
                             {"role": "system", "content": SYSTEM_PROMPT},
                             {"role": "user", "content": user_content},
@@ -1141,7 +1159,7 @@ async def _call_anthropic_extract(
                 },
                 json={
                     "model": model,
-                    "max_tokens": 1500,
+                    "max_tokens": _env_int("MIRAX_LLM_EXTRACT_MAX_TOKENS", 700, 200, 1500),
                     "system": SYSTEM_PROMPT,
                     "tools": [_tool_schema_anthropic()],
                     "tool_choice": {"type": "tool", "name": TOOL_NAME},

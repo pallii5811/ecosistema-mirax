@@ -1,6 +1,7 @@
 """Deterministic regression tests for the scalable agentic discovery core."""
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import patch
 
 from agents.agentic_gap_fill import (
@@ -25,6 +26,7 @@ from agents.web_researcher import (
     _heuristic_search_queries,
     _queries_for_discovery_round,
     _required_source_lane_count,
+    _required_source_signals,
     _source_plan_query_specs,
     _source_plan_queries,
 )
@@ -290,8 +292,59 @@ def test_required_signal_lanes_are_coverage_first_under_small_query_cap(monkeypa
     queries = _heuristic_search_queries(plan)
     assert len(queries) >= 3
     assert "careers operai" in queries[0]
+    assert "(site:indeed" not in queries[0].lower()
     assert "appalto aggiudicato" in queries[1]
     assert "nuovo stabilimento" in queries[2]
+
+
+def test_required_signal_lanes_are_all_executed_before_global_url_cap(monkeypatch) -> None:
+    plan = {
+        "original_query": "PMI con personale operativo, appalti e ampliamenti produttivi",
+        "sector": "company",
+        "location": "Italia",
+        "required_signals": ["hiring_operational", "contract_awarded", "production_expansion"],
+        "source_plan": [
+            {
+                "lane": "job_market",
+                "priority": 100,
+                "query_templates": ["careers operai {location}"],
+                "expected_evidence": ["hiring_operational"],
+            },
+            {
+                "lane": "public_procurement",
+                "priority": 90,
+                "query_templates": ["appalto aggiudicato PMI {location}"],
+                "expected_evidence": ["contract_awarded"],
+            },
+            {
+                "lane": "web_evidence",
+                "priority": 80,
+                "query_templates": ["nuovo stabilimento PMI {location}"],
+                "expected_evidence": ["production_expansion"],
+            },
+        ],
+    }
+    researcher = WebResearcher(plan, max_queries=3, max_urls_per_query=3, max_total_urls=3)
+    queries = _source_plan_queries(plan)[:3]
+    calls = []
+
+    async def fake_discover(query):
+        calls.append(query)
+        index = len(calls)
+        return [f"https://lane-{index}.example/evidence-{item}" for item in range(10)]
+
+    monkeypatch.setattr(researcher, "_discover_urls_for_query", fake_discover)
+    jobs = asyncio.run(researcher._discover_url_jobs(queries))
+
+    assert calls == queries
+    assert len(jobs) == 3
+    assert {job[2]["source_lane"] for job in jobs} == {
+        "job_market",
+        "public_procurement",
+        "web_evidence",
+    }
+    assert researcher.executed_required_signals == _required_source_signals(plan)
+    assert researcher.search_queries_executed == 3
 
 
 def test_accountant_source_plan_does_not_degrade_to_hiring_or_retail_careers() -> None:

@@ -486,6 +486,13 @@ _LANE_QUERY_CONTEXT: Dict[str, str] = {
     "web_evidence": '(evidenza OR annuncio OR comunicato OR registro)',
 }
 
+_LANE_SCOPE_HINTS: Dict[str, re.Pattern[str]] = {
+    "job_market": re.compile(r"indeed|infojobs|linkedin\.com/jobs|lavora\s+con\s+noi|careers?|posizioni\s+aperte", re.I),
+    "public_procurement": re.compile(r"anac|ted\.europa|appalto|gara\s+aggiudicata|contratto\s+affidato|albo\s+pretorio", re.I),
+    "web_evidence": re.compile(r"\bsite:|https?://|sito\s+ufficiale|newsroom|comunicato", re.I),
+    "company_web": re.compile(r"\bsite:|https?://|chi\s+siamo|careers?|newsroom", re.I),
+}
+
 
 def _source_plan_query_specs(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
     source_plan = plan.get("source_plan")
@@ -513,7 +520,8 @@ def _source_plan_query_specs(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
             )
             if not query:
                 continue
-            if lane_context.lower() not in query.lower():
+            scope_hint = _LANE_SCOPE_HINTS.get(lane)
+            if lane_context.lower() not in query.lower() and not (scope_hint and scope_hint.search(query)):
                 query = f"{query} {lane_context}"
             specs.append({
                 "query": query,
@@ -546,6 +554,10 @@ def _source_plan_queries(plan: Dict[str, Any]) -> List[str]:
 
 
 def _required_source_lane_count(plan: Dict[str, Any]) -> int:
+    return len(_required_source_signals(plan))
+
+
+def _required_source_signals(plan: Dict[str, Any]) -> Set[str]:
     required = {
         str(value).strip().lower().replace("-", "_")
         for value in plan.get("required_signals") or []
@@ -555,7 +567,7 @@ def _required_source_lane_count(plan: Dict[str, Any]) -> int:
     for spec in _source_plan_query_specs(plan):
         signals = {str(value) for value in spec.get("expected_signals") or []}
         covered.update(signals.intersection(required))
-    return len(covered)
+    return covered
 
 
 def _query_source_metadata(plan: Dict[str, Any], query: str) -> Dict[str, Any]:
@@ -735,6 +747,9 @@ class WebResearcher:
         self.search_queries_executed = 0
         self.pages_scheduled = 0
         self.cost_failure = False
+        self.required_source_signals = _required_source_signals(plan)
+        self.executed_required_signals: Set[str] = set()
+        self.executed_source_lanes: Set[str] = set()
         try:
             self.scrape_workers = max(1, min(8, int(os.getenv("AGENTIC_SCRAPE_WORKERS", "4") or "4")))
         except ValueError:
@@ -786,6 +801,70 @@ class WebResearcher:
         except Exception as exc:
             logger.warning("HTTP SERP failed query=%r: %s", query[:70], exc)
         return await self._search_google_playwright(query)
+
+    async def _discover_url_jobs(
+        self,
+        queries: List[str],
+    ) -> List[tuple[str, str, Dict[str, Any]]]:
+        """Discover URLs without allowing an early lane to starve required lanes.
+
+        Required source queries are all executed before discovery may stop at the
+        global URL cap.  When the cap can hold one URL per still-missing signal,
+        capacity is reserved for those signals instead of being consumed by the
+        first high-yield SERP.
+        """
+        url_jobs: List[tuple[str, str, Dict[str, Any]]] = []
+        url_job_limit = max(1, min(self.max_total_urls, self.max_urls_per_query * self.max_queries))
+
+        for query in queries:
+            metadata = _query_source_metadata(self.plan, query)
+            expected = {
+                str(value).strip().lower().replace("-", "_")
+                for value in metadata.get("expected_signals") or []
+                if str(value).strip()
+            }.intersection(self.required_source_signals)
+            missing_before = self.required_source_signals.difference(self.executed_required_signals)
+            query_is_required = bool(expected.intersection(missing_before))
+
+            if len(url_jobs) >= url_job_limit and not query_is_required:
+                if self.required_source_signals.issubset(self.executed_required_signals):
+                    break
+
+            try:
+                # Count the paid attempt for settlement even if the provider
+                # subsequently raises. Semantic coverage is recorded only when
+                # the query call itself completes.
+                self.search_queries_executed += 1
+                found = await self._discover_urls_for_query(query)
+                self.executed_required_signals.update(expected)
+                self.executed_source_lanes.add(str(metadata.get("source_lane") or "supplemental"))
+
+                missing_after = self.required_source_signals.difference(self.executed_required_signals)
+                reserved_slots = min(len(missing_after), max(0, url_job_limit - len(url_jobs)))
+                capacity = max(0, url_job_limit - len(url_jobs) - reserved_slots)
+                per_query_limit = min(self.max_urls_per_query, capacity)
+                added = 0
+                for url in found:
+                    if added >= per_query_limit:
+                        break
+                    key = url.lower().rstrip("/")
+                    if key in self.seen_urls:
+                        continue
+                    self.seen_urls.add(key)
+                    url_jobs.append((url, query, metadata))
+                    added += 1
+            except ResearchBudgetExceeded:
+                raise
+            except Exception as exc:
+                logger.warning("search failed query=%r: %s", query[:80], exc)
+
+            if (
+                len(url_jobs) >= url_job_limit
+                and self.required_source_signals.issubset(self.executed_required_signals)
+            ):
+                break
+
+        return url_jobs
 
     async def _search_google_playwright(self, query: str) -> List[str]:
         try:
@@ -884,27 +963,7 @@ class WebResearcher:
             logger.info("no search queries generated")
             return results
 
-        url_jobs: List[tuple[str, str, Dict[str, Any]]] = []
-        url_job_limit = max(1, min(self.max_total_urls, self.max_urls_per_query * self.max_queries))
-        for q in queries:
-            query_metadata = _query_source_metadata(self.plan, q)
-            try:
-                self.search_queries_executed += 1
-                found = await self._discover_urls_for_query(q)
-                for u in found:
-                    key = u.lower().rstrip("/")
-                    if key in seen_urls:
-                        continue
-                    seen_urls.add(key)
-                    url_jobs.append((u, q, query_metadata))
-                    if len(url_jobs) >= url_job_limit:
-                        break
-            except ResearchBudgetExceeded:
-                raise
-            except Exception as exc:
-                logger.warning("search failed query=%r: %s", q[:80], exc)
-            if len(url_jobs) >= url_job_limit:
-                break
+        url_jobs = await self._discover_url_jobs(queries)
 
         if not url_jobs:
             logger.info("no URLs discovered from search")
@@ -972,29 +1031,12 @@ class WebResearcher:
             logger.info("no search queries generated")
             return
 
-        url_jobs: List[tuple[str, str, Dict[str, Any]]] = []
-        url_job_limit = max(1, min(self.max_total_urls, self.max_urls_per_query * self.max_queries))
-        for q in queries:
-            query_metadata = _query_source_metadata(self.plan, q)
-            try:
-                self.search_queries_executed += 1
-                found = await self._discover_urls_for_query(q)
-                for u in found:
-                    key = u.lower().rstrip("/")
-                    if key in seen_urls:
-                        continue
-                    seen_urls.add(key)
-                    url_jobs.append((u, q, query_metadata))
-                    if len(url_jobs) >= url_job_limit:
-                        break
-            except ResearchBudgetExceeded:
-                self.cost_failure = True
-                logger.error("cost governor stopped web search")
-                return
-            except Exception as exc:
-                logger.warning("search failed query=%r: %s", q[:80], exc)
-            if len(url_jobs) >= url_job_limit:
-                break
+        try:
+            url_jobs = await self._discover_url_jobs(queries)
+        except ResearchBudgetExceeded:
+            self.cost_failure = True
+            logger.error("cost governor stopped web search")
+            return
 
         if not url_jobs:
             logger.info("no URLs discovered from search")

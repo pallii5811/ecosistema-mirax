@@ -9,6 +9,7 @@ os.environ.setdefault("MIRAX_WORKER_DISABLED", "1")
 
 from agents import extraction_cache
 from agents.data_extractor import DataExtractor, _llm_budget_allows_next_call, page_has_required_signal
+from agents.portal_blacklist import is_known_non_sme_domain, is_source_portal_url
 from agents.agentic_gap_fill import (
     _has_active_marketing_investment_evidence,
     _looks_like_marketing_provider_noise,
@@ -54,6 +55,7 @@ def test_shadow_worker_requires_explicit_post_prepare_authorization():
 
 def test_llm_extraction_budget_is_allocated_once_per_required_lane(monkeypatch):
     monkeypatch.setenv("MIRAX_LLM_MAX_CHUNKS_PER_PAGE", "1")
+    monkeypatch.setenv("MIRAX_HEURISTIC_OFFICIAL_FIRST", "0")
     plan = {
         "required_signals": ["hiring_operational", "contract_awarded", "production_expansion"],
     }
@@ -95,6 +97,46 @@ def test_llm_extraction_budget_is_allocated_once_per_required_lane(monkeypatch):
         ("https://anac.example/award", ("contract_awarded",)),
         ("https://acme.example/careers", ("hiring_operational",)),
     ]
+
+
+def test_official_signal_page_uses_zero_cost_identity_extraction(monkeypatch):
+    extractor = DataExtractor({"required_signals": ["production_expansion"]}, [])
+
+    async def paid_extract_must_not_run(*_args, **_kwargs):
+        raise AssertionError("official evidence must not consume an LLM call")
+
+    monkeypatch.setattr(extractor, "_extract_chunk", paid_extract_must_not_run)
+    leads = asyncio.run(extractor.extract_page({
+        "url": "https://officine-rossi.it/news/ampliamento",
+        "raw_text": (
+            "Officine Rossi annuncia un nuovo stabilimento e un ampliamento produttivo "
+            "con una nuova linea produttiva in Italia. " * 5
+        ),
+        "expected_signals": ["production_expansion"],
+    }))
+
+    assert len(leads) == 1
+    assert leads[0]["website"] == "https://officine-rossi.it/"
+    assert leads[0]["matched_signals"] == ["production_expansion"]
+
+
+def test_known_enterprise_careers_page_is_rejected_before_paid_extraction(monkeypatch):
+    assert is_known_non_sme_domain("https://www.mini.it/it_IT/home/footer/careers.html")
+    assert is_source_portal_url("https://www.indeed.it/viewjob?id=123")
+    assert not is_known_non_sme_domain("https://www.indeed.it/viewjob?id=123")
+    extractor = DataExtractor({"required_signals": ["hiring_operational"]}, [])
+
+    async def paid_extract_must_not_run(*_args, **_kwargs):
+        raise AssertionError("known enterprise must be rejected before LLM")
+
+    monkeypatch.setattr(extractor, "_extract_chunk", paid_extract_must_not_run)
+    leads = asyncio.run(extractor.extract_page({
+        "url": "https://www.mini.it/it_IT/home/footer/careers.html",
+        "raw_text": "Posizioni aperte per operai, tecnici e manutentori di produzione. " * 5,
+        "expected_signals": ["hiring_operational"],
+    }))
+    assert leads == []
+    assert extractor.telemetry["prefilter_skips"] == 1
 
 
 def test_graph_sync_only_after_terminal_qualified_publish():

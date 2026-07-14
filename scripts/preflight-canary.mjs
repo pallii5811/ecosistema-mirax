@@ -13,7 +13,15 @@
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import tls from 'node:tls'
 import { createClient } from '@supabase/supabase-js'
+
+if (process.platform === 'win32' && typeof tls.setDefaultCACertificates === 'function') {
+  tls.setDefaultCACertificates([
+    ...tls.getCACertificates('default'),
+    ...tls.getCACertificates('system'),
+  ])
+}
 
 const args = new Set(process.argv.slice(2))
 const skipSsh = args.has('--skip-ssh')
@@ -72,6 +80,21 @@ function run(label, command, cmdArgs, opts = {}) {
   })
 }
 
+function capture(command, cmdArgs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, cmdArgs, { shell: false, env: process.env })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => { stdout += String(chunk) })
+    child.stderr.on('data', (chunk) => { stderr += String(chunk) })
+    child.on('error', reject)
+    child.on('exit', (code) => {
+      if (code === 0) resolve(stdout)
+      else reject(new Error(`${command} failed with exit code ${code}: ${stderr.trim()}`))
+    })
+  })
+}
+
 async function checkUrl() {
   console.log(`\n▶ App URL health: ${appUrl}`)
   if (isWin) {
@@ -89,12 +112,31 @@ async function checkUrl() {
 
 async function checkReleaseMarker() {
   console.log(`\n▶ Runtime release marker: ${expectedRelease}`)
-  const response = await fetch(`${appUrl}/api/ops/release`, {
-    signal: AbortSignal.timeout(15_000),
-    headers: { 'cache-control': 'no-cache' },
-  })
-  if (!response.ok) throw new Error(`Release marker unavailable: ${response.status}`)
-  const payload = await response.json()
+  let payload
+  if (isWin) {
+    const raw = await capture('curl.exe', ['-k', '-f', '-sS', `${appUrl}/api/ops/release`])
+    payload = JSON.parse(raw)
+  } else {
+    let response
+    let lastError
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        response = await fetch(`${appUrl}/api/ops/release`, {
+          signal: AbortSignal.timeout(15_000),
+          headers: { 'cache-control': 'no-cache' },
+        })
+        break
+      } catch (error) {
+        lastError = error
+        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 750))
+      }
+    }
+    if (!response) {
+      throw new Error(`Release marker network failure after 3 attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`)
+    }
+    if (!response.ok) throw new Error(`Release marker unavailable: ${response.status}`)
+    payload = await response.json()
+  }
   if (payload.release_id !== expectedRelease) {
     throw new Error(`Runtime release mismatch: ${payload.release_id || 'missing'} != ${expectedRelease}`)
   }
@@ -113,6 +155,9 @@ async function checkVercelSearchBrake() {
   const envFile = path.join(runDir, `vercel-production-env-check-${process.pid}.env`)
 
   try {
+    const nodeOptions = [process.env.NODE_OPTIONS, isWin ? '--use-system-ca' : '']
+      .filter(Boolean)
+      .join(' ')
     await run('Vercel production brake: MIRAX_SEARCH_DISABLED=1', 'npx', [
       'vercel',
       'env',
@@ -121,7 +166,7 @@ async function checkVercelSearchBrake() {
       '--environment=production',
       '--scope',
       vercelScope,
-    ])
+    ], { env: { NODE_OPTIONS: nodeOptions } })
 
     const lines = fs.readFileSync(envFile, 'utf8').split(/\r?\n/)
     const raw = lines.find((line) => line.startsWith('MIRAX_SEARCH_DISABLED='))
