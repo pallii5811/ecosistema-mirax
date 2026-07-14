@@ -2032,6 +2032,13 @@ def _agentic_raw_to_stubs(
     return new_leads
 
 
+def _agentic_candidate_pool_target(lead_target: int, defer_until_audit: bool) -> int:
+    target = max(0, int(lead_target or 0))
+    if not defer_until_audit or target <= 0:
+        return target
+    return min(25, max(target, target * 3))
+
+
 def _agentic_gap_fill_safe(
     formatted: List[Dict[str, Any]],
     *,
@@ -2089,6 +2096,10 @@ def _agentic_gap_fill_safe(
         discovery_stats: Dict[str, Any] = {}
         intent_state: Dict[str, Any] = intent if isinstance(intent, dict) else {}
         defer_publish_until_audit = bool(plan.get("required_signals") or [])
+        candidate_pool_target = _agentic_candidate_pool_target(
+            remaining_target,
+            defer_publish_until_audit,
+        )
 
         def _on_checkpoint(checkpoint_data: Dict[str, Any]) -> None:
             intent_state["agentic_checkpoint"] = checkpoint_data
@@ -2099,7 +2110,7 @@ def _agentic_gap_fill_safe(
             nonlocal accumulated, total_new
             if not raw_batch:
                 return 0
-            still_need = max(0, remaining_target - total_new)
+            still_need = max(0, candidate_pool_target - total_new)
             contextual_batch = [
                 {
                     **item,
@@ -2145,7 +2156,7 @@ def _agentic_gap_fill_safe(
         timeout_sec = float(AGENTIC_TIMEOUT_SEC)
         _coro = run_agentic_discovery_streaming(
             plan,
-            remaining_target,
+            candidate_pool_target,
             on_batch=_on_batch,
             existing_keys=seen,
             batch_size=STREAM_BATCH_SIZE,
@@ -2166,6 +2177,7 @@ def _agentic_gap_fill_safe(
                 checkpoint_state["stop_reason"] = "round_complete"
         discovery_stats["found"] = len(accumulated)
         discovery_stats["target"] = int(job_max or len(accumulated))
+        discovery_stats["candidate_pool_target"] = candidate_pool_target
         intent_state["agentic_stats"] = discovery_stats
         if supabase is not None and search_id:
             try:
@@ -4580,7 +4592,8 @@ def main() -> None:
                         filtered = current
                     uqe_ctx = intent.get("uqe_plan") if isinstance(intent, dict) and isinstance(intent.get("uqe_plan"), dict) else {}
                     prioritize_hot = _is_agentic_only_job(intent) or bool(uqe_ctx.get("commercial_hypothesis"))
-                    merged = _cap_search_results(filtered, job_max, prioritize_hot=prioritize_hot)
+                    candidate_pool = list(filtered)
+                    merged = _cap_search_results(candidate_pool, job_max, prioritize_hot=prioritize_hot)
                     if canonical_lifecycle_plan is not None:
                         from commercial_lifecycle import persist_and_publish_candidates
 
@@ -4594,7 +4607,7 @@ def main() -> None:
                             supabase,
                             search_id=str(job_id),
                             user_id=str(job.get("user_id") or "").strip() or None,
-                            leads=merged,
+                            leads=candidate_pool if lifecycle_shadow_mode else merged,
                             canonical_plan=canonical_lifecycle_plan,
                             shadow_mode=lifecycle_shadow_mode,
                         )
@@ -4918,7 +4931,14 @@ def main() -> None:
                 print(f"[worker_supabase] agentic gap-fill outer skipped: {e}", flush=True)
                 agentic_exhaustion_msg = None
 
-            formatted = _cap_search_results(formatted, job_max, prioritize_hot=_agentic_only)
+            _strict_shadow_pool = bool(
+                _required_signals_from_intent(intent if isinstance(intent, dict) else None)
+                and isinstance(intent, dict)
+                and intent.get("customer_visible") is False
+                and str(intent.get("lifecycle_stage") or "") == "v5_shadow"
+            )
+            if not _strict_shadow_pool:
+                formatted = _cap_search_results(formatted, job_max, prioritize_hot=_agentic_only)
             formatted = _filter_results_by_confirmed_required_signals(formatted, intent if isinstance(intent, dict) else None, stage="post-agentic")
 
             # Agentic-only must not complete with empty contacts/socials. Run
@@ -5003,7 +5023,8 @@ def main() -> None:
                 except Exception as fb_e:
                     print(f"[worker_supabase] Maps fallback failed: {fb_e}", flush=True)
 
-            formatted = _cap_search_results(formatted, job_max, prioritize_hot=_agentic_only)
+            if not _strict_shadow_pool:
+                formatted = _cap_search_results(formatted, job_max, prioritize_hot=_agentic_only)
             formatted = _filter_results_by_confirmed_required_signals(formatted, intent if isinstance(intent, dict) else None, stage="final")
             pending_left = sum(1 for l in formatted if isinstance(l, dict) and _lead_has_pending_audit(l))
             # Maps scrape finished → mark completed so UI stops spinner; resume-audits finishes light audits.

@@ -457,11 +457,17 @@ def _source_origin(source_url: str) -> str:
     return ""
 
 
+_CAREER_SUBDOMAIN_LABELS = {"career", "careers", "jobs", "job", "lavora", "lavoraconnoi"}
+
+
 def _company_name_from_domain(source_url: str) -> str:
     try:
         host = (urlparse(source_url).netloc or "").lower()
         host = host.removeprefix("www.")
-        label = host.split(".", 1)[0]
+        parts = host.split(".")
+        label = parts[0]
+        if label in _CAREER_SUBDOMAIN_LABELS and len(parts) >= 3:
+            label = parts[-2]
         label = re.sub(r"[-_]+", " ", label).strip()
         if not label:
             return ""
@@ -484,7 +490,7 @@ def _is_official_source_url(source_url: str) -> bool:
     if not domain or _is_blacklisted_domain(domain):
         return False
     label = domain.split(".", 1)[0]
-    if label.startswith(("lavora", "lavoracon", "jobs", "careers")):
+    if label in _CAREER_SUBDOMAIN_LABELS and len(domain.split(".")) < 3:
         return False
     return not is_source_portal_url(source_url)
 

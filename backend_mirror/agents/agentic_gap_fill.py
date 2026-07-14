@@ -561,6 +561,12 @@ def prepare_agentic_extracted_item(
         except (TypeError, ValueError):
             pass
     website = str(out.get("website") or "").strip()
+    if not website and source_url and not is_source_portal_url(source_url):
+        source_domain = normalize_domain(source_url)
+        if source_domain and not is_blacklisted_domain(source_domain):
+            parsed_source = urlparse(source_url if "://" in source_url else f"https://{source_url}")
+            if parsed_source.netloc:
+                website = f"{parsed_source.scheme or 'https'}://{parsed_source.netloc}/"
     identity = resolve_company_identity(name, website, location)
     if not identity:
         logger.info("prepare_agentic: no resolvable domain for %r", name[:60])

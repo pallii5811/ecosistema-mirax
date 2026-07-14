@@ -17,6 +17,7 @@ from agents.agentic_gap_fill import (
 )
 from agents.web_researcher import _should_skip_url, _signal_boolean_queries
 from worker_supabase import (
+    _agentic_candidate_pool_target,
     _agentic_stream_one_lead,
     _filter_results_by_confirmed_required_signals,
     _lead_satisfies_confirmed_required_signals,
@@ -34,6 +35,12 @@ def test_one_shot_search_id_requires_once_and_uuid():
         _normalize_one_shot_search_id(search_id, once=False)
     with pytest.raises(ValueError, match="UUID valido"):
         _normalize_one_shot_search_id("not-an-id", once=True)
+
+
+def test_shadow_signal_jobs_oversample_before_lifecycle_gate():
+    assert _agentic_candidate_pool_target(5, True) == 15
+    assert _agentic_candidate_pool_target(10, True) == 25
+    assert _agentic_candidate_pool_target(5, False) == 5
 
 
 def test_shadow_worker_requires_explicit_post_prepare_authorization():

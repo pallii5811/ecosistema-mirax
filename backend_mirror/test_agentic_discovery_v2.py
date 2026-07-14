@@ -159,6 +159,17 @@ def test_quality_contract_rejects_non_target_and_keeps_verified_pmi() -> None:
     assert stub["lead_temperature"] in {"hot", "warm"}
 
 
+def test_official_company_careers_subdomain_keeps_company_identity() -> None:
+    rows = _heuristic_extract_companies(
+        {"required_signals": ["hiring_operational"]},
+        "https://careers.sibeg.it/jobs.php?page=1",
+        "Sibeg: posizioni aperte. Cerchiamo manutentori e tecnici di produzione; invia la candidatura.",
+    )
+    assert rows
+    assert rows[0]["name"] == "Sibeg"
+    assert rows[0]["website"] == "https://careers.sibeg.it/"
+
+
 def test_web_researcher_respects_total_url_budget() -> None:
     researcher = WebResearcher(
         {"original_query": "aziende che assumono commerciali", "_max_total_urls": 7},

@@ -46,6 +46,11 @@ SOURCE_PORTAL_DOMAINS = frozenset({
     "urbanoutfitters.it", "yesmilano.it", "galleriavittorioemanueleii.com",
     "youtrend.it", "unicusano.it",
     "jobcentre.it", "prontopro.it",
+    "cliclavoro.gov.it", "siae.it", "zetema.it", "asp.asti.it",
+    "posteitaliane.it", "atac.roma.it", "terna.it", "gruppohera.it", "stradeanas.it",
+    "novonordisk.it", "decathlon-careers.it", "mondoconv.it", "saint-gobain.it",
+    "vaillant.it", "bosch.it", "cargill.it", "arriva.it",
+    "etjca.it", "direzionelavorogroup.it",
     "bancadellecase.it", "wikicasa.it", "immobiliare.it", "idealista.it",
     "casa.it", "ti-aiuto.it", "kitlavoro.it", "hackerone.com",
     # Code hosts, package registries, tech giants (never valid PMI targets)
