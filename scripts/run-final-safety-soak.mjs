@@ -52,6 +52,7 @@ run('python_failure_suite', 'python', ['-m','pytest','-q',
   'backend_mirror/test_url_safety_adaptive_audit.py',
 ])
 run('paid_operation_static_guard', 'node', ['scripts/test-paid-operation-guards.mjs'])
+run('human_review_atomic', 'node', ['scripts/validate-atomic-human-review-db.mjs'])
 
 for (let index = 1; index <= iterations && failures.length === 0; index += 1) {
   run(`cost_atomic_${index}`, 'node', ['scripts/validate-atomic-cost-governor-db.mjs'])

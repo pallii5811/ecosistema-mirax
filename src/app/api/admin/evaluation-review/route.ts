@@ -6,12 +6,16 @@ import { createServiceRoleClient } from '@/utils/supabase/server'
 const LEGACY_DATASET = 'mirax-gold-v1'
 const V5_DATASET = 'mirax-gold-v5'
 const FINAL_TARGET = 200
+const LEGACY_TARGET = 25
 const LEGACY_CAP = 30
-const RELEASE = '2026-07-13-complete-signal-lane-coverage-v5-11'
+const V5_TARGET = 160
+const ADVERSARIAL_TARGET = 15
+const RELEASE = process.env.MIRAX_RELEASE_ID || '2026-07-14-atomic-review-gold-v5'
 
 async function groundTruthRun(service: ReturnType<typeof createServiceRoleClient>, dataset: string, create: boolean) {
   const { data } = await service.from('evaluation_runs').select('id,status')
     .eq('dataset_version', dataset).eq('mode', 'offline')
+    .eq('status', 'running')
     .contains('configuration', { purpose: 'human_ground_truth' })
     .order('started_at', { ascending: false }).limit(1).maybeSingle()
   if (data || !create) return data
@@ -44,20 +48,26 @@ export async function GET() {
   }
   const all = cases || []
   const legacy = all.filter((row) => row.dataset_version === LEGACY_DATASET)
-  const v5 = all.filter((row) => row.dataset_version === V5_DATASET)
+  const v5 = all.filter((row) => row.dataset_version === V5_DATASET && row.cohort === 'v5_output')
+  const adversarial = all.filter((row) => row.dataset_version === V5_DATASET && row.cohort === 'adversarial')
   const legacyReviewed = legacy.filter((row) => reviewedIds.has(String(row.id))).length
   const v5Reviewed = v5.filter((row) => reviewedIds.has(String(row.id))).length
-  const nextV5 = v5.find((row) => row.review_status === 'candidate_ready' && !reviewedIds.has(String(row.id)))
-  const nextLegacy = legacyReviewed < LEGACY_CAP
-    ? legacy.find((row) => !reviewedIds.has(String(row.id))) : null
-  const next = nextV5 || nextLegacy || null
-  const countedReviewed = Math.min(LEGACY_CAP, legacyReviewed) + v5Reviewed
+  const adversarialReviewed = adversarial.filter((row) => reviewedIds.has(String(row.id))).length
+  const nextV5 = v5Reviewed < V5_TARGET
+    ? v5.find((row) => row.review_status === 'candidate_ready' && !reviewedIds.has(String(row.id))) : null
+  const nextAdversarial = adversarialReviewed < ADVERSARIAL_TARGET
+    ? adversarial.find((row) => row.review_status === 'candidate_ready' && !reviewedIds.has(String(row.id))) : null
+  const nextLegacy = legacyReviewed < LEGACY_TARGET
+    ? legacy.find((row) => row.review_status === 'candidate_ready' && !reviewedIds.has(String(row.id))) : null
+  const next = nextV5 || nextAdversarial || nextLegacy || null
+  const countedReviewed = Math.min(LEGACY_TARGET, legacyReviewed) + Math.min(V5_TARGET, v5Reviewed) + Math.min(ADVERSARIAL_TARGET, adversarialReviewed)
   return NextResponse.json({
     evaluation_version: V5_DATASET,
     progress: {
       reviewed: countedReviewed, total: FINAL_TARGET, remaining: Math.max(0, FINAL_TARGET - countedReviewed),
-      legacy_baseline: { reviewed: legacyReviewed, target_min: 20, cap: LEGACY_CAP, available: legacy.length },
-      v5: { reviewed: v5Reviewed, target: 170, available: v5.length },
+      legacy_baseline: { reviewed: legacyReviewed, target: LEGACY_TARGET, target_min: 20, cap: LEGACY_CAP, available: legacy.length },
+      v5_output: { reviewed: v5Reviewed, target: V5_TARGET, available: v5.length },
+      adversarial: { reviewed: adversarialReviewed, target: ADVERSARIAL_TARGET, available: adversarial.length },
     },
     case: next,
   }, { headers: { 'Cache-Control': 'no-store' } })
@@ -91,31 +101,23 @@ export async function POST(req: NextRequest) {
 
   const service = createServiceRoleClient()
   const { data: reviewCase, error: caseError } = await service.from('evaluation_cases')
-    .select('dataset_version,cohort').eq('id', caseId).in('dataset_version', [LEGACY_DATASET, V5_DATASET]).maybeSingle()
+    .select('dataset_version,cohort,review_status,candidate_snapshot').eq('id', caseId)
+    .in('dataset_version', [LEGACY_DATASET, V5_DATASET]).maybeSingle()
   if (caseError || !reviewCase) return NextResponse.json({ error: caseError?.message || 'Caso non disponibile' }, { status: 404 })
+  if (!['candidate_ready','labeled'].includes(String(reviewCase.review_status)) || !reviewCase.candidate_snapshot) {
+    return NextResponse.json({ error: 'Evidence packet non pronto per la review' }, { status: 409 })
+  }
   const run = await groundTruthRun(service, String(reviewCase.dataset_version), true)
   if (!run?.id) return NextResponse.json({ error: 'Ground-truth run non disponibile' }, { status: 500 })
-  const buyerFit = body.buyer_fit === true
-  const expected = {
-    case_id: caseId, expected_label: label, reason, official_domain: officialDomain,
-    company_size_class: companySize, signal_date: new Date(signalDate).toISOString(),
-    expected_source_policy: { reviewed_source_urls: [sourceUrl], human_verified: true },
-    buyer_fit_min: buyerFit ? 0.7 : 0, buyer_fit_max: buyerFit ? 1 : 0.69,
-    created_by: reviewer.user.id,
-  }
-  const { error: expectedError } = await service.from('evaluation_expected_labels')
-    .upsert(expected, { onConflict: 'case_id' })
-  if (expectedError) return NextResponse.json({ error: expectedError.message }, { status: 500 })
-  const { error: judgmentError } = await service.from('evaluation_judgments').upsert({
-    case_id: caseId, run_id: run.id, judge_id: reviewer.user.id, label,
-    buyer_fit: body.buyer_fit, official_domain_correct: body.official_domain_correct,
-    entity_class_correct: body.entity_class_correct,
-    evidence_supports_claim: body.evidence_supports_claim, signal_fresh: body.signal_fresh,
-    contact_extraction_status: contactStatus, top_tier: body.top_tier,
-    notes: reason, is_human: true,
-  }, { onConflict: 'case_id,run_id,judge_id' })
+  const { error: judgmentError } = await service.rpc('submit_human_evaluation_judgment', {
+    p_case_id: caseId, p_run_id: run.id, p_judge_id: reviewer.user.id, p_label: label,
+    p_reason: reason, p_official_domain: officialDomain, p_company_size_class: companySize,
+    p_signal_date: new Date(signalDate).toISOString(), p_source_url: sourceUrl,
+    p_buyer_fit: body.buyer_fit, p_official_domain_correct: body.official_domain_correct,
+    p_entity_class_correct: body.entity_class_correct, p_evidence_supports_claim: body.evidence_supports_claim,
+    p_signal_fresh: body.signal_fresh, p_contact_extraction_status: contactStatus, p_top_tier: body.top_tier,
+  })
   if (judgmentError) return NextResponse.json({ error: judgmentError.message }, { status: 500 })
-  await service.from('evaluation_cases').update({ review_status: 'labeled', updated_at: new Date().toISOString() }).eq('id', caseId)
   const { count } = await service.from('evaluation_judgments').select('id', { count: 'exact', head: true })
     .eq('run_id', run.id).eq('judge_id', reviewer.user.id).eq('is_human', true)
   return NextResponse.json({

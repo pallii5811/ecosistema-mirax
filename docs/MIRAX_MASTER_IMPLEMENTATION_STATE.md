@@ -1,8 +1,46 @@
 # MIRAX Master Implementation State
 
-Ultimo aggiornamento verificato: 2026-07-14 04:37 (Europe/Rome)
+Ultimo aggiornamento verificato: 2026-07-14 05:58 (Europe/Rome)
 
-## Checkpoint corrente — failure recovery + publication/credit atomicity — 2026-07-14 04:37 +02:00
+## Checkpoint corrente — Human Gold v5 atomic review + strict acceptance — 2026-07-14 05:58 +02:00
+
+### Stato misurato, senza etichette fabricate
+
+- Legacy baseline: 200 casi disponibili, 7 giudizi umani completati; resta solo baseline di calibrazione/regressione.
+- MIRAX v5 output: 0 casi / 0 giudizi; nessuna precisione v5 calcolabile.
+- Adversarial: 3 casi reali promossi da `candidate_rejected` v5 con URL/publisher/costo/motivo, 0 giudizi; nessuna label automatica creata.
+- Progresso finale: 7/200 giudizi, 193 mancanti; `production_acceptance_ready=false`.
+- Il dataset finale resta esattamente 160 output v5 + 25 legacy + 15 adversariali. Casi extra non possono gonfiare il denominatore.
+
+### Review umana atomica e UX
+
+- Nuova migration `2026_07_14_atomic_human_review.sql`, inclusa nell'ordine migration ma non ancora applicata permanentemente.
+- Expected label, judgment e stato caso vengono salvati in una singola transazione service-only; retry idempotente; caso non pronto produce 0 righe parziali.
+- La RPC accetta soltanto dataset gold, run human-ground-truth attivo, evidence packet pronto, URL HTTPS, data, dominio, classe/contatto validi e tutti i booleani umani espliciti.
+- API reviewer separa `v5_output`, `adversarial` e `legacy_baseline`, priorizza output v5 e si ferma ai target 160/15/25.
+- UI mostra progress per coorte, fonte, publisher, data, metodo, costo e motivo; nessun caso pronto non viene più mostrato come review completata; submit disabilitato finché il packet umano non è completo.
+
+### Metriche e gate corretti
+
+- Reporter separa precisione legacy, precisione v5, rejection accuracy adversarial, precisione per verticale e Wilson 95%.
+- Gate: precisione v5 `>=90%`; top-tier `>=95%` con denominatore minimo 20; dominio/evidenza/URL/freshness `100%`; contatti `>=90%` quando disponibili; adversarial rejection `100%`.
+- Legacy non entra mai nella precisione v5. Il gate produzione resta falso senza cold-cache, warm-cache e costo ponderato reale `<=€0,025/lead`.
+- Promotore adversarial idempotente usa soltanto eventi v5 realmente scartati e conserva `selection_is_not_ground_truth=true`.
+
+### Evidenza tecnica
+
+- Atomic human review DB validator: PASS con rollback; retry 1 expected/1 judgment e failure non-ready 0/0.
+- Evaluation review security: 15/15 PASS; gold metric composition/isolation/gates PASS.
+- Preflight completo: PASS; evaluation cohort rilevata `legacy=7`, `v5_output=0`, `adversarial=3`; worker e freni invariati.
+- Next.js production build: PASS, TypeScript PASS.
+- Safety soak finale aggiornata: PASS, 23 check, 5/5 iterazioni, 717,9 s, 0 provider pagati, 0 worker, 0 publication cliente.
+
+### Prossimo comando sicuro
+
+- Commit atomico locale e push. Il push precedente di `c34b52f` è ancora bloccato dall'assenza di autenticazione GitHub; non avviare canary a pagamento.
+- Dopo checkpoint remoto: applicare le due migration 2026-07-14, distribuire UI/reporter con brake attivo, verificare reviewer allowlist e poi un solo nuovo workplace_safety canary entro `€0,125`.
+
+## Checkpoint precedente — failure recovery + publication/credit atomicity — 2026-07-14 04:37 +02:00
 
 ### Invarianti operative preservate
 

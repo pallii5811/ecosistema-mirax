@@ -223,6 +223,8 @@ async function checkGoldDatasetSafety() {
   const rows = data || []
   const legacy = rows.filter((row) => row.dataset_version === 'mirax-gold-v1')
   const v5 = rows.filter((row) => row.dataset_version === 'mirax-gold-v5')
+  const v5Output = v5.filter((row) => row.cohort === 'v5_output')
+  const adversarial = v5.filter((row) => row.cohort === 'adversarial')
   const domains = new Set(legacy.map((row) => String(row.candidate_snapshot?.domain || '')).filter(Boolean))
   const safe = legacy.filter((row) => row.provenance?.selection_is_not_ground_truth === true && row.provenance?.human_ground_truth_required === true)
   if (legacy.length !== 200 || domains.size !== 200 || safe.length !== 200 ||
@@ -238,7 +240,7 @@ async function checkGoldDatasetSafety() {
   const reviewed = new Set((judgments || []).map((row) => String(row.case_id)))
   const legacyReviewed = legacy.filter((row) => reviewed.has(String(row.id))).length
   const v5Reviewed = v5.filter((row) => reviewed.has(String(row.id))).length
-  console.log(`\n▶ Evaluation cohorts: legacy=${legacyReviewed}/20-30 initial; v5_cases=${v5.length}; v5_judgments=${v5Reviewed}; final_target=200`)
+  console.log(`\n▶ Evaluation cohorts: legacy=${legacyReviewed}/25; v5_output_cases=${v5Output.length}/160; adversarial_cases=${adversarial.length}/15; v5_judgments=${v5Reviewed}; final_target=200`)
 }
 
 async function checkServerBrake() {
@@ -305,6 +307,8 @@ async function main() {
   ])
   await run('Paid-operation static guards', 'node', ['scripts/test-paid-operation-guards.mjs'])
   await run('Commercial lifecycle schema', 'node', ['scripts/test-commercial-lifecycle-schema.mjs'])
+  await run('Human review security', localBin('tsx'), ['scripts/test-evaluation-review-security.ts'])
+  await run('Gold evaluation metric gates', 'node', ['scripts/test-gold-evaluation-metrics.mjs'])
   await run('Central research cost governor', localBin('tsx'), ['scripts/test-research-cost-governor.ts'])
   await run('15-vertical commercial query matrix', localBin('tsx'), ['scripts/test-commercial-query-matrix.ts'])
   await run('10-vertical high-value compiler matrix', localBin('tsx'), ['scripts/test-high-value-compiler-matrix.ts'])

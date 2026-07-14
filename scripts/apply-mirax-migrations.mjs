@@ -51,6 +51,7 @@ const files = [
   'db/migrations/2026_07_13_v5_evaluation_dataset.sql',
   'db/migrations/2026_07_13_shadow_candidate_isolation.sql',
   'db/migrations/2026_07_14_atomic_publication_credit.sql',
+  'db/migrations/2026_07_14_atomic_human_review.sql',
 ]
 
 const onlyArg = process.argv.find((value) => value.startsWith('--only='))

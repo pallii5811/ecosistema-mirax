@@ -131,4 +131,3 @@ $$;
 
 revoke all on function public.publish_search_candidate(uuid) from public, anon, authenticated;
 grant execute on function public.publish_search_candidate(uuid) to service_role;
-
