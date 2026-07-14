@@ -25,6 +25,8 @@ export type UqeSourceLane =
   | 'compliance'
   | 'web_evidence'
 
+export type UqeSourceCoverageStatus = 'supported' | 'unsupported' | 'generic_fallback_partial'
+
 export interface UqeSourcePlanItem {
   lane: UqeSourceLane
   source_types: string[]
@@ -32,6 +34,11 @@ export interface UqeSourcePlanItem {
   expected_evidence: string[]
   priority: number
   llm_required: boolean
+  /** Runtime truth from the capability registry, never inferred from a label. */
+  coverage_status?: UqeSourceCoverageStatus
+  adapter_ids?: string[]
+  coverage_gaps?: string[]
+  execution_mode?: 'adapter' | 'generic_fallback' | 'blocked'
 }
 
 export interface UqeEvidencePolicy {
@@ -127,6 +134,13 @@ export interface MiraxQueryPlan {
 
   /** Fonti ordinate per valore/costo, estensibili anche per query long-tail. */
   source_plan?: UqeSourcePlanItem[]
+
+  /** Aggregate runtime coverage of all planned lanes. */
+  source_coverage?: {
+    status: UqeSourceCoverageStatus
+    adapter_ids: string[]
+    missing_signals: string[]
+  }
 
   /** Contratto minimo per poter pubblicare una riga come lead verificato. */
   evidence_policy?: UqeEvidencePolicy

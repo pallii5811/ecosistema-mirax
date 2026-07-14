@@ -28,6 +28,7 @@ import {
 import type { CommercialSearchPlan } from '@/lib/contracts/commercial-search-plan'
 import { sourceSupportsSignal } from '@/lib/source-intelligence/registry'
 import { canonicalSignalId, getSignalDefinition } from '@/lib/signal-ontology/ontology'
+import { SOURCE_CAPABILITY_REGISTRY } from '@/lib/source-adapters/catalog'
 
 const MIRAX_QUERY_PLAN_TOOL_NAME = 'submit_mirax_query_plan'
 
@@ -234,10 +235,14 @@ function defaultSourcePlan(query: string, signals: string[]): UqeSourcePlanItem[
     })
   }
   if (signals.includes('tender_won')) {
-    add('public_procurement', ['ANAC', 'TED Europa', 'albi pretori'], ['CIG', 'aggiudicatario', 'data'])
+    add('public_procurement', ['public_procurement_portal'], ['tender_won'])
   }
-  if (signals.includes('hiring')) {
-    add('job_market', ['JobPosting JSON-LD', 'job board', 'careers'], ['azienda', 'ruolo', 'data annuncio'])
+  if (signals.some((signal) => signal === 'hiring' || signal.startsWith('hiring_'))) {
+    add(
+      'job_market',
+      ['company_careers', 'job_board'],
+      signals.filter((signal) => signal === 'hiring' || signal.startsWith('hiring_')),
+    )
   }
   if (signals.some((signal) => ['funding', 'funding_received'].includes(signal))) {
     add('funding', ['registri investimenti', 'comunicati', 'database startup'], ['azienda', 'round/importo', 'data'])
@@ -276,9 +281,9 @@ function defaultSourcePlan(query: string, signals: string[]): UqeSourcePlanItem[
   if (/recension|review|trustpilot|stelle|lament|reputazione/i.test(query)) {
     add('reviews', ['Google reviews', 'Trustpilot', 'Tripadvisor', 'Glassdoor', 'recensioni locali'], ['rating', 'tema criticità', 'data recensione'], true)
   }
-  add('news', ['comunicati stampa', 'stampa locale', 'newsroom'], ['azienda', 'segnale', 'data'], true)
-  add('company_web', ['sito ufficiale'], ['dominio ufficiale', 'identita aziendale'])
-  add('web_evidence', ['motori di ricerca verticali', 'open web'], ['azienda', 'fonte', 'segnale'], true)
+  add('news', ['recognized_local_news', 'industry_publication'], signals, true)
+  add('company_web', ['official_company_website'], signals)
+  add('web_evidence', ['search_snippet'], signals, true)
   return lanes
 }
 
@@ -1071,6 +1076,10 @@ function inferEconomicIntentSignals(query: string): string[] {
     return out
   }
 
+  if (/\b(gara|gare|appalt\w*|aggiudic\w*|contratt\w+\s+affidat\w*)\b/i.test(q)) {
+    add('tender_won')
+  }
+
   const sellerDefaults = sellerPlaybookDefaults(query)
   if (sellerDefaults?.signals?.length) {
     for (const signal of sellerDefaults.signals) add(signal)
@@ -1085,7 +1094,7 @@ function inferEconomicIntentSignals(query: string): string[] {
     add('hiring')
     add('tech_migration')
   }
-  const buyerMarketingSpend = /\b(invest\w*\s+in\s+marketing|budget\s+marketing|spendono\s+in\s+pubblicit\w*)\b/i.test(q)
+  const buyerMarketingSpend = /\b(invest\w*(?:\s+\w+){0,3}\s+in\s+marketing|budget\s+marketing|spendono\s+in\s+pubblicit\w*)\b/i.test(q)
   if (buyerMarketingSpend) {
     add('investing_marketing')
   }
@@ -1130,6 +1139,10 @@ const MAPS_CATEGORY_CITY_RE = new RegExp(
 const SIGNAL_LED_SEARCH_SIGNALS = new Set([
   'investing_marketing',
   'hiring',
+  'hiring_operational',
+  'hiring_technology',
+  'hiring_sales',
+  'hiring_marketing',
   'tender_won',
   'sector_investment',
   'funding_received',
@@ -1220,6 +1233,70 @@ export function applyRoutingGuards(plan: MiraxQueryPlan, query: string): MiraxQu
     ...plan,
     search_strategy: strategy,
     reasoning: `${plan.reasoning || ''} [routing_guard: ${plan.search_strategy}→${strategy}]`.trim(),
+  }
+}
+
+const SOURCE_CLASSES_BY_LANE: Record<UqeSourceLane, string[]> = {
+  public_registry: ['official_registry'],
+  public_procurement: ['public_procurement_portal', 'municipal_register'],
+  job_market: ['company_careers', 'job_board'],
+  funding: ['official_company_website', 'recognized_local_news'],
+  company_web: ['official_company_website'],
+  news: ['recognized_local_news', 'industry_publication'],
+  technology: ['technology_audit'],
+  real_estate: ['municipal_register', 'recognized_local_news'],
+  regulatory: ['municipal_register', 'official_registry'],
+  ads: ['ad_transparency_library'],
+  reviews: ['official_company_website'],
+  events: ['official_company_website', 'recognized_local_news', 'industry_publication'],
+  marketplace: ['official_company_website'],
+  partnerships: ['official_company_website', 'recognized_local_news', 'industry_publication'],
+  compliance: ['official_registry', 'municipal_register', 'public_procurement_portal'],
+  web_evidence: ['search_snippet'],
+}
+
+/** Attach fail-closed runtime truth to every lane before execution. */
+export function applySourceCapabilityGuards(plan: MiraxQueryPlan): MiraxQueryPlan {
+  const sourcePlan = (plan.source_plan || []).map((lane) => {
+    const laneSignals = lane.expected_evidence
+      .map((signal) => canonicalSignalId(signal) || signal)
+      .filter((signal) => plan.required_signals.includes(signal))
+    const signalIds = laneSignals.length ? laneSignals : plan.required_signals
+    const coverage = SOURCE_CAPABILITY_REGISTRY.resolve({
+      intent: plan.search_strategy,
+      signal_ids: signalIds,
+      signal_match_mode: plan.ranking_policy?.signal_match_mode || 'all',
+      geographies: plan.location ? [plan.location] : [],
+      freshness_max_age_days: plan.evidence_policy?.max_age_days ?? null,
+      requested_count: 1,
+      budget_eur: 0,
+    }, SOURCE_CLASSES_BY_LANE[lane.lane], true)
+    return {
+      ...lane,
+      coverage_status: coverage.status,
+      adapter_ids: coverage.adapter_ids,
+      coverage_gaps: coverage.missing_signals,
+      execution_mode: coverage.status === 'supported'
+        ? 'adapter' as const
+        : coverage.status === 'generic_fallback_partial'
+          ? 'generic_fallback' as const
+          : 'blocked' as const,
+    }
+  })
+  const statuses = sourcePlan.map((lane) => lane.coverage_status)
+  const status = statuses.length > 0 && statuses.every((value) => value === 'supported')
+    ? 'supported' as const
+    : statuses.some((value) => value === 'generic_fallback_partial')
+      ? 'generic_fallback_partial' as const
+      : 'unsupported' as const
+  return {
+    ...plan,
+    source_plan: sourcePlan,
+    source_coverage: {
+      status,
+      adapter_ids: [...new Set(sourcePlan.flatMap((lane) => lane.adapter_ids || []))],
+      missing_signals: [...new Set(sourcePlan.flatMap((lane) => lane.coverage_gaps || []))],
+    },
   }
 }
 
@@ -1369,7 +1446,7 @@ export function normalizeMiraxQueryPlan(
     )
   }
 
-  return applyRoutingGuards(plan, originalQuery)
+  return applySourceCapabilityGuards(applyRoutingGuards(plan, originalQuery))
 }
 
 export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan {
@@ -1454,7 +1531,7 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
     )
   }
 
-  return applyRoutingGuards(plan, query)
+  return applySourceCapabilityGuards(applyRoutingGuards(plan, query))
 }
 
 async function callOpenAiQueryPlan(query: string): Promise<RawToolPlan | null> {
@@ -1654,7 +1731,7 @@ export function canonicalPlanToLegacy(plan: CommercialSearchPlan): MiraxQueryPla
     user_message: null,
     reasoning: `Canonical commercial plan ${plan.schema_version}; prompt ${plan.planner_metadata.prompt_version}.`,
   }
-  return applyRoutingGuards(legacy, plan.raw_query)
+  return applySourceCapabilityGuards(applyRoutingGuards(legacy, plan.raw_query))
 }
 
 /**

@@ -3,6 +3,9 @@ import { z } from 'zod'
 
 const SourceDefinitionSchema = z.object({
   id: z.string().min(1),
+  implementation_id: z.string().min(1).optional(),
+  capability_version: z.string().min(1).optional(),
+  runtime_coverage: z.enum(['supported', 'unsupported', 'generic_fallback_partial']).optional(),
   signals_supported: z.array(z.string()),
   trust_level: z.number().min(0).max(1),
   primary: z.boolean(),
@@ -25,6 +28,12 @@ const SourceRegistrySchema = z.object({
 export type SourceDefinition = z.infer<typeof SourceDefinitionSchema>
 export const SOURCE_REGISTRY = SourceRegistrySchema.parse(sourceRegistryJson)
 export const SOURCE_BY_ID = new Map(SOURCE_REGISTRY.sources.map((source) => [source.id, source]))
+
+export function sourceRuntimeCoverage(sourceId: string): 'supported' | 'unsupported' | 'generic_fallback_partial' {
+  const source = SOURCE_BY_ID.get(sourceId)
+  if (!source?.implementation_id || !source.capability_version) return 'unsupported'
+  return source.runtime_coverage || 'unsupported'
+}
 
 export function sourceSupportsSignal(sourceId: string, signal: string): boolean {
   const source = SOURCE_BY_ID.get(sourceId)

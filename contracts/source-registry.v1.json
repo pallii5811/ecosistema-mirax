@@ -213,6 +213,9 @@
     },
     {
       "id": "search_snippet",
+      "implementation_id": "generic_web_research_v1",
+      "capability_version": "1.0.0",
+      "runtime_coverage": "generic_fallback_partial",
       "signals_supported": [],
       "trust_level": 0.05,
       "primary": false,
