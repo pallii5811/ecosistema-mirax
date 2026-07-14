@@ -27,6 +27,7 @@ from .orchestrator import (
     default_candidate_qualifier,
     request_from_plan,
 )
+from .opportunity_scoring import OpportunityScore, ScoreComponent, rank_opportunities, score_opportunity
 from .procurement import ProcurementAdapter, ProcurementProviderResult
 
 __all__ = [
@@ -51,12 +52,16 @@ __all__ = [
     "default_candidate_qualifier",
     "request_from_plan",
     "OpportunityCandidate",
+    "OpportunityScore",
     "ProcurementAdapter",
     "ProcurementProviderResult",
     "QualifiedLead",
+    "ScoreComponent",
     "SourceAdapter",
     "SourceCapability",
     "SourceCapabilityRegistry",
     "SourceExhaustion",
     "normalize_opportunity_candidate",
+    "rank_opportunities",
+    "score_opportunity",
 ]

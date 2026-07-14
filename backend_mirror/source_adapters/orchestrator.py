@@ -16,6 +16,7 @@ from .contracts import (
     QualifiedLead,
     SourceAdapter,
 )
+from .opportunity_scoring import score_opportunity
 
 
 TerminalStatus = Literal[
@@ -188,8 +189,23 @@ async def default_candidate_qualifier(candidate: OpportunityCandidate) -> Qualif
         return QualificationDecision(False, True, True, "TARGET_FIT_UNVERIFIED")
     if candidate.confidence < 0.7:
         return QualificationDecision(False, True, True, "CONFIDENCE_TOO_LOW")
-    score = min(1.0, 0.45 * candidate.confidence + 0.35 * candidate.buyer_fit + 0.20)
-    return QualificationDecision(True, True, True, opportunity_value_score=score, reasons=("canonical_gate_passed",))
+    score = score_opportunity(candidate)
+    if score.total < 0.55:
+        return QualificationDecision(
+            False,
+            True,
+            True,
+            "OPPORTUNITY_VALUE_TOO_LOW",
+            opportunity_value_score=score.total,
+            reasons=score.explanation(),
+        )
+    return QualificationDecision(
+        True,
+        True,
+        True,
+        opportunity_value_score=score.total,
+        reasons=("canonical_gate_passed", *score.explanation()),
+    )
 
 
 def _signal_subset(adapter: SourceAdapter, request: AdapterDiscoveryRequest) -> Tuple[str, ...]:

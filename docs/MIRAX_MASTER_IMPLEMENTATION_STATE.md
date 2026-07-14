@@ -42,8 +42,14 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - `all` fonde evidenze multi-adapter sulla stessa entità; `any` conserva alternative e lineage.
 - Overspend adapter causa hard failure; fallback parziale non dichiara market/source exhaustion globale.
 - Il nuovo orchestratore resta offline e non è stato attivato nei worker persistenti.
+- Fase 8 Opportunity Value Score: dieci componenti pesate, penalità, missing field e top-tier trasparenti.
+- Dominio, operating entity, evidence, buyer fit e freshness mancanti sono critical e limitano lo score a `0,49`.
+- Il qualifier conserva i gate fail-closed e rifiuta esplicitamente score `< 0,55`; nessun campo forte compensa un critical missing.
+- Fonte, freshness, segnale, urgenza, causality, valore commerciale, contattabilità e confidence sono spiegabili per lead.
+- Test scoring e ranking deterministico inclusi nella suite Source Adapter: `60 passed`; regressioni lifecycle: `47 passed`.
+- TypeScript/Python compile e diff check verdi; nessuna chiamata provider, costo reale `EUR 0`.
 - Test Hiring, forensic legacy, lifecycle, contratti e compile Python/TypeScript: verdi; costo provider reale `EUR 0`.
 - Test Fase 3, regressioni strutturate, contratti e compile Python/TypeScript: verdi; costo provider `EUR 0`.
 
 ## Prossimo passo sicuro
-- Implementare Opportunity Value Score trasparente sul candidato canonico; nessun canary/provider live.
+- Eseguire validazione multi-query interamente offline su fixture versionate; nessun canary/provider live.
