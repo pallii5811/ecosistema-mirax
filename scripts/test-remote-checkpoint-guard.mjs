@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
-import { validateRemoteCheckpoint } from './assert-remote-checkpoint.mjs'
+import { parseGitHubRepository, validateRemoteCheckpoint } from './assert-remote-checkpoint.mjs'
 
 const sha = 'a'.repeat(40)
 assert.deepEqual(validateRemoteCheckpoint({ branch: 'safety/mirax-v5', head: sha, remoteHead: sha, dirty: false }), {
@@ -12,6 +12,9 @@ assert.throws(() => validateRemoteCheckpoint({ branch: 'HEAD', head: sha, remote
 assert.throws(() => validateRemoteCheckpoint({ branch: 'safety/test', head: sha, remoteHead: sha, dirty: true }), /DIRTY/)
 assert.throws(() => validateRemoteCheckpoint({ branch: 'safety/test', head: sha, remoteHead: 'b'.repeat(40), dirty: false }), /NOT_PUSHED/)
 assert.throws(() => validateRemoteCheckpoint({ branch: 'bad branch', head: sha, remoteHead: sha, dirty: false }), /INVALID_BRANCH/)
+assert.equal(parseGitHubRepository('https://github.com/pallii5811/ecosistema-mirax.git'), 'pallii5811/ecosistema-mirax')
+assert.equal(parseGitHubRepository('git@github.com:pallii5811/ecosistema-mirax.git'), 'pallii5811/ecosistema-mirax')
+assert.throws(() => parseGitHubRepository('https://example.com/acme/repo.git'), /UNSUPPORTED_ORIGIN/)
 
 for (const path of ['backend_mirror/scripts/deploy-staging.ps1', 'backend_mirror/scripts/deploy-staging.sh']) {
   const source = fs.readFileSync(path, 'utf8')

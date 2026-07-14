@@ -21,6 +21,22 @@ function git(args, options = {}) {
   }).trim()
 }
 
+export function parseGitHubRepository(remoteUrl) {
+  const value = String(remoteUrl || '').trim()
+  const match = value.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/i)
+  if (!match) throw new Error('REMOTE_CHECKPOINT_UNSUPPORTED_ORIGIN')
+  return `${match[1]}/${match[2]}`
+}
+
+function githubRemoteHead(repository, branch) {
+  return execFileSync('gh', [
+    'api', `repos/${repository}/git/ref/heads/${branch}`, '--jq', '.object.sha',
+  ], {
+    encoding: 'utf8', timeout: 20_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim()
+}
+
 export function assertCurrentHeadIsRemoteCheckpoint() {
   const branch = git(['symbolic-ref', '--quiet', '--short', 'HEAD'])
   if (!/^[A-Za-z0-9._/-]+$/.test(branch)) throw new Error('REMOTE_CHECKPOINT_INVALID_BRANCH')
@@ -28,18 +44,24 @@ export function assertCurrentHeadIsRemoteCheckpoint() {
   if (git(['status', '--porcelain', '--untracked-files=normal'])) {
     return validateRemoteCheckpoint({ branch, head, remoteHead: head, dirty: true })
   }
+
+  // The authenticated GitHub API is authoritative and avoids blocking a
+  // release on a slow `git fetch`. Keep fetch as a portable fallback.
+  let remoteHead
   try {
-    git(['fetch', '--quiet', 'origin', branch])
-  } catch (error) {
-    const detail = String(error?.stderr || error?.message || 'fetch failed').split('\n')[0].slice(0, 240)
-    throw new Error(`REMOTE_CHECKPOINT_FETCH_FAILED:${detail}`)
+    const repository = parseGitHubRepository(git(['config', '--get', 'remote.origin.url']))
+    remoteHead = githubRemoteHead(repository, branch)
+  } catch (apiError) {
+    try {
+      git(['fetch', '--quiet', 'origin', branch])
+      remoteHead = git(['rev-parse', `refs/remotes/origin/${branch}`])
+    } catch (fetchError) {
+      const apiDetail = String(apiError?.stderr || apiError?.message || 'API failed').split('\n')[0].slice(0, 120)
+      const fetchDetail = String(fetchError?.stderr || fetchError?.message || 'fetch failed').split('\n')[0].slice(0, 120)
+      throw new Error(`REMOTE_CHECKPOINT_VERIFY_FAILED:api=${apiDetail};fetch=${fetchDetail}`)
+    }
   }
-  return validateRemoteCheckpoint({
-    branch,
-    head,
-    remoteHead: git(['rev-parse', `refs/remotes/origin/${branch}`]),
-    dirty: false,
-  })
+  return validateRemoteCheckpoint({ branch, head, remoteHead, dirty: false })
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
