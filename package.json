@@ -17,7 +17,7 @@
     "test:research-cost-governor": "npx tsx scripts/test-research-cost-governor.ts",
     "test:atomic-cost-governor": "node scripts/test-atomic-cost-governor.mjs",
     "test:commercial-runtime": "python -m pytest -q backend_mirror/test_atomic_paid_operations.py backend_mirror/test_cost_governor.py backend_mirror/test_commercial_lifecycle.py backend_mirror/test_commercial_search_plan_contract.py backend_mirror/test_cost_quality_guards.py && node scripts/test-paid-operation-guards.mjs",
-    "test:final-failure-injection": "python -m pytest -q backend_mirror/test_atomic_paid_operations.py backend_mirror/test_final_failure_injection.py backend_mirror/test_job_leases.py backend_mirror/test_url_safety_adaptive_audit.py && node scripts/test-paid-operation-guards.mjs && node scripts/validate-atomic-cost-governor-db.mjs && node scripts/test-cost-governor-concurrency-db.mjs",
+    "test:final-failure-injection": "python -m pytest -q backend_mirror/test_atomic_paid_operations.py backend_mirror/test_commercial_lifecycle.py backend_mirror/test_final_failure_injection.py backend_mirror/test_job_leases.py backend_mirror/test_url_safety_adaptive_audit.py && node scripts/test-paid-operation-guards.mjs && node scripts/validate-atomic-cost-governor-db.mjs && node scripts/test-cost-governor-concurrency-db.mjs && node scripts/validate-job-lease-exactly-once-db.mjs && node scripts/validate-publication-credit-ledger-db.mjs",
     "test:commercial-matrix": "npx tsx scripts/test-commercial-query-matrix.ts && node scripts/validate-multivertical-canary-manifest.mjs",
     "db:generate-schema": "node scripts/generate-schema-from-openapi.mjs",
     "db:apply-dev": "node scripts/apply-dev-database.mjs",

@@ -1,6 +1,56 @@
 # MIRAX Master Implementation State
 
-Ultimo aggiornamento verificato: 2026-07-14 02:48 (Europe/Rome)
+Ultimo aggiornamento verificato: 2026-07-14 04:37 (Europe/Rome)
+
+## Checkpoint corrente — failure recovery + publication/credit atomicity — 2026-07-14 04:37 +02:00
+
+### Invarianti operative preservate
+
+- Nessun provider AI/search a pagamento chiamato in questo checkpoint; costo esterno aggiuntivo `€0,00`.
+- Nessun worker generale o staging riattivato; server 116 verificato `inactive+disabled` prima e dopo i test.
+- Nessuna pubblicazione cliente o charge persistente creato: i validator DB usano rollback o cancellano le fixture interne.
+- Frontend production e live worker non modificati; `MIRAX_SEARCH_DISABLED=1` resta verificato dal preflight.
+- Gold v5 prodotto: 0; legacy human baseline: 7. Nessuna precisione finale o dichiarazione 10/10 è autorizzata.
+
+### Correzioni failure-recovery
+
+- Risposte Anthropic 200 con tool payload assente/malformato ora falliscono chiuse, incrementano `provider_failures` e non generano candidati.
+- Coperti timeout fonte, payload estrazione parziali, evidenza stale, Neo4j/Supabase failure, SSRF e budget exhaustion preventivo.
+- Validator DB nuovo per doppia consegna concorrente: un solo worker acquisisce il job; lease scaduto viene recuperato e il restart produce `attempt_count=2` senza doppio claim.
+- Activator staging irrobustito: pulizia dei release preflight falliti, conservazione separata del release fallito e failure injection post-swap esplicita.
+
+### Pubblicazione e credito atomici
+
+- Nuova migration `2026_07_14_atomic_publication_credit.sql`, inclusa nell'ordine ufficiale di `apply-mirax-migrations` ma **non ancora applicata permanentemente**.
+- `publish_search_candidate(uuid)` serializza sul candidato e rende atomici: ownership, quality gate, evidence snapshot, publication, credit charge e decremento profilo.
+- Retry della stessa delivery restituisce la stessa publication senza nuovo charge; credito insufficiente e gate fallito lasciano 0 publication/0 charge; refund duplicato è idempotente.
+- Accesso cliente verificato via RLS: owner vede la publication, altro subject autenticato no.
+- Validator reale Supabase: PASS in transazione con rollback completo.
+
+### Failure injection staging reale
+
+- Release prima del test: `20260714_023844`.
+- Failure intenzionale dopo lo swap: ultima release candidata `rollback-fi-20260714_041950`, exit non-zero e trap di rollback eseguita.
+- Release dopo il test: `20260714_023844`; API `:8002/health` PASS; worker staging `inactive+disabled`.
+- Il test non ha eseguito job, fonti, LLM, publication o charge.
+
+### Evidenza test
+
+- Failure/commercial lifecycle pytest: `43/43` PASS.
+- Commercial lifecycle schema: `21/21` PASS.
+- Publication-credit DB atomic validator: PASS; job lease exactly-once DB validator: PASS.
+- Safety soak controllata: PASS, 22 check, 5/5 iterazioni, 573,7 s, 0 paid providers, 0 worker start, 0 customer publication.
+- TypeScript `tsc --noEmit`: PASS; Next.js production build: PASS (126 pagine statiche generate).
+- Preflight canary completo: PASS (contract 24/24, query matrix 137/137, high-value 10/10, signal floor 10/10, real-user 55/55, backend 24+9+18, freni Vercel/server).
+- Secret scan mirato sulle chiavi precedentemente esposte: 0 match nel repository.
+
+### Stato Git e prossimo comando sicuro
+
+- Branch `safety/mirax-v5-11-codex-checkpoint`; base locale `df18710`, già ahead di 1 rispetto al remote prima di questo checkpoint.
+- Push ancora bloccato perché `gh` non è autenticato; nessun nuovo canary a pagamento è consentito prima del checkpoint remoto.
+- Prossimo passo: commit atomico di questo hardening, autenticazione GitHub e push. Solo dopo: nuova prepare + one-shot workplace_safety con ID nuovi, hard cap `€0,125`, una chiamata compiler, nessun repair, nessuna customer publication/charge.
+
+Ultimo aggiornamento precedente: 2026-07-14 02:48 (Europe/Rome)
 
 ## Checkpoint corrente — workplace_safety prepare PASS, one-shot quarantinato, executor hardening — 2026-07-14 02:48 +02:00
 

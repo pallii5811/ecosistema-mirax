@@ -1,0 +1,11 @@
+﻿{
+    "Passed":  true,
+    "TestedAt":  "2026-07-14T02:20:51.1658141Z",
+    "BeforeRelease":  "20260714_023844",
+    "AfterRelease":  "20260714_023844",
+    "InjectedRelease":  "rollback-fi-20260714_041950",
+    "Worker":  "inactive+disabled",
+    "ApiHealth":  "pass",
+    "PaidProvidersCalled":  false,
+    "CustomerPublicationsCreated":  false
+}

@@ -1,10 +1,10 @@
 {
-  "release_id": "2026-07-12-final-hardening-v5",
-  "started_at": "2026-07-12T20:45:31.593Z",
-  "completed_at": "2026-07-12T20:52:04.997Z",
-  "checkpointed_at": "2026-07-12T20:52:04.997Z",
+  "release_id": "df18710+atomic-failure-hardening",
+  "started_at": "2026-07-14T02:25:37.989Z",
+  "completed_at": "2026-07-14T02:35:11.658Z",
+  "checkpointed_at": "2026-07-14T02:35:11.658Z",
   "iterations_requested": 5,
-  "checks_executed": 17,
+  "checks_executed": 22,
   "failures": [],
   "passed": true,
   "interrupted_or_running": false,
@@ -12,94 +12,119 @@
     "paid_providers_called": false,
     "workers_started": false,
     "customer_publications_created": false,
-    "validators_use_transaction_rollback": true
+    "database_validators_rollback_or_delete_fixtures": true
   },
-  "elapsed_ms": 393404,
+  "elapsed_ms": 573669,
   "samples": [
     {
       "label": "python_failure_suite",
       "exit_code": 0,
-      "elapsed_ms": 2395
+      "elapsed_ms": 2862
     },
     {
       "label": "paid_operation_static_guard",
       "exit_code": 0,
-      "elapsed_ms": 322
+      "elapsed_ms": 328
     },
     {
       "label": "cost_atomic_1",
       "exit_code": 0,
-      "elapsed_ms": 21961
+      "elapsed_ms": 28069
     },
     {
       "label": "cost_concurrency_1",
       "exit_code": 0,
-      "elapsed_ms": 22901
+      "elapsed_ms": 28965
+    },
+    {
+      "label": "job_lease_exactly_once_1",
+      "exit_code": 0,
+      "elapsed_ms": 29460
     },
     {
       "label": "credit_ledger_1",
       "exit_code": 0,
-      "elapsed_ms": 13152
+      "elapsed_ms": 43559
     },
     {
       "label": "cost_atomic_2",
       "exit_code": 0,
-      "elapsed_ms": 30140
+      "elapsed_ms": 29506
     },
     {
       "label": "cost_concurrency_2",
       "exit_code": 0,
-      "elapsed_ms": 24244
+      "elapsed_ms": 8234
+    },
+    {
+      "label": "job_lease_exactly_once_2",
+      "exit_code": 0,
+      "elapsed_ms": 21139
     },
     {
       "label": "credit_ledger_2",
       "exit_code": 0,
-      "elapsed_ms": 23589
+      "elapsed_ms": 44082
     },
     {
       "label": "cost_atomic_3",
       "exit_code": 0,
-      "elapsed_ms": 26752
+      "elapsed_ms": 14847
     },
     {
       "label": "cost_concurrency_3",
       "exit_code": 0,
-      "elapsed_ms": 15228
+      "elapsed_ms": 11541
+    },
+    {
+      "label": "job_lease_exactly_once_3",
+      "exit_code": 0,
+      "elapsed_ms": 28263
     },
     {
       "label": "credit_ledger_3",
       "exit_code": 0,
-      "elapsed_ms": 22355
+      "elapsed_ms": 37672
     },
     {
       "label": "cost_atomic_4",
       "exit_code": 0,
-      "elapsed_ms": 29083
+      "elapsed_ms": 31404
     },
     {
       "label": "cost_concurrency_4",
       "exit_code": 0,
-      "elapsed_ms": 47047
+      "elapsed_ms": 30483
+    },
+    {
+      "label": "job_lease_exactly_once_4",
+      "exit_code": 0,
+      "elapsed_ms": 30276
     },
     {
       "label": "credit_ledger_4",
       "exit_code": 0,
-      "elapsed_ms": 23514
+      "elapsed_ms": 44457
     },
     {
       "label": "cost_atomic_5",
       "exit_code": 0,
-      "elapsed_ms": 35274
+      "elapsed_ms": 15662
     },
     {
       "label": "cost_concurrency_5",
       "exit_code": 0,
-      "elapsed_ms": 33703
+      "elapsed_ms": 20990
+    },
+    {
+      "label": "job_lease_exactly_once_5",
+      "exit_code": 0,
+      "elapsed_ms": 24765
     },
     {
       "label": "credit_ledger_5",
       "exit_code": 0,
-      "elapsed_ms": 21729
+      "elapsed_ms": 46906
     }
   ]
 }

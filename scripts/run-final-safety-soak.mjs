@@ -8,15 +8,22 @@ const failures = []
 const samples = []
 const reportPath = 'reports/final-safety-soak-v5.json'
 fs.mkdirSync('reports', { recursive: true })
+const gitHead = spawnSync('git', ['rev-parse', '--short=12', 'HEAD'], { encoding: 'utf8', shell: false })
+const releaseId = process.env.MIRAX_RELEASE_ID || String(gitHead.stdout || '').trim() || 'uncommitted'
 
 function checkpoint(completed = false) {
   const report = {
-    release_id: '2026-07-12-final-hardening-v5',
+    release_id: releaseId,
     started_at: startedAt.toISOString(), completed_at: completed ? new Date().toISOString() : null,
     checkpointed_at: new Date().toISOString(), iterations_requested: iterations,
     checks_executed: samples.length, failures, passed: completed && failures.length === 0,
     interrupted_or_running: !completed,
-    invariants: { paid_providers_called: false, workers_started: false, customer_publications_created: false, validators_use_transaction_rollback: true },
+    invariants: {
+      paid_providers_called: false,
+      workers_started: false,
+      customer_publications_created: false,
+      database_validators_rollback_or_delete_fixtures: true,
+    },
     elapsed_ms: Date.now() - startedAt.getTime(), samples,
   }
   fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`)
@@ -39,6 +46,7 @@ function run(label, command, args) {
 
 run('python_failure_suite', 'python', ['-m','pytest','-q',
   'backend_mirror/test_atomic_paid_operations.py',
+  'backend_mirror/test_commercial_lifecycle.py',
   'backend_mirror/test_final_failure_injection.py',
   'backend_mirror/test_job_leases.py',
   'backend_mirror/test_url_safety_adaptive_audit.py',
@@ -48,6 +56,7 @@ run('paid_operation_static_guard', 'node', ['scripts/test-paid-operation-guards.
 for (let index = 1; index <= iterations && failures.length === 0; index += 1) {
   run(`cost_atomic_${index}`, 'node', ['scripts/validate-atomic-cost-governor-db.mjs'])
   run(`cost_concurrency_${index}`, 'node', ['scripts/test-cost-governor-concurrency-db.mjs'])
+  run(`job_lease_exactly_once_${index}`, 'node', ['scripts/validate-job-lease-exactly-once-db.mjs'])
   run(`credit_ledger_${index}`, 'node', ['scripts/validate-publication-credit-ledger-db.mjs'])
 }
 

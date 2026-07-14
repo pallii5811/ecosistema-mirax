@@ -667,6 +667,12 @@ def _parse_companies_payload(data: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def _valid_companies_payload(data: Any) -> bool:
+    return (
+        isinstance(data, dict) and isinstance(data.get("companies"), list)
+    ) or isinstance(data, list)
+
+
 def _extraction_user_prompt(
     plan: Dict[str, Any],
     source_url: str,
@@ -1154,7 +1160,16 @@ async def _call_anthropic_extract(
             telemetry["output_tokens"] = telemetry.get("output_tokens", 0) + int(usage.get("output_tokens") or 0)
         for block in data.get("content") or []:
             if block.get("type") == "tool_use" and block.get("name") == TOOL_NAME:
-                return _parse_companies_payload(block.get("input") or {})
+                payload = block.get("input")
+                if not _valid_companies_payload(payload):
+                    if telemetry is not None:
+                        telemetry["provider_failures"] = telemetry.get("provider_failures", 0) + 1
+                    logger.warning("Anthropic extract returned malformed tool payload")
+                    return None
+                return _parse_companies_payload(payload)
+        if telemetry is not None:
+            telemetry["provider_failures"] = telemetry.get("provider_failures", 0) + 1
+        logger.warning("Anthropic extract response missing required tool payload")
     except Exception as exc:
         if telemetry is not None:
             telemetry["provider_failures"] = telemetry.get("provider_failures", 0) + 1

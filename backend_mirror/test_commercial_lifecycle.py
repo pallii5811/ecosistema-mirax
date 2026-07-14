@@ -100,6 +100,16 @@ def test_evidence_never_fabricates_missing_observation_date():
     assert evaluate_publication_gate(lead, PLAN, cost_within_budget=True)["publishable"] is False
 
 
+def test_stale_evidence_is_rejected_even_when_every_other_gate_is_valid():
+    lead = valid_lead()
+    lead["evidence_date"] = "2020-01-01T00:00:00Z"
+    lead["business_signals"][0]["date"] = "2020-01-01T00:00:00Z"
+    gate = evaluate_publication_gate(lead, PLAN, cost_within_budget=True)
+    assert gate["publishable"] is False
+    assert gate["freshness_pass"] is False
+    assert "SIGNAL_NOT_FRESH" in gate["rejection_codes"]
+
+
 def test_unknown_source_class_and_contradiction_are_not_publishable():
     lead = valid_lead()
     lead["business_signals"][0]["source_class"] = "invented_source"

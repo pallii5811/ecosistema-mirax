@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import types
 import os
@@ -8,6 +9,8 @@ os.environ.setdefault("SUPABASE_URL", "https://validation.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "validation-only-not-a-secret")
 
 import worker_supabase
+from agents import data_extractor
+from agents.web_researcher import WebResearcher
 from cost_governor import ResearchBudgetExceeded, ResearchCostGovernor
 from url_safety import UnsafeUrlError, assert_safe_public_url
 
@@ -50,3 +53,96 @@ def test_budget_exhaustion_is_preventive_not_reactive():
     with pytest.raises(ResearchBudgetExceeded):
         governor.reserve("blocked-before-execution", "llm_extract", 0.006)
     assert governor.committed_micro_eur == 20_000
+
+
+def test_source_timeout_returns_zero_candidates_without_crashing(monkeypatch):
+    researcher = WebResearcher(
+        {
+            "original_query": "PMI con nuovi appalti",
+            "required_signals": ["contract_awarded"],
+            "source_plan": [{
+                "lane": "public_procurement",
+                "source_types": ["public_procurement_portal"],
+                "expected_evidence": ["contract_awarded"],
+                "query_templates": ["appalto aggiudicato PMI Italia"],
+            }],
+        },
+        max_queries=3,
+        max_urls_per_query=1,
+    )
+
+    async def queries():
+        return ["q1", "q2", "q3"]
+
+    async def timeout(_query):
+        raise asyncio.TimeoutError("source timed out")
+
+    monkeypatch.setattr(researcher, "generate_search_queries", queries)
+    monkeypatch.setattr(researcher, "_discover_urls_for_query", timeout)
+    assert asyncio.run(researcher.run()) == []
+    assert researcher.search_queries_executed == 3
+    assert researcher.pages_scheduled == 0
+
+
+def test_malformed_llm_tool_payload_is_diagnostic_and_fail_closed(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_EXTRACT_ENABLED", "1")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-only")
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "usage": {"input_tokens": 100, "output_tokens": 10},
+                "content": [{
+                    "type": "tool_use",
+                    "name": data_extractor.TOOL_NAME,
+                    "input": {"companies": "not-an-array"},
+                }],
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(data_extractor.httpx, "AsyncClient", FakeClient)
+    telemetry = {
+        "anthropic_requests": 0,
+        "provider_failures": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+    }
+    result = asyncio.run(data_extractor._call_anthropic_extract(
+        {"required_signals": ["contract_awarded"]},
+        "https://anac.example/award",
+        "Appalto aggiudicato ad Acme Srl.",
+        0,
+        1,
+        telemetry,
+    ))
+    assert result is None
+    assert telemetry["anthropic_requests"] == 1
+    assert telemetry["provider_failures"] == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"name": "A", "evidence": "evidenza valida abbastanza"},
+        {"name": "Acme Srl", "evidence": "short"},
+        {"name": "unknown", "evidence": "Appalto aggiudicato ad azienda ignota"},
+    ],
+)
+def test_partial_or_invalid_extraction_payload_never_becomes_candidate(payload):
+    assert data_extractor._sanitize_company(payload, "https://anac.example/award") is None

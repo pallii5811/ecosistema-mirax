@@ -20,12 +20,19 @@ rollback() {
   if [ "${ACTIVATION_STARTED}" = "1" ]; then
     systemctl stop "${API_SERVICE}" "${WORKER_SERVICE}" 2>/dev/null || true
     if [ -d "${BACKUP}" ]; then
-      if [ -d "${CURRENT}" ]; then mv "${CURRENT}" "${FAILED}" 2>/dev/null || true; fi
+      if [ -d "${CURRENT}" ]; then
+        local failed_target="${FAILED}"
+        if [ -e "${failed_target}" ]; then failed_target="${FAILED}-$(date +%s)"; fi
+        mv "${CURRENT}" "${failed_target}"
+      fi
       mv "${BACKUP}" "${CURRENT}"
     fi
     systemctl restart "${API_SERVICE}" 2>/dev/null || true
     systemctl stop "${WORKER_SERVICE}" 2>/dev/null || true
     systemctl disable "${WORKER_SERVICE}" 2>/dev/null || true
+  else
+    # A failed preflight must not poison a retry with the same release id.
+    if [ -d "${RELEASE}" ]; then rm -rf -- "${RELEASE}"; fi
   fi
   echo "staging activation failed; rollback completed (exit=${code})" >&2
   exit "${code}"
@@ -64,6 +71,10 @@ systemctl stop "${API_SERVICE}" "${WORKER_SERVICE}"
 systemctl disable "${WORKER_SERVICE}" 2>/dev/null || true
 mv "${CURRENT}" "${BACKUP}"
 mv "${RELEASE}" "${CURRENT}"
+if [ "${MIRAX_INJECT_POST_SWAP_FAILURE:-0}" = "1" ]; then
+  echo "injected post-swap staging failure" >&2
+  false
+fi
 systemctl start "${API_SERVICE}"
 sleep 3
 systemctl is-active --quiet "${API_SERVICE}"
