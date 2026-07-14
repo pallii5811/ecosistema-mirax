@@ -1,0 +1,26 @@
+{
+  "search_id": "f78d140f-e91d-4424-81ee-cd62c8266690",
+  "canary_id": "e1d206c0-096d-46c6-98b1-becd1106f759",
+  "evaluation_run_id": "499e9c65-aca0-454e-a466-6959a9cccc04",
+  "query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili",
+  "failure_reason": "The operation was aborted due to timeout",
+  "compiler_diagnostics": [],
+  "gates": [],
+  "plan": null,
+  "ledger": [
+    {
+      "operation_type": "intent_compilation",
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "estimated_cost_eur": 0.05,
+      "actual_cost_eur": 0.05,
+      "status": "settled",
+      "metadata": {
+        "outcome": "provider_delivery_uncertain",
+        "call_kind": "initial",
+        "error_type": "TimeoutError",
+        "prompt_version": "commercial-intent-v1.1.0"
+      }
+    }
+  ]
+}
