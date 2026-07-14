@@ -730,11 +730,14 @@ class WebResearcher:
             raise ValueError("plan must be a dict (MiraxQueryPlan)")
         self.plan = plan
         required_lane_count = _required_source_lane_count(plan)
-        self.max_queries = max(
-            3,
-            required_lane_count,
-            min(max_queries, max(3, DISCOVERY_MAX_QUERIES, required_lane_count)),
-        )
+        # The caller reserves cost for exactly ``max_queries``.  Silently
+        # raising an affordable one-query round to three queries breaks the
+        # reserve-before-execute contract and can settle above the hard cap.
+        # Required semantic lanes inform planning, but they must never raise
+        # the number of paid calls above the caller's reserved breadth.
+        requested_query_count = max(1, int(max_queries))
+        configured_query_cap = max(1, DISCOVERY_MAX_QUERIES, required_lane_count)
+        self.max_queries = max(1, min(requested_query_count, configured_query_cap))
         self.max_urls_per_query = max(1, min(max_urls_per_query, max(1, DISCOVERY_MAX_URLS_PER_QUERY)))
         if max_total_urls is None:
             try:
@@ -826,6 +829,17 @@ class WebResearcher:
         url_job_limit = max(1, min(self.max_total_urls, self.max_urls_per_query * self.max_queries))
 
         for query in queries:
+            # This is the last deterministic boundary before a provider call.
+            # The round-level reservation authorizes exactly ``max_queries``;
+            # never rely on generated-query truncation or end-of-round
+            # settlement to enforce that authorization.
+            if self.search_queries_executed >= self.max_queries:
+                logger.info(
+                    "query reservation exhausted: authorized=%s executed=%s",
+                    self.max_queries,
+                    self.search_queries_executed,
+                )
+                break
             metadata = _query_source_metadata(self.plan, query)
             expected = {
                 str(value).strip().lower().replace("-", "_")
@@ -844,6 +858,8 @@ class WebResearcher:
                 # subsequently raises. Semantic coverage is recorded only when
                 # the query call itself completes.
                 self.search_queries_executed += 1
+                if self.search_queries_executed > self.max_queries:
+                    raise ResearchBudgetExceeded("query execution exceeds reserved query count")
                 found = await self._discover_urls_for_query(query)
                 self.executed_required_signals.update(expected)
                 self.executed_source_lanes.add(str(metadata.get("source_lane") or "supplemental"))

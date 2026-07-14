@@ -92,6 +92,16 @@
       "expected": "reject_stale"
     }
   ],
+  "resolved_candidate_replay": [
+    {"name": "BRT", "website": "https://www.brt.it/", "confidence": 0.85, "score": 85, "resolution_source": "extracted_website"},
+    {"name": "Fondazione Edmund Mach", "website": "https://www.fmach.it/", "confidence": 0.70, "score": 70, "resolution_source": "serp_identity"},
+    {"name": "Gruppo Veritas", "website": "https://www.gruppoveritas.it/", "confidence": 0.70, "score": 70, "resolution_source": "extracted_website"},
+    {"name": "Hoval", "website": "https://www.hoval.it/", "confidence": 0.80, "score": 80, "resolution_source": "extracted_website"},
+    {"name": "ifm", "website": "https://www.ifm.com/", "confidence": 1.00, "score": 100, "resolution_source": "extracted_website"},
+    {"name": "Monge", "website": "https://www.monge.it/", "confidence": 1.00, "score": 100, "resolution_source": "extracted_website"},
+    {"name": "Oniverse", "website": "https://www.oniverse.it/", "confidence": 0.85, "score": 85, "resolution_source": "extracted_website"},
+    {"name": "Woehler", "website": "https://www.woehler.it/", "confidence": 0.85, "score": 85, "resolution_source": "extracted_website"}
+  ],
   "simulated_cost_ledger": [
     {"operation_type": "search_web", "actual_cost_eur": 0.02},
     {"operation_type": "open_page", "actual_cost_eur": 0.004},

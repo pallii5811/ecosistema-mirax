@@ -806,6 +806,18 @@ def extracted_to_lead_stub(
             "agentic_source_url": source_url,
             "domain_verification": extracted.get("domain_verification"),
         },
+        # Canonical evidence fields. Identity remains in technical_report
+        # until the audit boundary validates ownership and promotes it; the
+        # publication gate must not infer evidence from presentation fields.
+        "source_url": source_url,
+        "source_class": (
+            str((extracted.get("source_types") or [""])[0]).strip()
+            if isinstance(extracted.get("source_types"), list)
+            else str(extracted.get("source_class") or "").strip()
+        ),
+        "evidence": evidence,
+        "evidence_date": evidence_date or None,
+        "retrieval_method": str(extracted.get("retrieval_method") or "http_fetch"),
         "business_signals": business_signals or None,
         "source": "agentic_web_search",
         "source_lane": extracted.get("source_lane") or (
@@ -836,6 +848,24 @@ def extracted_to_lead_stub(
         "lead_object_version": 2,
         "audit_version": 2,
     }
+    for canonical_field in (
+        "legal_name", "entity_type", "organization_type", "company_size_class",
+        "company_size", "employee_count", "employees", "dipendenti_stimati",
+        "operating_company_probability", "is_media", "is_directory",
+        "is_university", "is_public_body", "is_global_brand",
+        "is_source_publisher", "enterprise_excluded",
+    ):
+        if extracted.get(canonical_field) is not None:
+            stub[canonical_field] = extracted.get(canonical_field)
+    canonical_source_class = str(stub.get("source_class") or "").strip()
+    for signal in business_signals:
+        if not isinstance(signal, dict):
+            continue
+        signal.setdefault("source_url", source_url)
+        signal.setdefault("source_class", canonical_source_class)
+        signal.setdefault("observed_at", observed_at)
+        signal.setdefault("published_at", evidence_date or None)
+        signal.setdefault("retrieval_method", stub["retrieval_method"])
     if business_hiring_jobs:
         stub["business_hiring_jobs"] = business_hiring_jobs
     if extracted.get("partita_iva"):

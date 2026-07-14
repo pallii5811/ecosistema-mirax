@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-role")
 os.environ.setdefault("MIRAX_WORKER_DISABLED", "1")
@@ -31,7 +33,9 @@ from agents.web_researcher import (
     _source_plan_queries,
 )
 from commercial_lifecycle import evaluate_publication_gate
+from cost_governor import ResearchBudgetExceeded, ResearchCostGovernor
 from worker_supabase import (
+    _apply_audit_url_payload_to_lead,
     _agentic_candidate_pool_target,
     _lead_satisfies_confirmed_required_signals,
 )
@@ -115,13 +119,13 @@ def _identity(name, website, _location):
 
 def _lifecycle_lead(prepared, page, now):
     lead = extracted_to_lead_stub(prepared, category="PMI", location="Italia")
+    lead = _apply_audit_url_payload_to_lead(lead, {})
     evidence = page["extracted"]["evidence"]
     source_url = page["url"]
     lead.update({
         "azienda": page["extracted"]["name"],
         "website": prepared["website"],
         "sito": prepared["website"],
-        "domain_verification": prepared["domain_verification"],
         "source_url": source_url,
         "source_class": "company_careers",
         "evidence": evidence,
@@ -175,6 +179,7 @@ def test_stage1_hiring_trace_replay_end_to_end(monkeypatch):
     # Discovery must deduplicate repeated URLs and keep searching beyond the
     # first requested_count raw rows; the controlled pool target is 3x.
     researcher = WebResearcher(plan, max_queries=1, max_urls_per_query=25, max_total_urls=25)
+    assert researcher.max_queries == 1
 
     async def fake_discover(_query):
         return list(trace["serp_results"])
@@ -222,6 +227,13 @@ def test_stage1_hiring_trace_replay_end_to_end(monkeypatch):
     sibeg = next(row for row in prepared_rows if row["name"] == "Sibeg Srl")
     assert sibeg["website"] == "https://careers.sibeg.it/"
     assert sibeg["domain_verification"]["status"] == "verified"
+    canonical_stub = _apply_audit_url_payload_to_lead(
+        extracted_to_lead_stub(sibeg, category="PMI", location="Italia"),
+        {},
+    )
+    assert canonical_stub["domain_verification"]["status"] == "verified"
+    assert canonical_stub["source_url"] == "https://careers.sibeg.it/jobs.php?page=1"
+    assert canonical_stub["evidence"].startswith("Sibeg Srl cerca manutentori")
 
     # Global dedup uses the verified official domain, not the display name.
     keys = [lead_dedupe_key(row["name"], row["website"]) for row in prepared_rows]
@@ -304,3 +316,120 @@ def test_stage1_replay_prevents_duplicate_extraction_and_lane_starvation(monkeyp
     assert calls == coverage_queries
     assert len(jobs) == 3
     assert {job[2]["source_lane"] for job in jobs} == {"job_market", "public_procurement", "web_evidence"}
+
+
+def test_one_reserved_query_executes_exactly_one_provider_call(monkeypatch):
+    trace = _load_fixture()
+    researcher = WebResearcher(trace["plan"], max_queries=1, max_urls_per_query=5, max_total_urls=5)
+    calls = []
+
+    async def fake_provider(query):
+        calls.append(query)
+        return [f"https://candidate-{len(calls)}.example/jobs"]
+
+    monkeypatch.setattr(researcher, "_discover_urls_for_query", fake_provider)
+    queries = ["query one", "query two", "query three"]
+    asyncio.run(researcher._discover_url_jobs(queries))
+
+    assert calls == ["query one"]
+    assert researcher.search_queries_executed == researcher.max_queries == 1
+
+
+def test_query_reservation_and_actual_cost_remain_below_hard_cap(monkeypatch):
+    trace = _load_fixture()
+    budgeted_plan = {
+        **trace["plan"],
+        "canonical_plan": {
+            "budget_policy": {"target_cost_eur": 0.105, "hard_cost_eur": trace["hard_budget_eur"]}
+        },
+    }
+    governor = ResearchCostGovernor.from_plan(budgeted_plan, requested_leads=5)
+    governor.reserve("prior", "prior_operations", 0.118)
+    governor.reserve("search-round", "search_web", 0.005, units=1)
+
+    researcher = WebResearcher(
+        trace["plan"],
+        max_queries=1,
+        max_urls_per_query=5,
+        max_total_urls=5,
+        cost_governor=governor,
+    )
+    calls = []
+
+    async def fake_provider(query):
+        calls.append(query)
+        return ["https://candidate.example/jobs"]
+
+    monkeypatch.setattr(researcher, "_discover_urls_for_query", fake_provider)
+    asyncio.run(researcher._discover_url_jobs(["q1", "q2", "q3"]))
+    governor.settle("search-round", researcher.search_queries_executed * 0.005)
+
+    assert calls == ["q1"]
+    assert governor.snapshot()["committed_cost_eur"] == pytest.approx(0.123)
+    assert governor.snapshot()["committed_cost_eur"] <= trace["hard_budget_eur"]
+    with pytest.raises(ResearchBudgetExceeded):
+        governor.reserve("unreserved-provider-call", "search_web", 0.005)
+    assert governor.snapshot()["committed_cost_eur"] <= trace["hard_budget_eur"]
+
+
+def test_only_verified_matching_official_domain_is_promoted():
+    verified = {
+        "url": "https://acme.example/",
+        "status": "verified",
+        "score": 90,
+        "confidence": 0.9,
+        "evidence": ["company_tokens_in_host", "legal_name_in_page"],
+        "resolution_method": "positive_page_identity",
+        "resolution_source": "extracted_website",
+    }
+    base = {
+        "azienda": "Acme Srl",
+        "website": "https://acme.example/",
+        "sito": "https://acme.example/",
+        "technical_report": {"domain_verification": verified},
+    }
+    assert _apply_audit_url_payload_to_lead(base, {})["domain_verification"] == verified
+
+    mismatched = deepcopy(base)
+    mismatched["technical_report"]["domain_verification"] = {**verified, "url": "https://directory.example/"}
+    assert "domain_verification" not in _apply_audit_url_payload_to_lead(mismatched, {})
+
+    portal = deepcopy(base)
+    portal.update({"website": "https://www.indeed.it/", "sito": "https://www.indeed.it/"})
+    portal["technical_report"]["domain_verification"] = {**verified, "url": "https://www.indeed.it/"}
+    assert "domain_verification" not in _apply_audit_url_payload_to_lead(portal, {})
+
+    weak_ownership = deepcopy(base)
+    weak_ownership["technical_report"]["domain_verification"] = {
+        **verified,
+        "evidence": ["legal_name_in_page", "official_site_markers"],
+    }
+    assert "domain_verification" not in _apply_audit_url_payload_to_lead(weak_ownership, {})
+
+
+def test_real_trace_resolved_domains_do_not_fail_official_domain_gate():
+    trace = _load_fixture()
+    canonical_plan = _canonical_plan(trace)
+    assert len(trace["resolved_candidate_replay"]) == 8
+
+    for candidate in trace["resolved_candidate_replay"]:
+        verification = {
+            "url": candidate["website"],
+            "status": "verified",
+            "score": candidate["score"],
+            "confidence": candidate["confidence"],
+            "evidence": ["company_tokens_in_host", "legal_name_in_page"],
+            "resolution_method": "positive_page_identity",
+            "resolution_source": candidate["resolution_source"],
+        }
+        legacy_payload = {
+            "azienda": candidate["name"],
+            "website": candidate["website"],
+            "sito": candidate["website"],
+            "technical_report": {"domain_verification": verification, "audit_status": "complete"},
+        }
+        canonical = _apply_audit_url_payload_to_lead(legacy_payload, {})
+        gate = evaluate_publication_gate(canonical, canonical_plan, cost_within_budget=True)
+        assert canonical.get("domain_verification") == verification, candidate["name"]
+        assert gate["official_domain_verified"] is True, candidate["name"]
+        assert "OFFICIAL_DOMAIN_UNRESOLVED" not in gate["rejection_codes"], candidate["name"]

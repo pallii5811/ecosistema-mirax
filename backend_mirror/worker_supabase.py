@@ -2257,6 +2257,68 @@ def _lead_has_contact_channel(lead: Any) -> bool:
     return False
 
 
+def _verified_official_domain_payload(
+    lead: Dict[str, Any],
+    audit: Dict[str, Any],
+    previous_report: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Return a lifecycle-safe verified domain or fail closed.
+
+    Compatibility payloads are untrusted at this boundary: a portal or
+    directory can contain a syntactically valid ``domain_verification``.  Only
+    a positive identity proof for the exact canonical website may be promoted.
+    """
+    try:
+        from agents.portal_blacklist import (
+            is_blacklisted_domain,
+            is_source_portal_url,
+            normalize_domain,
+        )
+    except Exception:
+        return None
+
+    official_url = str(lead.get("sito") or lead.get("website") or "").strip()
+    official_domain = normalize_domain(official_url)
+    if not official_domain or is_blacklisted_domain(official_domain) or is_source_portal_url(official_url):
+        return None
+
+    candidates = (
+        lead.get("domain_verification"),
+        audit.get("domain_verification"),
+        previous_report.get("domain_verification"),
+    )
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        resolved_url = str(candidate.get("url") or "").strip()
+        resolved_domain = normalize_domain(resolved_url)
+        evidence = {
+            str(value).strip()
+            for value in candidate.get("evidence") or []
+            if str(value).strip()
+        }
+        try:
+            confidence = float(candidate.get("confidence") or 0.0)
+            score = int(candidate.get("score") or 0)
+        except (TypeError, ValueError):
+            continue
+        if (
+            str(candidate.get("status") or "").strip().lower() != "verified"
+            or resolved_domain != official_domain
+            or is_blacklisted_domain(resolved_domain)
+            or is_source_portal_url(resolved_url)
+            or confidence < 0.70
+            or score < 70
+            or str(candidate.get("resolution_source") or "") not in {"extracted_website", "serp_identity"}
+            or str(candidate.get("resolution_method") or "") != "positive_page_identity"
+            or len(evidence) < 2
+            or not evidence.intersection({"company_tokens_in_host", "schema_org_identity_match"})
+        ):
+            continue
+        return dict(candidate)
+    return None
+
+
 def _apply_audit_url_payload_to_lead(lead: Dict[str, Any], audit: Dict[str, Any]) -> Dict[str, Any]:
     updated = dict(lead)
     ts: List[str] = []
@@ -2284,6 +2346,24 @@ def _apply_audit_url_payload_to_lead(lead: Dict[str, Any], audit: Dict[str, Any]
     tech_stack = list(dict.fromkeys([x for x in ts if str(x).strip()])) or ["Custom HTML"]
     seo_errors = audit.get("seo_errors") if isinstance(audit.get("seo_errors"), list) else []
     prev_tr = lead.get("technical_report") if isinstance(lead.get("technical_report"), dict) else {}
+    # Normalize the compatibility payload once at the audit boundary.  Older
+    # stubs stored verified identity/evidence only under technical_report and
+    # agentic_*; the canonical lifecycle intentionally reads top-level fields.
+    domain_verification = _verified_official_domain_payload(updated, audit, prev_tr)
+    if domain_verification:
+        updated["domain_verification"] = domain_verification
+    else:
+        # A pre-existing compatibility mirror must not bypass validation.
+        updated.pop("domain_verification", None)
+    if not str(updated.get("source_url") or "").strip():
+        updated["source_url"] = str(updated.get("agentic_source_url") or prev_tr.get("agentic_source_url") or "").strip()
+    if not str(updated.get("evidence") or "").strip():
+        updated["evidence"] = str(updated.get("agentic_evidence") or prev_tr.get("agentic_evidence") or "").strip()
+    if not str(updated.get("evidence_date") or "").strip():
+        updated["evidence_date"] = str(updated.get("source_observation_date") or "").strip() or None
+    if not str(updated.get("source_class") or "").strip():
+        source_types = updated.get("source_types") if isinstance(updated.get("source_types"), list) else []
+        updated["source_class"] = str(source_types[0] if source_types else "").strip()
     updated["tech_stack"] = tech_stack
     updated["meta_pixel"] = has_pixel
     updated["google_tag_manager"] = has_gtm
