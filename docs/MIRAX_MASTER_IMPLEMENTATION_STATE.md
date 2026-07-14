@@ -75,6 +75,8 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - Suite Source Adapter `88 passed`; lifecycle/costi/lease/contratti `62 passed`; TypeScript/Python compile e diff check verdi.
 - Nessun deploy, canary o provider call eseguito; costo provider reale della fase `EUR 0`.
 - Preflight locale: flag shadow assente dall'ambiente, default runtime off e configurazione staging esplicitamente `0`.
+- Preflight canary zero-cost completo: app `200`, release marker coerente, search Vercel disabilitata, 7 worker server `disabled/inactive`, Anthropic off.
+- Coorti rilevate dal preflight: legacy `7/25`, output v5 `0/160`, avversariali `0/15`; qualità live v5 non ancora certificabile.
 
 ## Prossimo passo sicuro
-- Verifica read-only dello staging remoto con worker/search/shadow disattivati; nessun canary finché non viene autorizzato esplicitamente.
+- Attendere autorizzazione esplicita prima di deploy staging immutabile o singolo canary v5; produzione e worker restano spenti.
