@@ -1,6 +1,8 @@
 import asyncio
 import os
 
+import pytest
+
 os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-role")
 os.environ.setdefault("MIRAX_WORKER_DISABLED", "1")
@@ -17,8 +19,82 @@ from worker_supabase import (
     _agentic_stream_one_lead,
     _filter_results_by_confirmed_required_signals,
     _lead_satisfies_confirmed_required_signals,
+    _normalize_one_shot_search_id,
+    _shadow_execution_is_authorized,
     _should_sync_graph_for_publish_status,
 )
+
+
+def test_one_shot_search_id_requires_once_and_uuid():
+    search_id = "32c8873d-bae0-481b-a07f-8e41283853fc"
+    assert _normalize_one_shot_search_id(search_id, once=True) == search_id
+    assert _normalize_one_shot_search_id("", once=False) == ""
+    with pytest.raises(ValueError, match="richiede --once"):
+        _normalize_one_shot_search_id(search_id, once=False)
+    with pytest.raises(ValueError, match="UUID valido"):
+        _normalize_one_shot_search_id("not-an-id", once=True)
+
+
+def test_shadow_worker_requires_explicit_post_prepare_authorization():
+    base = {
+        "lifecycle_stage": "v5_shadow",
+        "customer_visible": False,
+        "prepare_only": True,
+        "execution_authorized": False,
+    }
+    assert _shadow_execution_is_authorized(base) is False
+    assert _shadow_execution_is_authorized({**base, "prepare_only": False}) is False
+    assert _shadow_execution_is_authorized({
+        **base,
+        "prepare_only": False,
+        "execution_authorized": True,
+    }) is True
+    assert _shadow_execution_is_authorized({"lifecycle_stage": "customer_search"}) is True
+
+
+def test_llm_extraction_budget_is_allocated_once_per_required_lane(monkeypatch):
+    monkeypatch.setenv("MIRAX_LLM_MAX_CHUNKS_PER_PAGE", "1")
+    plan = {
+        "required_signals": ["hiring_operational", "contract_awarded", "production_expansion"],
+    }
+    extractor = DataExtractor(plan, [], chunk_size=180, chunk_overlap=0)
+    calls = []
+
+    async def fake_extract(source_url, chunk, chunk_index, chunk_total, plan_override=None):
+        calls.append((source_url, tuple((plan_override or {}).get("required_signals") or [])))
+        return []
+
+    monkeypatch.setattr(extractor, "_extract_chunk", fake_extract)
+    production_text = ("Nuovo stabilimento e ampliamento produttivo con nuova linea produttiva. " * 8)
+    procurement_text = ("Appalto aggiudicato e gara affidata alla PMI con CIG pubblicato. " * 8)
+    hiring_text = ("Posizione aperta per operai, tecnici e manutentori di produzione. " * 8)
+
+    asyncio.run(extractor.extract_page({
+        "url": "https://acme.example/news/plant",
+        "raw_text": production_text,
+        "expected_signals": ["production_expansion"],
+    }))
+    asyncio.run(extractor.extract_page({
+        "url": "https://acme.example/news/plant-2",
+        "raw_text": production_text,
+        "expected_signals": ["production_expansion"],
+    }))
+    asyncio.run(extractor.extract_page({
+        "url": "https://anac.example/award",
+        "raw_text": procurement_text,
+        "expected_signals": ["contract_awarded"],
+    }))
+    asyncio.run(extractor.extract_page({
+        "url": "https://acme.example/careers",
+        "raw_text": hiring_text,
+        "expected_signals": ["hiring_operational"],
+    }))
+
+    assert calls == [
+        ("https://acme.example/news/plant", ("production_expansion",)),
+        ("https://anac.example/award", ("contract_awarded",)),
+        ("https://acme.example/careers", ("hiring_operational",)),
+    ]
 
 
 def test_graph_sync_only_after_terminal_qualified_publish():

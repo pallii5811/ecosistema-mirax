@@ -1020,7 +1020,7 @@ async def run_agentic_discovery_streaming(
             stats_out.update({"pages_scraped": 0, "exhausted": False, "found": 0, "target": 0})
         return []
 
-    from .web_researcher import WebResearcher
+    from .web_researcher import WebResearcher, _required_source_lane_count
     from .data_extractor import DataExtractor
 
     seen = set(existing_keys or [])
@@ -1255,9 +1255,31 @@ async def run_agentic_discovery_streaming(
         # breadth down when the remaining hard budget cannot cover the plan.
         search_unit_cost = max(0.0, float(os.getenv("MIRAX_SERP_COST_EUR_PER_QUERY", "0.005") or "0.005"))
         crawl_unit_cost = max(0.0, float(os.getenv("MIRAX_CRAWL_COST_EUR_PER_PAGE", "0.0002") or "0.0002"))
+        required_lane_queries = _required_source_lane_count(plan)
+        minimum_lane_cost = required_lane_queries * (search_unit_cost + crawl_unit_cost)
+        if required_lane_queries > 0 and cost_governor.remaining_eur + 1e-9 < minimum_lane_cost:
+            stop_reason = "insufficient_budget_for_required_lane_coverage"
+            logger.error(
+                "required source lanes cannot execute within remaining budget lanes=%s remaining=%.6f minimum=%.6f",
+                required_lane_queries,
+                cost_governor.remaining_eur,
+                minimum_lane_cost,
+            )
+            break
         crawl_reserve = max_urls * max_queries * crawl_unit_cost
         affordable_queries = int(max(0.0, cost_governor.remaining_eur - crawl_reserve) / max(search_unit_cost, 0.000001))
         max_queries = min(max_queries, affordable_queries)
+        if required_lane_queries > 0 and max_queries < required_lane_queries:
+            # Recalculate using the minimum one-page crawl allocation per lane;
+            # broad crawling may shrink, required semantic coverage may not.
+            affordable_queries = int(
+                max(0.0, cost_governor.remaining_eur - required_lane_queries * crawl_unit_cost)
+                / max(search_unit_cost, 0.000001)
+            )
+            if affordable_queries < required_lane_queries:
+                stop_reason = "insufficient_budget_for_required_lane_coverage"
+                break
+            max_queries = required_lane_queries
         if max_queries <= 0:
             stop_reason = "budget_exhausted"
             break
@@ -1386,6 +1408,13 @@ async def run_agentic_discovery_streaming(
 
         if researcher.cost_failure:
             stop_reason = "budget_exhausted"
+        if researcher.search_queries_executed < required_lane_queries:
+            stop_reason = "incomplete_required_signal_lane_execution"
+            logger.error(
+                "required source lane execution incomplete required=%s executed=%s",
+                required_lane_queries,
+                researcher.search_queries_executed,
+            )
 
         if not base_search_queries and researcher.generated_base_queries:
             base_search_queries = list(researcher.generated_base_queries)

@@ -27,7 +27,7 @@ try {
     `update public.searches
        set status='cancelled', results='[]'::jsonb,
            progress=coalesce(progress,'{}'::jsonb) || jsonb_build_object('stop_reason',$2::text,'quarantined_at',now())
-     where id=$1 and status in ('planning','pending','pending_user','processing','running','cancelled')
+     where id=$1 and status in ('planning','pending','pending_user','processing','running','completed','error','cancelled')
      returning id`,
     [searchId, reason.slice(0, 500)],
   )

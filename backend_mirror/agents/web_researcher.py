@@ -320,7 +320,7 @@ def _signal_boolean_queries(plan: Dict[str, Any]) -> List[str]:
         role = "marketing"
 
     queries: List[str] = []
-    if "hiring" in sig_set:
+    if sig_set.intersection({"hiring", "hiring_operational", "hiring_technology", "hiring_sales", "hiring_marketing"}):
         if hypothesis_roles and _is_sales_intelligence_seller_query(plan):
             queries.append(
                 '(site:indeed.it OR site:infojobs.it) '
@@ -432,7 +432,7 @@ def _signal_boolean_queries(plan: Dict[str, Any]) -> List[str]:
         queries.append(
             f'(fiera OR expo OR webinar OR stand OR sponsor) {sector} {location}'
         )
-    if "tender_won" in sig_set:
+    if sig_set.intersection({"tender_won", "contract_awarded"}):
         queries.append(f'site:anac.gov.it OR "comunicato stampa" "aggiudicazione appalto" {location}')
         queries.append(f'("gara aggiudicata" OR "appalto aggiudicato" OR "contratto affidato") ("Srl" OR "impresa") {sector} {location}')
     if sig_set & {"new_company", "registry_change"}:
@@ -487,7 +487,7 @@ _LANE_QUERY_CONTEXT: Dict[str, str] = {
 }
 
 
-def _source_plan_queries(plan: Dict[str, Any]) -> List[str]:
+def _source_plan_query_specs(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
     source_plan = plan.get("source_plan")
     if not isinstance(source_plan, list):
         return []
@@ -496,13 +496,14 @@ def _source_plan_queries(plan: Dict[str, Any]) -> List[str]:
     location = _plan_str(plan, "location") or "Italia"
     rows = [row for row in source_plan if isinstance(row, dict)]
     rows.sort(key=lambda row: float(row.get("priority") or 0), reverse=True)
-    queries: List[str] = []
+    row_specs: List[List[Dict[str, Any]]] = []
     for row in rows:
         lane = str(row.get("lane") or "web_evidence")
         lane_context = _LANE_QUERY_CONTEXT.get(lane, _LANE_QUERY_CONTEXT["web_evidence"])
         templates = row.get("query_templates")
         if not isinstance(templates, list) or not templates:
             templates = [original]
+        specs: List[Dict[str, Any]] = []
         for template in templates[:2]:
             query = str(template or original).strip()
             query = (
@@ -514,10 +515,60 @@ def _source_plan_queries(plan: Dict[str, Any]) -> List[str]:
                 continue
             if lane_context.lower() not in query.lower():
                 query = f"{query} {lane_context}"
-            queries.append(query)
-            if len(queries) >= DISCOVERY_MAX_QUERIES:
-                return queries
-    return queries
+            specs.append({
+                "query": query,
+                "lane": lane,
+                "expected_signals": [
+                    str(value).strip().lower().replace("-", "_")
+                    for value in row.get("expected_evidence") or []
+                    if str(value).strip()
+                ],
+                "source_types": [str(value).strip() for value in row.get("source_types") or [] if str(value).strip()],
+            })
+        if specs:
+            row_specs.append(specs)
+
+    # Coverage first: take one executable query from every selected lane before
+    # spending a second query on a high-priority lane. This prevents two hiring
+    # templates from crowding procurement/expansion out of a small canary budget.
+    ordered: List[Dict[str, Any]] = []
+    for template_index in range(2):
+        for specs in row_specs:
+            if template_index < len(specs):
+                ordered.append(specs[template_index])
+    required_lane_count = sum(1 for specs in row_specs if specs[0].get("expected_signals"))
+    query_cap = max(DISCOVERY_MAX_QUERIES, required_lane_count)
+    return ordered[:query_cap]
+
+
+def _source_plan_queries(plan: Dict[str, Any]) -> List[str]:
+    return [str(spec["query"]) for spec in _source_plan_query_specs(plan)]
+
+
+def _required_source_lane_count(plan: Dict[str, Any]) -> int:
+    required = {
+        str(value).strip().lower().replace("-", "_")
+        for value in plan.get("required_signals") or []
+        if str(value).strip()
+    }
+    covered: Set[str] = set()
+    for spec in _source_plan_query_specs(plan):
+        signals = {str(value) for value in spec.get("expected_signals") or []}
+        covered.update(signals.intersection(required))
+    return len(covered)
+
+
+def _query_source_metadata(plan: Dict[str, Any], query: str) -> Dict[str, Any]:
+    hardened_query = _harden_search_query(query).lower()
+    for spec in _source_plan_query_specs(plan):
+        hardened_spec = _harden_search_query(str(spec.get("query") or "")).lower()
+        if hardened_spec and (hardened_query == hardened_spec or hardened_spec in hardened_query):
+            return {
+                "source_lane": str(spec.get("lane") or "web_evidence"),
+                "expected_signals": list(spec.get("expected_signals") or []),
+                "source_types": list(spec.get("source_types") or []),
+            }
+    return {"source_lane": "supplemental", "expected_signals": [], "source_types": []}
 
 
 def _heuristic_search_queries(plan: Dict[str, Any]) -> List[str]:
@@ -533,12 +584,17 @@ def _heuristic_search_queries(plan: Dict[str, Any]) -> List[str]:
     # the seven-query SERP budget.
     source_queries = _source_plan_queries(plan)
     signal_queries = _signal_boolean_queries(plan)
-    queries: List[str] = []
-    for index in range(max(len(source_queries), len(signal_queries))):
+    required_lane_count = _required_source_lane_count(plan)
+    # Required source lanes are executable obligations, not suggestions. Put
+    # one query per required signal first; then interleave supplemental signal
+    # and second-template queries for recall.
+    queries: List[str] = list(source_queries[:required_lane_count])
+    remaining_source_queries = source_queries[required_lane_count:]
+    for index in range(max(len(remaining_source_queries), len(signal_queries))):
         if index < len(signal_queries):
             queries.append(signal_queries[index])
-        if index < len(source_queries):
-            queries.append(source_queries[index])
+        if index < len(remaining_source_queries):
+            queries.append(remaining_source_queries[index])
 
     seller_sales_intel = _is_sales_intelligence_seller_query(plan)
     accountant_seller = bool(re.search(r"\b(commercialist\w*|ragionier\w*|contabil\w*)\b", orig_low))
@@ -585,7 +641,10 @@ def _heuristic_search_queries(plan: Dict[str, Any]) -> List[str]:
     if "hiring" in signals and not any("indeed" in q for q in queries):
         queries.append(f'site:indeed.it OR site:infojobs.it "{sector or "piccole medie imprese italiane"}" Italia -pmi.com')
 
-    return _finalize_search_queries(queries, max_queries=DISCOVERY_MAX_QUERIES)
+    return _finalize_search_queries(
+        queries,
+        max_queries=max(DISCOVERY_MAX_QUERIES, required_lane_count),
+    )
 
 
 B2B_SYSTEM_PROMPT = """Sei un Universal Web Researcher B2B evidence-first per MIRAX.
@@ -650,7 +709,12 @@ class WebResearcher:
         if not isinstance(plan, dict):
             raise ValueError("plan must be a dict (MiraxQueryPlan)")
         self.plan = plan
-        self.max_queries = max(3, min(max_queries, max(3, DISCOVERY_MAX_QUERIES)))
+        required_lane_count = _required_source_lane_count(plan)
+        self.max_queries = max(
+            3,
+            required_lane_count,
+            min(max_queries, max(3, DISCOVERY_MAX_QUERIES, required_lane_count)),
+        )
         self.max_urls_per_query = max(1, min(max_urls_per_query, max(1, DISCOVERY_MAX_URLS_PER_QUERY)))
         if max_total_urls is None:
             try:
@@ -820,9 +884,10 @@ class WebResearcher:
             logger.info("no search queries generated")
             return results
 
-        url_jobs: List[tuple[str, str]] = []
+        url_jobs: List[tuple[str, str, Dict[str, Any]]] = []
         url_job_limit = max(1, min(self.max_total_urls, self.max_urls_per_query * self.max_queries))
         for q in queries:
+            query_metadata = _query_source_metadata(self.plan, q)
             try:
                 self.search_queries_executed += 1
                 found = await self._discover_urls_for_query(q)
@@ -831,7 +896,7 @@ class WebResearcher:
                     if key in seen_urls:
                         continue
                     seen_urls.add(key)
-                    url_jobs.append((u, q))
+                    url_jobs.append((u, q, query_metadata))
                     if len(url_jobs) >= url_job_limit:
                         break
             except ResearchBudgetExceeded:
@@ -850,7 +915,10 @@ class WebResearcher:
             from playwright.async_api import async_playwright
         except ImportError:
             logger.warning("playwright missing — cannot scrape pages")
-            return [{"url": u, "raw_text": "", "query_source": q} for u, q in url_jobs[:15]]
+            return [
+                {"url": u, "raw_text": "", "query_source": q, **metadata}
+                for u, q, metadata in url_jobs[:15]
+            ]
 
         try:
             async with async_playwright() as p:
@@ -866,7 +934,7 @@ class WebResearcher:
                 page = await context.new_page()
                 await install_playwright_ssrf_guard(page)
 
-                for url, query_source in url_jobs:
+                for url, query_source, query_metadata in url_jobs:
                     text = await self._scrape_url(page, url)
                     if text:
                         results.append(
@@ -874,6 +942,7 @@ class WebResearcher:
                                 "url": url,
                                 "raw_text": text,
                                 "query_source": query_source,
+                                **query_metadata,
                             }
                         )
                 await browser.close()
@@ -903,9 +972,10 @@ class WebResearcher:
             logger.info("no search queries generated")
             return
 
-        url_jobs: List[tuple[str, str]] = []
+        url_jobs: List[tuple[str, str, Dict[str, Any]]] = []
         url_job_limit = max(1, min(self.max_total_urls, self.max_urls_per_query * self.max_queries))
         for q in queries:
+            query_metadata = _query_source_metadata(self.plan, q)
             try:
                 self.search_queries_executed += 1
                 found = await self._discover_urls_for_query(q)
@@ -914,7 +984,7 @@ class WebResearcher:
                     if key in seen_urls:
                         continue
                     seen_urls.add(key)
-                    url_jobs.append((u, q))
+                    url_jobs.append((u, q, query_metadata))
                     if len(url_jobs) >= url_job_limit:
                         break
             except ResearchBudgetExceeded:
@@ -935,8 +1005,8 @@ class WebResearcher:
             from playwright.async_api import async_playwright
         except ImportError:
             logger.warning("playwright missing — cannot scrape pages")
-            for u, q in url_jobs[:15]:
-                yield {"url": u, "raw_text": "", "query_source": q}
+            for u, q, metadata in url_jobs[:15]:
+                yield {"url": u, "raw_text": "", "query_source": q, **metadata}
             return
 
         try:
@@ -953,7 +1023,11 @@ class WebResearcher:
             sem = asyncio.Semaphore(self.scrape_workers)
             tasks: List[asyncio.Task[Optional[Dict[str, str]]]] = []
 
-            async def _scrape_job(url: str, query_source: str) -> Optional[Dict[str, str]]:
+            async def _scrape_job(
+                url: str,
+                query_source: str,
+                query_metadata: Dict[str, Any],
+            ) -> Optional[Dict[str, Any]]:
                 async with sem:
                     page = await context.new_page()
                     try:
@@ -961,11 +1035,19 @@ class WebResearcher:
                         text = await self._scrape_url(page, url)
                         if not text:
                             return None
-                        return {"url": url, "raw_text": text, "query_source": query_source}
+                        return {
+                            "url": url,
+                            "raw_text": text,
+                            "query_source": query_source,
+                            **query_metadata,
+                        }
                     finally:
                         await page.close()
 
-            tasks = [asyncio.create_task(_scrape_job(url, source)) for url, source in url_jobs]
+            tasks = [
+                asyncio.create_task(_scrape_job(url, source, metadata))
+                for url, source, metadata in url_jobs
+            ]
             try:
                 for task in asyncio.as_completed(tasks):
                     item = await task

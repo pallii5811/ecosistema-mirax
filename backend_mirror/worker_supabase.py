@@ -11,6 +11,7 @@ import logging
 import concurrent.futures
 import socket
 import threading
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import parse_qs, quote, unquote, urlparse, urljoin
@@ -3988,6 +3989,28 @@ async def _run_business_events_enrichment(
     return formatted
 
 
+def _normalize_one_shot_search_id(raw_search_id: Any, once: bool) -> str:
+    search_id = str(raw_search_id or "").strip()
+    if not search_id:
+        return ""
+    if not once:
+        raise ValueError("--search-id richiede --once")
+    try:
+        return str(uuid.UUID(search_id))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError("--search-id deve essere un UUID valido") from exc
+
+
+def _shadow_execution_is_authorized(intent: Any) -> bool:
+    if not isinstance(intent, dict) or str(intent.get("lifecycle_stage") or "") != "v5_shadow":
+        return True
+    return (
+        intent.get("customer_visible") is False
+        and intent.get("prepare_only") is False
+        and intent.get("execution_authorized") is True
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument(
@@ -4054,8 +4077,25 @@ def main() -> None:
         action="store_true",
         help="Esegue un solo ciclo del worker (un job pending se presente) e poi termina.",
     )
+    parser.add_argument(
+        "--search-id",
+        type=str,
+        default="",
+        help=(
+            "Vincola il one-shot a un singolo UUID search. "
+            "Valido solo insieme a --once; non effettua fallback su altri job."
+        ),
+    )
 
     args, _unknown = parser.parse_known_args()
+
+    try:
+        search_id_filter = _normalize_one_shot_search_id(
+            getattr(args, "search_id", ""),
+            bool(getattr(args, "once", False)),
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if os.getenv("MIRAX_WORKER_DISABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
         print("[worker_supabase] MIRAX_WORKER_DISABLED=1 — worker spento in modo sicuro.", flush=True)
@@ -4237,7 +4277,17 @@ def main() -> None:
 
             rows = []
             expected_pending_status = "pending"
-            if mode in {"all", "user"}:
+            if search_id_filter:
+                resp = (
+                    supabase.table("searches")
+                    .select("*")
+                    .eq("id", search_id_filter)
+                    .eq("status", "pending")
+                    .limit(1)
+                    .execute()
+                )
+                rows = getattr(resp, "data", None) or []
+            elif mode in {"all", "user"}:
                 # Priority 1: realtime user jobs (most recent first)
                 expected_pending_status = "pending"
                 q = (
@@ -4258,7 +4308,7 @@ def main() -> None:
                     print(f"[worker_supabase] Nessun job pending (mode={mode}, recent_min={user_recent_minutes})", flush=True)
 
             # Backlog selection
-            if (not rows) and mode in {"all", "backlog"}:
+            if (not rows) and (not search_id_filter) and mode in {"all", "backlog"}:
                 resp = (
                     supabase.table("searches")
                     .select("*")
@@ -4271,6 +4321,10 @@ def main() -> None:
                 expected_pending_status = "pending"
 
             if not rows:
+                if bool(getattr(args, "once", False)):
+                    target = f" search_id={search_id_filter}" if search_id_filter else ""
+                    print(f"[worker_supabase] Nessun job pending{target}; one-shot terminato.", flush=True)
+                    return
                 time.sleep(4)
                 continue
 
@@ -4323,6 +4377,27 @@ def main() -> None:
                     time.sleep(1)
                     continue
                 raise
+            if not _shadow_execution_is_authorized(intent):
+                print(
+                    f"[worker_supabase] Reject unauthorized shadow execution job={job_id}",
+                    flush=True,
+                )
+                supabase.table("searches").update(
+                    {
+                        "status": "planning",
+                        "results": [],
+                        "progress": {
+                            "stop_reason": "SHADOW_EXECUTION_NOT_AUTHORIZED",
+                            "stage": "execution_authorization",
+                            "updated_at": _utc_now_iso(),
+                        },
+                        "updated_at": _utc_now_iso(),
+                    }
+                ).eq("id", job_id).eq("status", expected_pending_status).execute()
+                if bool(getattr(args, "once", False)):
+                    return
+                time.sleep(1)
+                continue
             intent_signals = []
             if isinstance(intent, dict):
                 intent_signals = intent.get("signals") or []

@@ -1,0 +1,57 @@
+{
+  "fixture_type": "controlled_shadow_failure",
+  "vertical": "workplace_safety",
+  "dataset_version": "mirax-gold-v5",
+  "search_id": "32c8873d-bae0-481b-a07f-8e41283853fc",
+  "canary_id": "90e5c79a-49ab-4fd0-afde-9c324f0e3605",
+  "evaluation_run_id": "dc573dd8-e8c3-4191-8ac0-7d0982ae4988",
+  "query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane con cantieri, produzione, appalti o crescita del personale operativo",
+  "required_signals": [
+    "hiring_operational",
+    "contract_awarded",
+    "production_expansion"
+  ],
+  "prepare": {
+    "passed": true,
+    "compiler_calls": 1,
+    "repair_calls": 0,
+    "compiler_cost_eur": 0.05,
+    "required_lane_count": 3,
+    "maps_used": false
+  },
+  "execution": {
+    "passed": false,
+    "stop_reason": "incomplete_required_signal_lane_execution",
+    "search_queries_executed": 2,
+    "pages_scheduled": 48,
+    "pages_scraped": 39,
+    "raw_candidates_extracted": 24,
+    "qualified_candidates": 0,
+    "llm_extract_calls": 2,
+    "llm_extract_calls_same_source": 2,
+    "missing_executed_signal_lanes": [
+      "contract_awarded"
+    ],
+    "total_cost_eur": 0.11265,
+    "hard_cap_eur": 0.125,
+    "publications": 0,
+    "credit_charges": 0
+  },
+  "root_causes": [
+    "The executor applied the global discovery query cap before guaranteeing one query per required signal lane.",
+    "Canonical signal aliases hiring_operational and contract_awarded were not both recognized by the deterministic signal-query layer.",
+    "The extraction budget could be consumed by multiple chunks from the same source before other required lanes received an evidence attempt.",
+    "The worker did not enforce the prepare-only execution_authorized boundary before claiming the shadow job."
+  ],
+  "containment": {
+    "search_status": "cancelled",
+    "canary_status": "quarantined",
+    "evaluation_run_status": "failed",
+    "active_jobs": 0,
+    "active_canaries": 0,
+    "stale_reservations": 0,
+    "worker_processes": 0,
+    "customer_visible": false
+  },
+  "retry_authorized": false
+}

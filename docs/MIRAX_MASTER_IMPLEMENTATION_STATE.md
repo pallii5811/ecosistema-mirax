@@ -1,6 +1,60 @@
 # MIRAX Master Implementation State
 
-Ultimo aggiornamento verificato: 2026-07-13 23:25 (Europe/Rome)
+Ultimo aggiornamento verificato: 2026-07-14 02:48 (Europe/Rome)
+
+## Checkpoint corrente — workplace_safety prepare PASS, one-shot quarantinato, executor hardening — 2026-07-14 02:48 +02:00
+
+### Stato Git / release / freni
+
+- Branch `safety/mirax-v5-11-codex-checkpoint`; commit locale precedente `a1b5720` (`test: harden controlled workplace safety prepare`). Il branch remoto non è aggiornabile dalla sessione: `gh` non autenticato e GitHub connector senza accesso al repository privato (`Repository not found`).
+- Staging atomico `20260714_023844`; rollback `/home/worker/backups/staging-pre-20260714_023844`; hash locali/staging uguali per `worker_supabase`, `web_researcher`, `data_extractor`, `agentic_gap_fill`.
+- Frontend production invariato: marker `2026-07-13-complete-signal-lane-coverage-v5-11`, `production_search_disabled=true`.
+- Worker general/staging `inactive+disabled`; processi `worker_supabase.py` 0; active job/canary 0/0; reservation stale/open 0/0; customer publication e credit charge del canary 0/0.
+
+### Prepare controllato `workplace_safety` — PASS
+
+- Search `32c8873d-bae0-481b-a07f-8e41283853fc`; canary `90e5c79a-49ab-4fd0-afde-9c324f0e3605`; evaluation run `dc573dd8-e8c3-4191-8ac0-7d0982ae4988`.
+- Una chiamata compiler, nessun repair, costo compiler `€0,05`; tutti i 19 gate semantici/ledger PASS.
+- Seller e buyer corretti; PMI micro/small/medium Italia; Maps escluso.
+- Segnali esatti conservati: `hiring_operational`, `contract_awarded`, `production_expansion`.
+- Tre lane dedicate selezionate: careers/job market, public procurement, official company web; freshness 60/365/365 giorni.
+
+### One-shot isolato — FAIL e quarantena
+
+- Esecuzione singola sulla staging `20260714_015343`, vincolata al search UUID con `--once --search-id`; servizi persistenti mai attivati.
+- Costo totale `€0,11265` su hard cap `€0,125`; 39 pagine scrapeate, 48 URL schedulati, 24 raw extraction, 0 candidati qualificati.
+- Zero publication, zero credit charge, zero evidenze/lead deboli esposti.
+- Stati terminali verificati: search `cancelled`, canary `quarantined`, evaluation run `failed`; reason `incomplete_required_signal_lane_execution`.
+- Fixture sanitizzata: `evaluation/fixtures/workplace-safety-controlled-execution-20260714.json`.
+
+### Root cause generale dimostrata
+
+1. Il cap query globale veniva applicato prima della copertura minima: due query eseguite contro tre lane obbligatorie; la lane `contract_awarded` non è stata interrogata.
+2. Gli alias canonici `hiring_operational` e `contract_awarded` non erano entrambi riconosciuti nel deterministic signal-query layer.
+3. Le due chiamate `llm_extract` (`€0,014475` + `€0,013575`) sono state consumate su due chunk della stessa pagina, prima di dare un tentativo alle altre lane.
+4. Il worker non imponeva il boundary `prepare_only=true` / `execution_authorized=false` prima del claim.
+
+### Correzione offline e staging
+
+- Coverage-first round-robin: una query eseguibile per ogni required signal lane prima delle seconde template; il minimo non può essere ridotto dal cap globale.
+- Stop fail-closed `insufficient_budget_for_required_lane_coverage` prima delle fonti se il residuo non copre tutte le lane; stop `incomplete_required_signal_lane_execution` se l'executor non le interroga tutte.
+- Alias `hiring_operational` e `contract_awarded` collegati alle query deterministiche corrette.
+- Query metadata propagata alle pagine (`source_lane`, `source_types`, `expected_signals`); prefilter ed estrazione sono lane-specific.
+- Budget LLM ripartito: massimo un chunk pagato per pagina e un primo tentativo per required lane; pagine supplementari non possono consumare budget prima della copertura.
+- `--search-id` valido soltanto con `--once`, UUID obbligatorio, nessun fallback verso altri job.
+- Shadow worker bloccato senza autorizzazione esplicita post-prepare; prepare resta `planning`. Nuovo authorizer transazionale controlla relazioni, cap, ledger e assenza di publication/charge prima di impostare `pending`.
+- Quarantena ora gestisce in modo transazionale anche search già `completed/error` dal one-shot.
+
+### Evidenza test
+
+- Regressioni mirate backend: `57/57` PASS; TypeScript PASS; Python compile PASS.
+- Preflight completo con CA di sistema: PASS (contract 24/24, query matrix 137/137, signal floor 10/10, real-user 55/55, backend 24+9+17, Vercel brake, server brake e worker state).
+- Staging `20260714_023844`: import, contratti, lifecycle tests e health PASS; hash runtime 4/4 coincidenti; worker inactive+disabled.
+- Gold v5 prodotto: 0; legacy human baseline: 7. Nessuna precisione v5 o produzione 10/10 dichiarabile.
+
+### Prossimo comando sicuro
+
+Creare un commit atomico e pusharlo. **Non** eseguire un nuovo tentativo pagato finché il checkpoint non è remoto. Dopo il push, è ammesso al massimo un nuovo canary controllato con ID nuovi, prepare `planning`, authorizer transazionale, one-shot UUID-bound, stesso cap `€0,125`, nessuna customer publication/charge. Shadow multi-verticale resta vietato finché questo gate non produce almeno 3 lead completi e verificabili.
 
 ## Checkpoint corrente — riconciliazione post-Cursor e harness prepare hardening — 2026-07-13 23:25 +02:00
 

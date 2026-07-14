@@ -24,6 +24,8 @@ from agents.web_researcher import (
     WebResearcher,
     _heuristic_search_queries,
     _queries_for_discovery_round,
+    _required_source_lane_count,
+    _source_plan_query_specs,
     _source_plan_queries,
 )
 
@@ -243,6 +245,53 @@ def test_source_plan_drives_long_tail_queries() -> None:
     assert len(queries) == 2
     assert "gazzettaufficiale" in queries[0]
     assert "registroimprese" in queries[1]
+
+
+def test_required_signal_lanes_are_coverage_first_under_small_query_cap(monkeypatch) -> None:
+    import agents.web_researcher as web_researcher
+
+    monkeypatch.setattr(web_researcher, "DISCOVERY_MAX_QUERIES", 2)
+    plan = {
+        "original_query": "PMI con personale operativo, appalti e ampliamenti produttivi",
+        "sector": "company",
+        "location": "Italia",
+        "required_signals": ["hiring_operational", "contract_awarded", "production_expansion"],
+        "source_plan": [
+            {
+                "lane": "job_market",
+                "priority": 100,
+                "source_types": ["company_careers"],
+                "query_templates": ["careers operai {location}", "posizioni tecnici {location}"],
+                "expected_evidence": ["hiring_operational"],
+            },
+            {
+                "lane": "public_procurement",
+                "priority": 90,
+                "source_types": ["public_procurement_portal"],
+                "query_templates": ["appalto aggiudicato PMI {location}"],
+                "expected_evidence": ["contract_awarded"],
+            },
+            {
+                "lane": "web_evidence",
+                "priority": 80,
+                "source_types": ["official_company_website"],
+                "query_templates": ["nuovo stabilimento PMI {location}"],
+                "expected_evidence": ["production_expansion"],
+            },
+        ],
+    }
+    specs = _source_plan_query_specs(plan)
+    assert _required_source_lane_count(plan) == 3
+    assert [spec["expected_signals"] for spec in specs[:3]] == [
+        ["hiring_operational"],
+        ["contract_awarded"],
+        ["production_expansion"],
+    ]
+    queries = _heuristic_search_queries(plan)
+    assert len(queries) >= 3
+    assert "careers operai" in queries[0]
+    assert "appalto aggiudicato" in queries[1]
+    assert "nuovo stabilimento" in queries[2]
 
 
 def test_accountant_source_plan_does_not_degrade_to_hiring_or_retail_careers() -> None:

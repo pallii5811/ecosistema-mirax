@@ -185,6 +185,11 @@ def page_has_required_signal(text: str, plan: Dict[str, Any]) -> bool:
     return any(keyword in lower for signal in known for keyword in _SIGNAL_PREFILTERS[signal])
 
 
+def _chunk_signal_score(text: str, plan: Dict[str, Any]) -> int:
+    lower = (text or "").lower()
+    return sum(lower.count(keyword) for keyword in _required_signal_keywords(plan) if keyword)
+
+
 def _env_float(name: str, default: float, min_value: float, max_value: float) -> float:
     try:
         value = float(os.getenv(name, str(default)) or default)
@@ -724,6 +729,7 @@ class DataExtractor:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.cost_governor = cost_governor
+        self._llm_signal_allocations: Set[str] = set()
         self.telemetry: Dict[str, int] = {
             "pages_seen": 0,
             "blocked_pages": 0,
@@ -750,6 +756,7 @@ class DataExtractor:
         snapshot["cost_rates_configured"] = bool(
             os.getenv("MIRAX_LLM_INPUT_USD_PER_M") or os.getenv("MIRAX_LLM_OUTPUT_USD_PER_M")
         )
+        snapshot["llm_signal_lanes"] = sorted(self._llm_signal_allocations)
         return snapshot
 
     async def _extract_chunk(
@@ -758,9 +765,10 @@ class DataExtractor:
         chunk: str,
         chunk_index: int,
         chunk_total: int,
+        plan_override: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         companies = await _llm_extract_companies(
-            self.plan,
+            plan_override or self.plan,
             source_url,
             chunk,
             chunk_index,
@@ -795,7 +803,31 @@ class DataExtractor:
         if not raw_text or len(raw_text) < MIN_CHUNK_CHARS:
             self.telemetry["short_pages"] += 1
             return []
-        if not page_has_required_signal(raw_text, self.plan):
+        required_signals = {
+            str(value).strip().lower().replace("-", "_")
+            for value in self.plan.get("required_signals") or []
+            if str(value).strip()
+        }
+        expected_signals = {
+            str(value).strip().lower().replace("-", "_")
+            for value in page.get("expected_signals") or []
+            if str(value).strip()
+        }.intersection(required_signals)
+        has_planned_required_lanes = any(
+            required_signals.intersection({
+                str(value).strip().lower().replace("-", "_")
+                for value in lane.get("expected_evidence") or []
+                if str(value).strip()
+            })
+            for lane in self.plan.get("source_plan") or []
+            if isinstance(lane, dict)
+        )
+        page_plan = (
+            {**self.plan, "required_signals": sorted(expected_signals)}
+            if expected_signals
+            else self.plan
+        )
+        if not page_has_required_signal(raw_text, page_plan):
             self.telemetry["prefilter_skips"] += 1
             logger.info("extract prefilter skip url=%s", source_url[:80])
             return []
@@ -805,18 +837,49 @@ class DataExtractor:
             return []
         self.telemetry["chunks"] += len(chunks)
 
+        indexed_chunks = list(enumerate(chunks))
+        indexed_chunks.sort(key=lambda item: (-_chunk_signal_score(item[1], page_plan), item[0]))
+        llm_chunks_per_page = _env_int("MIRAX_LLM_MAX_CHUNKS_PER_PAGE", 1, 0, 20)
+        uncovered_signals = required_signals.difference(self._llm_signal_allocations)
+        if expected_signals:
+            allow_paid_extraction = bool(expected_signals.intersection(uncovered_signals))
+        elif required_signals and has_planned_required_lanes:
+            # Supplemental/noise pages cannot consume the scarce LLM budget
+            # before each required semantic lane has had one evidence attempt.
+            allow_paid_extraction = not uncovered_signals
+        else:
+            allow_paid_extraction = True
+
         merged: List[Dict[str, Any]] = []
         seen: Set[str] = set()
-        for idx, chunk in enumerate(chunks):
+        paid_chunks_used = 0
+        for original_idx, chunk in indexed_chunks:
             try:
-                leads = await self._extract_chunk(source_url, chunk, idx, len(chunks))
+                if allow_paid_extraction and paid_chunks_used < llm_chunks_per_page:
+                    if expected_signals:
+                        self._llm_signal_allocations.update(expected_signals)
+                    paid_chunks_used += 1
+                    leads = await self._extract_chunk(
+                        source_url,
+                        chunk,
+                        original_idx,
+                        len(chunks),
+                        plan_override=page_plan,
+                    )
+                else:
+                    leads = []
+                    if not _plan_requires_marketing_signal(page_plan):
+                        for company in _heuristic_extract_companies(page_plan, source_url, chunk):
+                            lead = _sanitize_company(company, source_url)
+                            if lead:
+                                leads.append(lead)
             except ResearchBudgetExceeded:
                 raise
             except Exception as exc:
                 logger.warning(
                     "extract chunk failed url=%s chunk=%s/%s: %s",
                     source_url[:80],
-                    idx + 1,
+                    original_idx + 1,
                     len(chunks),
                     exc,
                 )

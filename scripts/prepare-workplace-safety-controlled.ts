@@ -25,6 +25,7 @@ const DATASET_VERSION = 'mirax-gold-v5'
 const MAX_LEADS = 5
 const HARD_BUDGET_EUR = 0.125
 const COMPILER_CAP_EUR = 0.05
+const PREFLIGHT_ONLY = process.argv.includes('--preflight-only')
 const REQUIRED_SIGNALS = ['contract_awarded', 'hiring_operational', 'production_expansion'] as const
 const GENERIC_TEXT = /(?:necessit[aà]\s+(?:commerciale\s+)?implicita|bisogno\s+da\s+(?:confermare|verificare)|coerenza\s+(?:da\s+validare|con\s+l[' ]?obiettivo)|richiesta\s+dell[' ]?utente|da\s+verificare|placeholder)/i
 
@@ -167,8 +168,17 @@ async function activeGuards(service: SupabaseClient) {
     service.from('searches').select('id', { count: 'exact', head: true }).in('status', ['planning', 'pending', 'pending_user', 'processing', 'running']),
     service.from('search_cost_ledger').select('id', { count: 'exact', head: true }).eq('status', 'reserved').lt('reservation_expires_at', new Date().toISOString()),
   ])
-  const failure = canaries.error || jobs.error || reservations.error
-  if (failure) throw failure
+  const failures = [
+    ['active canaries', canaries.error],
+    ['active jobs', jobs.error],
+    ['stale reservations', reservations.error],
+  ].filter((entry): entry is [string, NonNullable<typeof canaries.error>] => Boolean(entry[1]))
+  if (failures.length > 0) {
+    const detail = failures.map(([label, error]) =>
+      `${label}: ${error.message} (${error.code || 'no_code'})`,
+    ).join('; ')
+    throw new Error(`preflight database guard failed: ${detail}`)
+  }
   const activeCanaries = canaries.count
   const activeJobs = jobs.count
   const stale = reservations.count
@@ -231,9 +241,20 @@ async function quarantine(
 }
 
 async function main() {
-  required('ANTHROPIC_API_KEY')
   const service = db()
   await activeGuards(service)
+  if (PREFLIGHT_ONLY) {
+    console.log(JSON.stringify({
+      ok: true,
+      mode: 'preflight_only',
+      active_canaries: 0,
+      active_jobs: 0,
+      stale_reservations: 0,
+      paid_calls: 0,
+    }, null, 2))
+    return
+  }
+  required('ANTHROPIC_API_KEY')
 
   const { data: intentGate } = await service.from('evaluation_runs').select('id,status,metrics')
     .eq('dataset_version', DATASET_VERSION).eq('mode', 'intent_canary').eq('status', 'completed')
@@ -345,7 +366,7 @@ async function main() {
       category: plan.sector || `Evaluation shadow ${VERTICAL}`,
       location: plan.location || 'Italia',
       intent,
-      status: 'pending',
+      status: 'planning',
       results: [],
       progress: { prepare_complete: true, execution_authorized: false },
     }).eq('id', searchId)
@@ -471,6 +492,14 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error))
+  if (error instanceof Error) {
+    console.error(error.stack || error.message)
+  } else {
+    try {
+      console.error(JSON.stringify(error, null, 2))
+    } catch {
+      console.error(String(error))
+    }
+  }
   process.exitCode = 1
 })
