@@ -41,7 +41,7 @@
     "test:block8": "npm run test:block8:unit",
     "test:block8:unit": "node --experimental-strip-types scripts/test-block8-outreach.mjs && node --experimental-strip-types scripts/test-block8-registry.mjs && node --experimental-strip-types scripts/test-block8-orchestrator.mjs",
     "test:block9": "npm run test:block9:unit",
-    "test:block9:unit": "node --experimental-strip-types scripts/test-block9-ai-act.mjs && node scripts/test-block9-infra.mjs",
+    "test:block9:unit": "node --experimental-strip-types scripts/test-block9-ai-act.mjs && node scripts/test-block9-infra.mjs && node scripts/test-remote-checkpoint-guard.mjs",
     "check:worker-health": "node scripts/check-worker-health.mjs",
     "test:ecosistema": "node scripts/test-ecosistema-all.mjs",
     "test:ecosistema:full": "node scripts/test-ecosistema-all.mjs --e2e --build",

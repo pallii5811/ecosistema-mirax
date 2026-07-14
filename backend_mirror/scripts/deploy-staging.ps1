@@ -15,6 +15,9 @@ if (Test-Path $IdentityFile) { $SshArgs = @("-i", $IdentityFile) + $SshArgs }
 Write-Host "==> MIRAX staging deploy -> $HostTarget"
 Write-Host "    (produzione 178 NON viene toccata)"
 
+& node (Join-Path $WorkspaceDir "scripts\assert-remote-checkpoint.mjs")
+if ($LASTEXITCODE -ne 0) { throw "Deploy bloccato: HEAD locale non verificato sul branch remoto" }
+
 function Invoke-Ssh([string]$Command) {
   & ssh @SshArgs $HostTarget $Command
   if ($LASTEXITCODE -ne 0) { throw "SSH failed: $Command" }
@@ -27,7 +30,7 @@ if ($LASTEXITCODE -ne 0) {
   Write-Host "Opzioni:"
   Write-Host "  1. Imposta MIRAX_SSH_IDENTITY o aggiungi chiave in ~/.ssh/id_ed25519"
   Write-Host "  2. Da server con accesso: bash backend_mirror/scripts/deploy-staging.sh"
-  Write-Host "  3. Manuale: scp backend_mirror/*.py su /home/worker/app/backend-staging + systemctl restart mirax-worker-staging"
+  Write-Host "  Il deploy manuale e il riavvio del worker sono vietati: usare soltanto l'attivazione atomica."
   exit 1
 }
 

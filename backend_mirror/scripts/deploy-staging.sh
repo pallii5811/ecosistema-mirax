@@ -13,6 +13,8 @@ ACTIVATOR="${LOCAL_DIR}/scripts/activate-staging-release.sh"
 
 echo "==> MIRAX deploy STAGING atomico -> ${HOST}"
 
+node "${WORKSPACE_DIR}/scripts/assert-remote-checkpoint.mjs"
+
 cleanup() { rm -f "${ARCHIVE}"; }
 trap cleanup EXIT
 

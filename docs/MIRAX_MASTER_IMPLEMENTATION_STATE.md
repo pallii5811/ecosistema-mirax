@@ -1,8 +1,8 @@
 # MIRAX Master Implementation State
 
-Ultimo aggiornamento verificato: 2026-07-14 11:05 (Europe/Rome)
+Ultimo aggiornamento verificato: 2026-07-14 11:29 (Europe/Rome)
 
-## Checkpoint corrente — provenance v5 fail-closed + source cost accounting — 2026-07-14 11:05 +02:00
+## Checkpoint corrente — provenance v5 fail-closed + source cost accounting — 2026-07-14 11:29 +02:00
 
 ### Correzione dataset e verità misurata
 
@@ -29,6 +29,7 @@ Ultimo aggiornamento verificato: 2026-07-14 11:05 (Europe/Rome)
 ### Stato Git e prossimo comando sicuro
 
 - Branch `safety/mirax-v5-11-codex-checkpoint`; prima di questo checkpoint HEAD locale `bd2afe8`, branch ahead di 3 sul remote. Nessun nuovo paid canary è stato eseguito.
+- Il deploy staging PowerShell/Bash ora fallisce chiuso se il worktree è sporco, HEAD è detached, il fetch autenticato non riesce o `HEAD != origin/<branch>`; il suggerimento di deploy manuale con restart worker è stato eliminato. Test deploy guard e Block 9 PASS.
 - Push ancora bloccato: `gh auth status` conferma nessuna sessione GitHub. Prossimo passo obbligatorio: `gh auth login`, commit/push del checkpoint, quindi deploy **solo staging** con worker ancora `inactive+disabled`.
 - Soltanto dopo checkpoint remoto e staging verificata: un solo nuovo canary controllato, ID nuovi, cap `€0,125`, one-shot, 0 repair e 0 customer publication/charge. I 10 shadow verticali restano vietati finché il canary non produce 3–5 lead qualificati.
 
