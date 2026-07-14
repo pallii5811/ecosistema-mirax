@@ -571,9 +571,17 @@ def _required_source_signals(plan: Dict[str, Any]) -> Set[str]:
 
 
 def _query_source_metadata(plan: Dict[str, Any], query: str) -> Dict[str, Any]:
-    hardened_query = _harden_search_query(query).lower()
+    # Discovery-round suffixes are inserted before the standard exclusions.
+    # Compare the stable query core, otherwise rounds 2+ silently lose their
+    # source lane and expected-signal lineage.
+    hardened_query = re.sub(
+        r"\s+", " ", _harden_search_query(query).replace(QUERY_CODE_EXCLUSIONS, "")
+    ).strip().lower()
     for spec in _source_plan_query_specs(plan):
-        hardened_spec = _harden_search_query(str(spec.get("query") or "")).lower()
+        hardened_spec = re.sub(
+            r"\s+", " ",
+            _harden_search_query(str(spec.get("query") or "")).replace(QUERY_CODE_EXCLUSIONS, ""),
+        ).strip().lower()
         if hardened_spec and (hardened_query == hardened_spec or hardened_spec in hardened_query):
             return {
                 "source_lane": str(spec.get("lane") or "web_evidence"),

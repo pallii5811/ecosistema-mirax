@@ -25,6 +25,7 @@ from agents.web_researcher import (
     WebResearcher,
     _heuristic_search_queries,
     _queries_for_discovery_round,
+    _query_source_metadata,
     _required_source_lane_count,
     _required_source_signals,
     _source_plan_query_specs,
@@ -353,6 +354,47 @@ def test_required_signal_lanes_are_all_executed_before_global_url_cap(monkeypatc
         "web_evidence",
     }
     assert all(len(entry["urls_scheduled"]) == 1 for entry in researcher.query_execution_log)
+
+
+def test_diversified_round_preserves_required_lane_lineage() -> None:
+    plan = {
+        "original_query": "PMI con personale operativo, appalti e ampliamenti produttivi",
+        "sector": "company",
+        "location": "Italia",
+        "required_signals": ["hiring_operational", "contract_awarded", "production_expansion"],
+        "source_plan": [
+            {
+                "lane": "job_market",
+                "priority": 100,
+                "source_types": ["company_careers"],
+                "query_templates": ["careers operai {location}"],
+                "expected_evidence": ["hiring_operational"],
+            },
+            {
+                "lane": "public_procurement",
+                "priority": 90,
+                "source_types": ["public_procurement_portal"],
+                "query_templates": ["appalto aggiudicato PMI {location}"],
+                "expected_evidence": ["contract_awarded"],
+            },
+            {
+                "lane": "web_evidence",
+                "priority": 80,
+                "source_types": ["official_company_website"],
+                "query_templates": ["nuovo stabilimento PMI {location}"],
+                "expected_evidence": ["production_expansion"],
+            },
+        ],
+    }
+    base = _source_plan_queries(plan)
+    diversified = _queries_for_discovery_round(base, {**plan, "_discovery_round": 2}, max_queries=3)
+    metadata = [_query_source_metadata(plan, query) for query in diversified]
+    assert [row["source_lane"] for row in metadata] == [
+        "job_market", "public_procurement", "web_evidence",
+    ]
+    assert [row["expected_signals"] for row in metadata] == [
+        ["hiring_operational"], ["contract_awarded"], ["production_expansion"],
+    ]
 
 
 def test_accountant_source_plan_does_not_degrade_to_hiring_or_retail_careers() -> None:
