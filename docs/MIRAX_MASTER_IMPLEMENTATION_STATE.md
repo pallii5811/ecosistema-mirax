@@ -15,4 +15,5 @@ Ultimo aggiornamento verificato: 2026-07-14 Europe/Rome.
 - Nessun nuovo canary, deploy o provider call autorizzato.
 
 ## Prossimo passo dopo il reset
-- Audit architetturale della source acquisition e degli adapter prima di qualsiasi altro canary.
+- Audit source acquisition completato in `MIRAX_SOURCE_ARCHITECTURE_AUDIT.md`; handoff Cursor pronto.
+- Prossimo task: congelare Digital Audit, poi introdurre contratti/catalogo adapter; nessun canary.
