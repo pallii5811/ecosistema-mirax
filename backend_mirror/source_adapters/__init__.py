@@ -18,6 +18,15 @@ from .digital_audit import DigitalAuditAdapter
 from .hiring import HiringAdapter, HiringProviderResult
 from .growth import GrowthProviderResult, GrowthSignalsAdapter
 from .generic_web import GenericWebProviderResult, GenericWebResearchAdapter
+from .orchestrator import (
+    AdapterProgress,
+    OrchestrationResult,
+    QualificationDecision,
+    SearchProgress,
+    UniversalSourceOrchestrator,
+    default_candidate_qualifier,
+    request_from_plan,
+)
 from .procurement import ProcurementAdapter, ProcurementProviderResult
 
 __all__ = [
@@ -34,6 +43,13 @@ __all__ = [
     "GrowthSignalsAdapter",
     "GenericWebProviderResult",
     "GenericWebResearchAdapter",
+    "AdapterProgress",
+    "OrchestrationResult",
+    "QualificationDecision",
+    "SearchProgress",
+    "UniversalSourceOrchestrator",
+    "default_candidate_qualifier",
+    "request_from_plan",
     "OpportunityCandidate",
     "ProcurementAdapter",
     "ProcurementProviderResult",

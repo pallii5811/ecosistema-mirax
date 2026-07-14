@@ -38,6 +38,12 @@ class SourceCapabilityRegistry:
     def capabilities(self) -> Tuple[SourceCapability, ...]:
         return tuple(adapter.capability for adapter in self._adapters.values())
 
+    def adapter(self, adapter_id: str) -> SourceAdapter:
+        try:
+            return self._adapters[adapter_id]
+        except KeyError as exc:
+            raise KeyError(f"source adapter is not registered: {adapter_id}") from exc
+
     def resolve(
         self,
         request: AdapterDiscoveryRequest,

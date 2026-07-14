@@ -37,8 +37,13 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - 12 replay primari: lineage, query origin, parent, round, signal ID, date, evidence e dominio canonici.
 - Directory, fonti secondarie, segnali impliciti, stale, geografia ed enterprise sono respinti prima della promozione.
 - Exhaustion globale non viene mai dichiarata da SERP campionate; hard cap verificato prima di ogni query.
+- Fase 7 Orchestrator: boundary compiler-plan, registry runtime, breadth-first, cursor e budget cumulativo.
+- Stop verificato su `qualified_count`; raw, unique, resolved, audited, evidence verified, rejected e published separati.
+- `all` fonde evidenze multi-adapter sulla stessa entità; `any` conserva alternative e lineage.
+- Overspend adapter causa hard failure; fallback parziale non dichiara market/source exhaustion globale.
+- Il nuovo orchestratore resta offline e non è stato attivato nei worker persistenti.
 - Test Hiring, forensic legacy, lifecycle, contratti e compile Python/TypeScript: verdi; costo provider reale `EUR 0`.
 - Test Fase 3, regressioni strutturate, contratti e compile Python/TypeScript: verdi; costo provider `EUR 0`.
 
 ## Prossimo passo sicuro
-- Implementare orchestrazione universale breadth-first sugli adapter registrati; nessun canary/provider live.
+- Implementare Opportunity Value Score trasparente sul candidato canonico; nessun canary/provider live.
