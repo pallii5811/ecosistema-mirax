@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "trace_source_search_id": "eaf13603-6c42-497e-a619-48eb341733d0",
+  "captured_from": "controlled shadow hiring canary",
+  "query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili",
+  "requested_count": 5,
+  "hard_budget_eur": 0.125,
+  "plan": {
+    "original_query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili",
+    "sector": "company",
+    "location": "Italia",
+    "required_signals": ["hiring_operational"],
+    "ranking_policy": {"signal_match_mode": "any", "max_signal_age_days": 60},
+    "source_plan": [
+      {
+        "lane": "job_market",
+        "priority": 100,
+        "source_types": ["company_careers"],
+        "query_templates": [
+          "site:.it (\"lavora con noi\" OR careers OR \"posizioni aperte\") (operai OR autisti OR magazzinieri OR installatori OR manutentori OR tecnici) (\"Srl\" OR \"PMI\" OR azienda) {location} -site:indeed.it -site:infojobs.it -site:linkedin.com"
+        ],
+        "expected_evidence": ["hiring_operational"]
+      }
+    ]
+  },
+  "serp_results": [
+    "https://career.etjca.it/jobs.php?page=1",
+    "https://www.cliclavoro.gov.it/news/news-eventi/verisure-assume-300-persone-in-tutta-italia-posizioni-aperte-per-tecnici-0",
+    "https://asp.asti.it/lavora-con-noi/",
+    "https://www.novonordisk.it/careers/working-at-novo-nordisk.html",
+    "https://decathlon-careers.it/",
+    "https://careers.sibeg.it/jobs.php?page=1",
+    "https://careers.sibeg.it/jobs.php?page=1",
+    "https://tecno-3.it/lavora-con-noi/",
+    "https://stale-pmi.it/lavora-con-noi/"
+  ],
+  "pages": [
+    {
+      "url": "https://career.etjca.it/jobs.php?page=1",
+      "publisher": "career.etjca.it",
+      "content": "Etjca pubblica offerte di lavoro per conto di numerose aziende clienti.",
+      "extracted": {"name": "Etjca", "website": "https://career.etjca.it/", "source_url": "https://career.etjca.it/jobs.php?page=1", "evidence": "Etjca pubblica offerte di lavoro per conto di numerose aziende clienti.", "matched_signals": ["hiring"], "evidence_date": "2026-07-14T14:20:23Z"},
+      "expected": "reject_portal"
+    },
+    {
+      "url": "https://www.cliclavoro.gov.it/news/news-eventi/verisure-assume-300-persone-in-tutta-italia-posizioni-aperte-per-tecnici-0",
+      "publisher": "cliclavoro.gov.it",
+      "content": "Cliclavoro riporta che Verisure assume tecnici in tutta Italia.",
+      "extracted": {"name": "Cliclavoro", "website": "https://www.cliclavoro.gov.it/", "source_url": "https://www.cliclavoro.gov.it/news/news-eventi/verisure-assume-300-persone-in-tutta-italia-posizioni-aperte-per-tecnici-0", "evidence": "Cliclavoro riporta che Verisure assume tecnici in tutta Italia.", "matched_signals": ["hiring"], "evidence_date": "2026-07-14T14:20:29Z"},
+      "expected": "reject_publisher"
+    },
+    {
+      "url": "https://asp.asti.it/lavora-con-noi/",
+      "publisher": "asp.asti.it",
+      "content": "ASP S.p.A. pubblica il regolamento per le assunzioni del personale.",
+      "extracted": {"name": "ASP Asti", "website": "https://asp.asti.it/", "source_url": "https://asp.asti.it/lavora-con-noi/", "evidence": "ASP S.p.A. pubblica il regolamento per le assunzioni del personale.", "matched_signals": ["hiring"], "evidence_date": "2026-07-14T14:20:35Z", "is_public_body": true},
+      "expected": "reject_public_body"
+    },
+    {
+      "url": "https://www.novonordisk.it/careers/working-at-novo-nordisk.html",
+      "publisher": "novonordisk.it",
+      "content": "Novo Nordisk impiega 69.000 persone nel mondo e presenta opportunità di carriera.",
+      "extracted": {"name": "Novo Nordisk", "website": "https://www.novonordisk.it/", "source_url": "https://www.novonordisk.it/careers/working-at-novo-nordisk.html", "evidence": "Novo Nordisk impiega 69.000 persone nel mondo e presenta opportunità di carriera.", "matched_signals": ["hiring"], "evidence_date": "2026-07-14T14:20:53Z", "enterprise_excluded": true},
+      "expected": "reject_enterprise"
+    },
+    {
+      "url": "https://decathlon-careers.it/",
+      "publisher": "decathlon-careers.it",
+      "content": "Decathlon conta oltre 8.000 collaboratori e 142 negozi in Italia.",
+      "extracted": {"name": "Decathlon Careers", "website": "https://decathlon-careers.it/", "source_url": "https://decathlon-careers.it/", "evidence": "Decathlon conta oltre 8.000 collaboratori e 142 negozi in Italia.", "matched_signals": ["hiring"], "evidence_date": "2026-07-14T14:20:54Z", "enterprise_excluded": true},
+      "expected": "reject_enterprise"
+    },
+    {
+      "url": "https://careers.sibeg.it/jobs.php?page=1",
+      "publisher": "careers.sibeg.it",
+      "content": "Sibeg Srl cerca manutentori e tecnici di produzione: posizioni aperte pubblicate il 14 luglio 2026.",
+      "extracted": {"name": "Sibeg Srl", "website": "", "source_url": "https://careers.sibeg.it/jobs.php?page=1", "evidence": "Sibeg Srl cerca manutentori e tecnici di produzione: posizioni aperte pubblicate il 14 luglio 2026.", "matched_signals": ["hiring"], "evidence_date": "2026-07-14T14:19:52Z", "company_size_class": "medium"},
+      "expected": "qualified_candidate"
+    },
+    {
+      "url": "https://tecno-3.it/lavora-con-noi/",
+      "publisher": "tecno-3.it",
+      "content": "Tecno 3 Srl ricerca un tecnico manutentore per lo stabilimento: candidatura aperta dal 10 luglio 2026.",
+      "extracted": {"name": "Tecno 3 Srl", "website": "https://tecno-3.it/", "source_url": "https://tecno-3.it/lavora-con-noi/", "evidence": "Tecno 3 Srl ricerca un tecnico manutentore per lo stabilimento: candidatura aperta dal 10 luglio 2026.", "matched_signals": ["hiring_operational"], "evidence_date": "2026-07-14T14:20:27Z", "company_size_class": "small"},
+      "expected": "qualified_candidate"
+    },
+    {
+      "url": "https://stale-pmi.it/lavora-con-noi/",
+      "publisher": "stale-pmi.it",
+      "content": "Stale PMI Srl ricercava un manutentore nel 2020; selezione conclusa.",
+      "extracted": {"name": "Stale PMI Srl", "website": "https://stale-pmi.it/", "source_url": "https://stale-pmi.it/lavora-con-noi/", "evidence": "Stale PMI Srl ricercava un manutentore nel 2020; selezione conclusa.", "matched_signals": ["hiring"], "evidence_date": "2020-01-10T10:00:00Z", "company_size_class": "small"},
+      "expected": "reject_stale"
+    }
+  ],
+  "simulated_cost_ledger": [
+    {"operation_type": "search_web", "actual_cost_eur": 0.02},
+    {"operation_type": "open_page", "actual_cost_eur": 0.004},
+    {"operation_type": "llm_extract", "actual_cost_eur": 0.021846}
+  ]
+}
