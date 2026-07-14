@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import httpx
 from cost_governor import ResearchBudgetExceeded, ResearchCostGovernor
 
+from .hiring_evidence import has_concrete_operational_hiring_evidence
 from .portal_blacklist import (
     is_blacklisted_domain,
     is_blacklisted_name,
@@ -181,6 +182,11 @@ def page_has_required_signal(text: str, plan: Dict[str, Any]) -> bool:
     if not known:
         return True
     lower = (text or "").lower()
+    if "hiring_operational" in known:
+        # The URL is intentionally absent: `/jobs`, `/careers` and
+        # `/lavora-con-noi` describe where we found a page, not what it proves.
+        if not has_concrete_operational_hiring_evidence(text):
+            return False
     if any(signal in {"investing_marketing", "meta_ads_started", "google_ads_started"} for signal in known):
         if _looks_like_marketing_provider_noise(text):
             return False

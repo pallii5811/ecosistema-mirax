@@ -17,6 +17,11 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
+from .hiring_evidence import (
+    has_concrete_operational_hiring_evidence,
+    operational_hiring_evidence_priority,
+)
+
 logger = logging.getLogger("agentic_gap_fill")
 
 AGENTIC_TIMEOUT_SEC = int(os.getenv("AGENTIC_GAP_FILL_TIMEOUT_SEC", "7200") or "7200")
@@ -43,6 +48,49 @@ def compute_agentic_page_budget(remaining_target: int) -> int:
     target = max(1, int(remaining_target or 1))
     dynamic = max(AGENTIC_PAGE_BUDGET_MIN, int(target * AGENTIC_PAGE_BUDGET_FACTOR))
     return min(AGENTIC_PAGE_BUDGET_HARD_CAP, dynamic)
+
+
+def rank_pages_for_extraction(
+    pages: List[Dict[str, Any]],
+    plan: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Rank a bounded buffer of acquired pages before scarce LLM extraction."""
+    required = {
+        str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        for value in plan.get("required_signals") or []
+        if str(value or "").strip()
+    }
+    if "hiring_operational" not in required:
+        return list(pages)
+    indexed = list(enumerate(pages))
+    indexed.sort(
+        key=lambda item: (
+            -operational_hiring_evidence_priority(
+                str(item[1].get("raw_text") or ""),
+                str(item[1].get("url") or ""),
+            ),
+            item[0],
+        )
+    )
+    return [page for _, page in indexed]
+
+
+async def _ranked_page_stream(page_stream: Any, plan: Dict[str, Any]):
+    """Rank acquired pages in bounded windows without provider activity."""
+    try:
+        configured_window = int(os.getenv("MIRAX_SOURCE_RANK_WINDOW", "8") or "8")
+    except (TypeError, ValueError):
+        configured_window = 8
+    window = max(1, min(64, configured_window))
+    buffered: List[Dict[str, Any]] = []
+    async for page in page_stream:
+        buffered.append(page)
+        if len(buffered) >= window:
+            for ranked in rank_pages_for_extraction(buffered, plan):
+                yield ranked
+            buffered.clear()
+    for ranked in rank_pages_for_extraction(buffered, plan):
+        yield ranked
 
 
 def build_agentic_exhaustion_message(found: int, requested: int) -> str:
@@ -491,6 +539,11 @@ def prepare_agentic_extracted_item(
         for value in out.get("_required_signals") or []
         if _normalize_signal_name(value)
     }
+    canonical_required = {
+        str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        for value in out.get("_required_signals") or []
+        if str(value or "").strip()
+    }
     matched = {
         _normalize_signal_name(value)
         for value in out.get("matched_signals") or []
@@ -534,7 +587,6 @@ def prepare_agentic_extracted_item(
                 for value in (
                     out.get("hiring_title"),
                     evidence,
-                    source_url,
                     out.get("why_now"),
                 )
             )
@@ -545,6 +597,15 @@ def prepare_agentic_extracted_item(
             old_year_only = bool(years) and max(years) < current_year - 1
             if not active_hiring or (stale_context and old_year_only):
                 logger.info("prepare_agentic: weak/stale hiring evidence for %r", name[:60])
+                return None
+            if (
+                "hiring_operational" in canonical_required
+                and not has_concrete_operational_hiring_evidence(hiring_blob)
+            ):
+                logger.info(
+                    "prepare_agentic: no concrete operational vacancy evidence for %r",
+                    name[:60],
+                )
                 return None
     ranking_policy = out.get("_ranking_policy") if isinstance(out.get("_ranking_policy"), dict) else {}
     evidence_date = str(out.get("evidence_date") or "").strip()
@@ -1378,7 +1439,7 @@ async def run_agentic_discovery_streaming(
         leads_before_round = _effective_found()
         target_reached_in_round = False
 
-        async for page in researcher.iter_scraped_pages():
+        async for page in _ranked_page_stream(researcher.iter_scraped_pages(), round_plan):
             if _effective_found() >= remaining_target:
                 target_reached_in_round = True
                 break
