@@ -74,6 +74,7 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - Hard cap shadow assoluto `EUR 0,125`; autorizzazione, piano canonico e flag runtime sono tutti obbligatori.
 - Suite Source Adapter `88 passed`; lifecycle/costi/lease/contratti `62 passed`; TypeScript/Python compile e diff check verdi.
 - Nessun deploy, canary o provider call eseguito; costo provider reale della fase `EUR 0`.
+- Preflight locale: flag shadow assente dall'ambiente, default runtime off e configurazione staging esplicitamente `0`.
 
 ## Prossimo passo sicuro
-- Commit/push del bridge shadow; poi preflight staging con flag disattivati. Nessun canary finché non viene autorizzato esplicitamente.
+- Verifica read-only dello staging remoto con worker/search/shadow disattivati; nessun canary finché non viene autorizzato esplicitamente.

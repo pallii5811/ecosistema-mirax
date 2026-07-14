@@ -9,6 +9,7 @@ Finche' la canary non e' approvata esplicitamente:
 - Vercel/Next deve avere `MIRAX_SEARCH_DISABLED=1`.
 - Server worker deve avere `MIRAX_WORKER_DISABLED=1`.
 - Paid extraction deve avere `ANTHROPIC_EXTRACT_ENABLED=0`.
+- Il bridge Source Adapter deve avere `MIRAX_SOURCE_ADAPTER_SHADOW_ENABLED=0`.
 - I worker systemd devono essere `disabled` e `inactive`.
 - Il cap LLM deve restare basso: `MIRAX_LLM_MAX_COST_USD_PER_JOB=0.03`.
 
@@ -36,6 +37,12 @@ Se fallisce anche un solo gate, non riattivare.
 ## Canary pagante minima
 
 Richiede OK umano esplicito prima di procedere.
+
+Il flag `MIRAX_SOURCE_ADAPTER_SHADOW_ENABLED=1` e' consentito soltanto per un
+job `v5_shadow` con `customer_visible=false`, `prepare_only=false`,
+`execution_authorized=true` e `source_adapter_shadow=true`. Il cap
+`MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR` non deve superare `0.125`; il ramo
+deve mantenere `results=[]` e `published=0`.
 
 Configurazione massima consentita per la prima canary:
 
@@ -88,4 +95,3 @@ Sequenza corretta:
 3. 3 query diverse da 5 lead.
 4. 1 query da 25 lead.
 5. Solo dopo metriche verdi, rimuovere `MIRAX_SEARCH_DISABLED=1` e abilitare worker gradualmente.
-
