@@ -99,7 +99,15 @@ class ScaleShardAdapter:
                 contacts=(ContactRecord("email", f"sales@{domain}", evidence.source_url, True),),
                 confidence=0.95,
                 contradiction_flags=(),
-                provenance={"urgency_score": 0.9, "causality_score": 0.9, "commercial_value_score": 0.8},
+                provenance={
+                    "urgency_score": 0.9, "causality_score": 0.9, "commercial_value_score": 0.8,
+                    "domain_verification": {
+                        "status": "verified", "confidence": 0.95, "score": 95,
+                        "evidence": ("schema_org_identity_match",),
+                        "resolution_source": "source_adapter", "resolution_method": "verified_source_adapter",
+                        "adapter_id": self.capability.adapter_id, "url": f"https://{domain}/",
+                    },
+                },
                 adapter_id=self.capability.adapter_id,
                 adapter_version=self.capability.adapter_version,
                 official_domain_verified=True,

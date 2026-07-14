@@ -68,6 +68,12 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - Suite Source Adapter `85 passed`; domain resolver, cost, lease, lifecycle e contratto piano `68 passed`.
 - Test Hiring, forensic legacy, lifecycle, contratti e compile Python/TypeScript: verdi; costo provider reale `EUR 0`.
 - Test Fase 3, regressioni strutturate, contratti e compile Python/TypeScript: verdi; costo provider `EUR 0`.
+- Provenance dominio standardizzata per tutti gli adapter e verificata sia nel qualifier sia nel lifecycle.
+- Il lifecycle accetta solo proof contract di adapter esplicitamente trusted; adapter sconosciuti, mismatch ID e prove incomplete restano respinti.
+- Bridge worker Source Adapter implementato solo in shadow, default-off e fail-closed: `results=[]`, `published=0`, nessun fallback legacy, sync grafo o charge cliente.
+- Hard cap shadow assoluto `EUR 0,125`; autorizzazione, piano canonico e flag runtime sono tutti obbligatori.
+- Suite Source Adapter `88 passed`; lifecycle/costi/lease/contratti `62 passed`; TypeScript/Python compile e diff check verdi.
+- Nessun deploy, canary o provider call eseguito; costo provider reale della fase `EUR 0`.
 
 ## Prossimo passo sicuro
-- Integrare il nuovo orchestratore nel worker soltanto dietro flag shadow fail-closed e disattivato; nessun deploy/canary/provider live.
+- Commit/push del bridge shadow; poi preflight staging con flag disattivati. Nessun canary finché non viene autorizzato esplicitamente.

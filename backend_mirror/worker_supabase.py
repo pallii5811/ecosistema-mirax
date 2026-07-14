@@ -4110,6 +4110,14 @@ def _shadow_execution_is_authorized(intent: Any) -> bool:
     )
 
 
+def _source_adapter_shadow_is_requested(intent: Any) -> bool:
+    return bool(
+        isinstance(intent, dict)
+        and str(intent.get("lifecycle_stage") or "") == "v5_shadow"
+        and intent.get("source_adapter_shadow") is True
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument(
@@ -4885,6 +4893,137 @@ def main() -> None:
                     print(f"[worker_supabase] Progressive organic discovery skipped: {e}", flush=True)
 
             _agentic_only = _is_agentic_only_job(intent)
+
+            # The v5 source-adapter path is an isolated evaluation lane. It is
+            # default-off, never falls back to legacy acquisition, never writes
+            # customer results and never invokes graph/customer publication.
+            if _source_adapter_shadow_is_requested(intent):
+                from commercial_lifecycle import persist_and_publish_candidates
+                from source_adapters.shadow_runtime import (
+                    execute_source_adapter_shadow,
+                    serialize_shadow_qualified_leads,
+                    source_adapter_shadow_decision,
+                )
+
+                shadow_decision = source_adapter_shadow_decision(intent)
+                if not shadow_decision.enabled:
+                    _heartbeat_stop.set()
+                    supabase.table("searches").update({
+                        "status": "error",
+                        "results": [],
+                        "worker_id": None,
+                        "heartbeat_at": None,
+                        "lease_expires_at": None,
+                        "progress": {
+                            "stage": "source_adapter_shadow_blocked",
+                            "stop_reason": shadow_decision.reason,
+                            "target": job_max,
+                            "found": 0,
+                            "updated_at": _utc_now_iso(),
+                        },
+                        "updated_at": _utc_now_iso(),
+                    }).eq("id", job_id).eq("status", "processing").execute()
+                    if bool(getattr(args, "once", False)):
+                        return
+                    continue
+
+                def _on_source_adapter_progress(snapshot: Any) -> None:
+                    progress_payload = {
+                        "stage": "source_adapter_shadow",
+                        "target": snapshot.requested_count,
+                        "found": snapshot.qualified_count,
+                        "discovered": snapshot.discovered_count,
+                        "raw": snapshot.raw_candidate_count,
+                        "unique_entities": snapshot.unique_entity_count,
+                        "resolved": snapshot.resolved_count,
+                        "audited": snapshot.audited_count,
+                        "evidence_verified": snapshot.evidence_verified_count,
+                        "qualified": snapshot.qualified_count,
+                        "rejected": snapshot.rejected_count,
+                        "published": 0,
+                        "updated_at": _utc_now_iso(),
+                    }
+                    supabase.table("searches").update({
+                        "results": [],
+                        "progress": progress_payload,
+                        "heartbeat_at": _utc_now_iso() if _lease_supported else None,
+                        "lease_expires_at": _lease_timestamp() if _lease_supported else None,
+                    }).eq("id", job_id).eq("status", "processing").execute()
+
+                try:
+                    shadow_result = _run_coro_blocking(execute_source_adapter_shadow(
+                        intent,
+                        requested_count=job_max,
+                        progress_callback=_on_source_adapter_progress,
+                    ))
+                    shadow_leads = serialize_shadow_qualified_leads(shadow_result)
+                    canonical_shadow_plan = _canonical_plan_from_intent(intent)
+                    if canonical_shadow_plan is None:
+                        raise RuntimeError("CANONICAL_PLAN_MISSING_AFTER_VALIDATION")
+                    lifecycle_accepted = persist_and_publish_candidates(
+                        supabase,
+                        search_id=str(job_id),
+                        user_id=job_user_id,
+                        leads=shadow_leads,
+                        canonical_plan=canonical_shadow_plan,
+                        shadow_mode=True,
+                    )
+                    _heartbeat_stop.set()
+                    final_shadow_progress = {
+                        "stage": "source_adapter_shadow_completed",
+                        "stop_reason": shadow_result.status,
+                        "target": shadow_result.progress.requested_count,
+                        "found": len(lifecycle_accepted),
+                        "discovered": shadow_result.progress.discovered_count,
+                        "raw": shadow_result.progress.raw_candidate_count,
+                        "unique_entities": shadow_result.progress.unique_entity_count,
+                        "resolved": shadow_result.progress.resolved_count,
+                        "audited": shadow_result.progress.audited_count,
+                        "evidence_verified": shadow_result.progress.evidence_verified_count,
+                        "qualified": shadow_result.progress.qualified_count,
+                        "lifecycle_qualified": len(lifecycle_accepted),
+                        "rejected": shadow_result.progress.rejected_count,
+                        "rejection_codes": dict(shadow_result.rejection_codes),
+                        "published": 0,
+                        "cost_eur": shadow_result.cost_eur,
+                        "updated_at": _utc_now_iso(),
+                    }
+                    supabase.table("searches").update({
+                        "status": "completed",
+                        "results": [],
+                        "worker_id": None,
+                        "heartbeat_at": None,
+                        "lease_expires_at": None,
+                        "progress": final_shadow_progress,
+                        "updated_at": _utc_now_iso(),
+                    }).eq("id", job_id).eq("status", "processing").execute()
+                except Exception as shadow_error:
+                    _heartbeat_stop.set()
+                    print(
+                        f"[worker_supabase] source-adapter shadow failed job={job_id}: "
+                        f"{shadow_error.__class__.__name__}",
+                        flush=True,
+                    )
+                    supabase.table("searches").update({
+                        "status": "error",
+                        "results": [],
+                        "worker_id": None,
+                        "heartbeat_at": None,
+                        "lease_expires_at": None,
+                        "progress": {
+                            "stage": "source_adapter_shadow_failed",
+                            "stop_reason": "SOURCE_ADAPTER_SHADOW_FAILED",
+                            "error_type": shadow_error.__class__.__name__,
+                            "target": job_max,
+                            "found": 0,
+                            "published": 0,
+                            "updated_at": _utc_now_iso(),
+                        },
+                        "updated_at": _utc_now_iso(),
+                    }).eq("id", job_id).eq("status", "processing").execute()
+                if bool(getattr(args, "once", False)):
+                    return
+                continue
 
             if not _agentic_only:
                 try:

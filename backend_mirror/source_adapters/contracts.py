@@ -295,6 +295,9 @@ def normalize_opportunity_candidate(
             kind = "other"
         contacts.append(ContactRecord(kind=kind, value=str(item["value"]).strip(), source_url=_clean(item.get("source_url")), verified=item.get("verified") is True))
     identifiers = payload.get("company_identifiers") if isinstance(payload.get("company_identifiers"), Mapping) else {}
+    canonical_provenance = dict(payload.get("provenance")) if isinstance(payload.get("provenance"), Mapping) else {}
+    if domain_verification:
+        canonical_provenance.setdefault("domain_verification", dict(domain_verification))
     return OpportunityCandidate(
         canonical_company_name=_clean(payload.get("canonical_company_name") or payload.get("entity_name") or payload.get("company_name") or payload.get("name")) or "",
         company_identifiers={str(k): str(v) for k, v in identifiers.items() if _clean(k) and _clean(v)},
@@ -310,7 +313,7 @@ def normalize_opportunity_candidate(
         contacts=tuple(contacts),
         confidence=max(0.0, min(1.0, float(payload.get("confidence") or 0))),
         contradiction_flags=_string_tuple(payload.get("contradiction_flags")),
-        provenance=payload.get("provenance") if isinstance(payload.get("provenance"), Mapping) else {},
+        provenance=canonical_provenance,
         adapter_id=adapter_id,
         adapter_version=adapter_version,
         official_domain_verified=domain_verified,

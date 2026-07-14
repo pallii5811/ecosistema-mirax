@@ -30,6 +30,13 @@ from .orchestrator import (
 )
 from .opportunity_scoring import OpportunityScore, ScoreComponent, rank_opportunities, score_opportunity
 from .procurement import DomainResolutionResult, ProcurementAdapter, ProcurementProviderResult
+from .shadow_runtime import (
+    ShadowRuntimeDecision,
+    candidate_to_lifecycle_shadow_payload,
+    execute_source_adapter_shadow,
+    serialize_shadow_qualified_leads,
+    source_adapter_shadow_decision,
+)
 
 __all__ = [
     "AdapterDiscoveryRequest",
@@ -51,6 +58,7 @@ __all__ = [
     "ProgressCallback",
     "QualificationDecision",
     "SearchProgress",
+    "ShadowRuntimeDecision",
     "UniversalSourceOrchestrator",
     "default_candidate_qualifier",
     "request_from_plan",
@@ -67,4 +75,8 @@ __all__ = [
     "normalize_opportunity_candidate",
     "rank_opportunities",
     "score_opportunity",
+    "candidate_to_lifecycle_shadow_payload",
+    "execute_source_adapter_shadow",
+    "serialize_shadow_qualified_leads",
+    "source_adapter_shadow_decision",
 ]

@@ -127,6 +127,39 @@ def test_verified_label_without_positive_resolution_proof_is_rejected():
     assert gate["publishable"] is False
 
 
+def test_trusted_hiring_adapter_identity_is_accepted_with_exact_proof_contract():
+    lead = valid_lead()
+    lead["source_adapter_id"] = "structured_hiring_v1"
+    lead["domain_verification"].update({
+        "adapter_id": "structured_hiring_v1",
+        "resolution_source": "source_adapter",
+        "resolution_method": "verified_source_adapter",
+        "evidence": ["company_careers_host_match", "legal_name_in_page"],
+    })
+    gate = evaluate_publication_gate(lead, PLAN, cost_within_budget=True)
+    assert gate["official_domain_verified"] is True
+    assert gate["publishable"] is True
+
+
+def test_source_adapter_identity_rejects_unknown_forged_or_incomplete_proof():
+    lead = valid_lead()
+    lead["source_adapter_id"] = "unknown_adapter"
+    lead["domain_verification"].update({
+        "adapter_id": "unknown_adapter",
+        "resolution_source": "source_adapter",
+        "resolution_method": "verified_source_adapter",
+        "evidence": ["schema_org_identity_match", "official_page_host_match"],
+    })
+    assert evaluate_publication_gate(lead, PLAN, cost_within_budget=True)["official_domain_verified"] is False
+
+    lead["source_adapter_id"] = "structured_hiring_v1"
+    assert evaluate_publication_gate(lead, PLAN, cost_within_budget=True)["official_domain_verified"] is False
+
+    lead["domain_verification"]["adapter_id"] = "structured_hiring_v1"
+    lead["domain_verification"]["evidence"] = ["company_careers_host_match"]
+    assert evaluate_publication_gate(lead, PLAN, cost_within_budget=True)["official_domain_verified"] is False
+
+
 def test_publication_gate_requires_budget_and_why_now_and_causal_plan():
     lead = valid_lead()
     assert evaluate_publication_gate(lead, PLAN)["cost_within_budget"] is False

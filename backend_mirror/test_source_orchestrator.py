@@ -76,7 +76,15 @@ def candidate(company: str, domain: str, signal: str, adapter_id: str) -> Opport
         contacts=(),
         confidence=0.95,
         contradiction_flags=(),
-        provenance={"adapter_id": adapter_id},
+        provenance={
+            "adapter_id": adapter_id,
+            "domain_verification": {
+                "status": "verified", "confidence": 0.95, "score": 95,
+                "evidence": ("schema_org_identity_match",),
+                "resolution_source": "source_adapter", "resolution_method": "verified_source_adapter",
+                "adapter_id": adapter_id, "url": f"https://{domain}/",
+            },
+        },
         adapter_id=adapter_id,
         adapter_version="1.0.0",
         official_domain_verified=True,

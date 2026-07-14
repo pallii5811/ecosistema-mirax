@@ -48,7 +48,15 @@ def candidate(**changes: object) -> OpportunityCandidate:
         contacts=(ContactRecord("email", "sales@acme.example", "https://acme.example/contatti", True),),
         confidence=0.96,
         contradiction_flags=(),
-        provenance={"urgency_score": 0.95, "causality_score": 0.94, "commercial_value_score": 0.86},
+        provenance={
+            "urgency_score": 0.95, "causality_score": 0.94, "commercial_value_score": 0.86,
+            "domain_verification": {
+                "status": "verified", "confidence": 0.96, "score": 96,
+                "evidence": ("schema_org_identity_match", "official_page_host_match"),
+                "resolution_source": "source_adapter", "resolution_method": "verified_source_adapter",
+                "adapter_id": "structured_hiring_v1", "url": "https://acme.example/",
+            },
+        },
         adapter_id="structured_hiring_v1",
         adapter_version="1.0.0",
         official_domain_verified=True,
@@ -139,7 +147,14 @@ def test_default_qualifier_exposes_score_and_rejects_low_value() -> None:
         evidence=(evidence(source_class="directory", published_at="2025-01-01", confidence=0.70, proof_level=""),),
         contacts=(),
         contradiction_flags=("weak_identity", "weak_signal"),
-        provenance={},
+        provenance={
+            "domain_verification": {
+                "status": "verified", "confidence": 0.96, "score": 96,
+                "evidence": ("schema_org_identity_match",),
+                "resolution_source": "source_adapter", "resolution_method": "verified_source_adapter",
+                "adapter_id": "structured_hiring_v1", "url": "https://acme.example/",
+            },
+        },
         buyer_fit=0.50,
         confidence=0.70,
     )

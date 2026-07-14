@@ -173,6 +173,28 @@ def _candidate_key(candidate: OpportunityCandidate) -> str:
     return f"name:{candidate.canonical_company_name.strip().casefold()}"
 
 
+def _domain_verification_valid(candidate: OpportunityCandidate) -> bool:
+    verification = candidate.provenance.get("domain_verification")
+    if not isinstance(verification, Mapping):
+        return False
+    verified_url = str(verification.get("url") or "").strip().lower()
+    verified_host = verified_url.split("://", 1)[-1].split("/", 1)[0].removeprefix("www.").split(":", 1)[0]
+    evidence = tuple(str(item).strip() for item in verification.get("evidence") or () if str(item).strip())
+    try:
+        confidence = float(verification.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        str(verification.get("status") or "").lower() == "verified"
+        and verified_host == str(candidate.official_domain or "").lower().removeprefix("www.")
+        and confidence >= 0.70
+        and abs(confidence - candidate.official_domain_confidence) <= 0.05
+        and evidence
+        and str(verification.get("resolution_source") or "").strip()
+        and str(verification.get("resolution_method") or "").strip()
+    )
+
+
 def _merge_candidates(left: OpportunityCandidate, right: OpportunityCandidate) -> OpportunityCandidate:
     evidence_map: Dict[Tuple[str, str, str], EvidenceRecord] = {}
     for item in (*left.evidence, *right.evidence):
@@ -207,7 +229,11 @@ def _merge_candidates(left: OpportunityCandidate, right: OpportunityCandidate) -
 async def default_candidate_qualifier(candidate: OpportunityCandidate) -> QualificationDecision:
     if not candidate.official_domain:
         return QualificationDecision(False, False, False, "OFFICIAL_DOMAIN_UNRESOLVED")
-    if not candidate.official_domain_verified or candidate.official_domain_confidence < 0.70:
+    if (
+        not candidate.official_domain_verified
+        or candidate.official_domain_confidence < 0.70
+        or not _domain_verification_valid(candidate)
+    ):
         return QualificationDecision(False, False, False, "OFFICIAL_DOMAIN_UNVERIFIED")
     if candidate.entity_class != "operating_company":
         return QualificationDecision(False, False, False, "NON_OPERATING_ENTITY")

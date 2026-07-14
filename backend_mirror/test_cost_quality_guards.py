@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import os
 
 import pytest
@@ -23,6 +24,7 @@ from worker_supabase import (
     _lead_satisfies_confirmed_required_signals,
     _normalize_one_shot_search_id,
     _shadow_execution_is_authorized,
+    _source_adapter_shadow_is_requested,
     _should_sync_graph_for_publish_status,
 )
 
@@ -58,6 +60,32 @@ def test_shadow_worker_requires_explicit_post_prepare_authorization():
         "execution_authorized": True,
     }) is True
     assert _shadow_execution_is_authorized({"lifecycle_stage": "customer_search"}) is True
+
+
+def test_source_adapter_shadow_never_matches_legacy_or_customer_jobs():
+    assert _source_adapter_shadow_is_requested({
+        "lifecycle_stage": "v5_shadow", "source_adapter_shadow": True,
+    }) is True
+    assert _source_adapter_shadow_is_requested({
+        "lifecycle_stage": "v5_shadow", "source_adapter_shadow": False,
+    }) is False
+
+
+def test_source_adapter_shadow_worker_branch_cannot_publish_or_sync_graph():
+    import worker_supabase
+
+    source = inspect.getsource(worker_supabase.main)
+    branch = source.split("# The v5 source-adapter path is an isolated evaluation lane.", 1)[1]
+    branch = branch.split("if not _agentic_only:", 1)[0]
+    assert "shadow_mode=True" in branch
+    assert '"results": []' in branch
+    assert '"published": 0' in branch
+    assert "_publish_job_results_safe" not in branch
+    assert "_sync_neo4j" not in branch
+    assert "_sync_search_leads" not in branch
+    assert _source_adapter_shadow_is_requested({
+        "lifecycle_stage": "customer_search", "source_adapter_shadow": True,
+    }) is False
 
 
 def test_llm_extraction_budget_is_allocated_once_per_required_lane(monkeypatch):

@@ -260,6 +260,41 @@ def positive_entity_classification(
     }
 
 
+_TRUSTED_SOURCE_ADAPTER_DOMAIN_PROOFS = {
+    "legacy_digital_audit_v1": (
+        {"maps_business_website", "direct_website_audit"},
+    ),
+    "structured_hiring_v1": (
+        {"schema_org_identity_match"},
+        {"company_careers_host_match", "legal_name_in_page"},
+    ),
+    "official_growth_signals_v1": (
+        {"schema_org_identity_match", "official_page_host_match"},
+    ),
+    "generic_web_research_v1": (
+        {"schema_org_identity_match", "official_page_host_match"},
+    ),
+}
+
+
+def _trusted_source_adapter_identity(lead: Dict[str, Any], identity: Dict[str, Any]) -> bool:
+    """Accept adapter identity only when the adapter and its proof contract agree."""
+    adapter_id = str(lead.get("source_adapter_id") or "").strip()
+    if adapter_id not in _TRUSTED_SOURCE_ADAPTER_DOMAIN_PROOFS:
+        return False
+    if str(identity.get("adapter_id") or "").strip() != adapter_id:
+        return False
+    if str(identity.get("resolution_source") or "") != "source_adapter":
+        return False
+    if str(identity.get("resolution_method") or "") != "verified_source_adapter":
+        return False
+    evidence = {str(value) for value in identity.get("evidence") or []}
+    return any(
+        required.issubset(evidence)
+        for required in _TRUSTED_SOURCE_ADAPTER_DOMAIN_PROOFS[adapter_id]
+    )
+
+
 def evaluate_publication_gate(
     lead: Dict[str, Any],
     canonical_plan: Dict[str, Any],
@@ -354,16 +389,20 @@ def evaluate_publication_gate(
     ownership_proof = bool(
         identity_evidence.intersection({"company_tokens_in_host", "schema_org_identity_match"})
     )
+    legacy_identity_proof = bool(
+        str(identity.get("resolution_source") or "") in {"extracted_website", "serp_identity"}
+        and str(identity.get("resolution_method") or "") == "positive_page_identity"
+        and len(identity_evidence) >= 2
+        and ownership_proof
+    )
+    source_adapter_identity_proof = _trusted_source_adapter_identity(lead, identity)
     identity_positive = bool(
         domain
         and identity_url_domain == domain
         and str(identity.get("status") or "").lower() == "verified"
         and float(identity.get("confidence") or 0) >= 0.70
         and int(identity.get("score") or 0) >= 70
-        and str(identity.get("resolution_source") or "") in {"extracted_website", "serp_identity"}
-        and str(identity.get("resolution_method") or "") == "positive_page_identity"
-        and len(identity_evidence) >= 2
-        and ownership_proof
+        and (legacy_identity_proof or source_adapter_identity_proof)
     )
     entity_classification = positive_entity_classification(lead, canonical_plan, identity_positive)
     match_mode = _required_signal_match_mode(canonical_plan)
