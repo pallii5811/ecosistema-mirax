@@ -866,6 +866,7 @@ def extracted_to_lead_stub(
         else "contextual"
     )
     stub["required_signals"] = sorted(required_signals)
+    stub["signal_match_mode"] = signal_match_mode
     ranking_policy = extracted.get("_ranking_policy") if isinstance(extracted.get("_ranking_policy"), dict) else {}
     weights = ranking_policy.get("weights") if isinstance(ranking_policy.get("weights"), dict) else {}
     default_weights = {

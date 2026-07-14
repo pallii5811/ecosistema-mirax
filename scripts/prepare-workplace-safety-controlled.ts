@@ -20,19 +20,28 @@ config({ path: '.env' })
 config({ path: '.env.ecosistema.secrets' })
 
 const ORPHAN_SEARCH_ID = '6ecc8d72-db71-4b06-a215-9cc0fb92f303'
-const VERTICAL = 'workplace_safety'
+const FALLBACK_HIRING = process.argv.includes('--fallback-hiring')
+const VERTICAL = FALLBACK_HIRING ? 'workplace_safety_hiring' : 'workplace_safety'
 const DATASET_VERSION = 'mirax-gold-v5'
 const MAX_LEADS = 5
 const HARD_BUDGET_EUR = 0.125
 const COMPILER_CAP_EUR = 0.05
 const PREFLIGHT_ONLY = process.argv.includes('--preflight-only')
-const REQUIRED_SIGNALS = ['contract_awarded', 'hiring_operational', 'production_expansion'] as const
+const REQUIRED_SIGNALS: readonly string[] = FALLBACK_HIRING
+  ? ['hiring_operational']
+  : ['contract_awarded', 'hiring_operational', 'production_expansion']
 const GENERIC_TEXT = /(?:necessit[aà]\s+(?:commerciale\s+)?implicita|bisogno\s+da\s+(?:confermare|verificare)|coerenza\s+(?:da\s+validare|con\s+l[' ]?obiettivo)|richiesta\s+dell[' ]?utente|da\s+verificare|placeholder)/i
 
 const manifest = JSON.parse(fs.readFileSync('evaluation/canary-v1/manifest.json', 'utf8')) as {
   canaries: Array<{ vertical: string; query: string; expected_signal_any: string[] }>
 }
-const selectedSpec = manifest.canaries.find((row) => row.vertical === VERTICAL)
+const selectedSpec = FALLBACK_HIRING
+  ? {
+      vertical: VERTICAL,
+      query: 'Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili',
+      expected_signal_any: ['hiring_operational'],
+    }
+  : manifest.canaries.find((row) => row.vertical === VERTICAL)
 if (!selectedSpec) throw new Error(`manifest missing ${VERTICAL}`)
 const spec: { vertical: string; query: string; expected_signal_any: string[] } = selectedSpec
 
@@ -108,7 +117,7 @@ function evaluateGates(plan: MiraxQueryPlan, diagnostics: Array<{ stage: string 
   ))
   push('no_lane_signal_contamination', sourcePlan.every((lane) =>
     lane.expected_evidence.length === 0 ||
-    (lane.expected_evidence.length === 1 && REQUIRED_SIGNALS.includes(lane.expected_evidence[0] as typeof REQUIRED_SIGNALS[number])),
+    (lane.expected_evidence.length === 1 && REQUIRED_SIGNALS.includes(lane.expected_evidence[0])),
   ))
   push('source_registry_valid', sourcePlan.every((lane) =>
     lane.source_types.every((source) => SOURCE_BY_ID.has(source)),

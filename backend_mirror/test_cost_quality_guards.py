@@ -467,6 +467,20 @@ def test_final_gate_drops_legacy_leads_without_confirmed_required_signal():
     assert [lead["azienda"] for lead in kept] == ["PMI Forte"]
 
 
+def test_final_gate_honors_hiring_alias_and_any_match_mode():
+    hiring = {
+        "azienda": "PMI Operativa Srl",
+        "required_signals": ["hiring_operational", "contract_awarded", "production_expansion"],
+        "business_signals": [{"type": "hiring", "status": "confirmed"}],
+    }
+    assert _lead_satisfies_confirmed_required_signals({**hiring, "signal_match_mode": "any"})
+    assert not _lead_satisfies_confirmed_required_signals({**hiring, "signal_match_mode": "all"})
+    assert _lead_satisfies_confirmed_required_signals({
+        **hiring,
+        "required_signals": ["hiring_operational"],
+    })
+
+
 def test_final_gate_rejects_global_brands_for_smb_signal_query():
     intent = {
         "query": "trovami aziende a Milano e Torino che stanno investendo in marketing",

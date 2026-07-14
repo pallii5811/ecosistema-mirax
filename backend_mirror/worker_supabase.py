@@ -1455,6 +1455,11 @@ def _lead_satisfies_confirmed_required_signals(lead: Dict[str, Any]) -> bool:
     signals = lead.get("business_signals") or []
     confirmed = set()
     equivalents = {
+        "hiring": {"hiring"},
+        "hiring_operational": {"hiring", "hiring_operational"},
+        "hiring_technology": {"hiring", "hiring_technology"},
+        "hiring_sales": {"hiring", "hiring_sales"},
+        "hiring_marketing": {"hiring", "hiring_marketing"},
         "investing_marketing": {"investing_marketing", "meta_ads_started", "google_ads_started"},
         "sector_investment": {"sector_investment", "funding_received", "expansion"},
         "expansion": {"expansion", "new_location", "new_company"},
@@ -1468,10 +1473,12 @@ def _lead_satisfies_confirmed_required_signals(lead: Dict[str, Any]) -> bool:
         typ = str(signal.get("type") or signal.get("signalType") or "").strip().lower().replace("-", "_").replace(" ", "_")
         if typ:
             confirmed.add(typ)
-    for req in required:
-        if not confirmed.intersection(equivalents.get(req, {req})):
-            return False
-    return True
+    satisfied = {
+        req for req in required
+        if confirmed.intersection(equivalents.get(req, {req}))
+    }
+    match_mode = str(lead.get("signal_match_mode") or "all").strip().lower()
+    return bool(satisfied) if match_mode == "any" else len(satisfied) == len(required)
 
 
 def _required_signals_from_intent(intent: Optional[Dict[str, Any]]) -> List[str]:
