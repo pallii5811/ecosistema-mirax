@@ -27,7 +27,8 @@ const hiring = buildHeuristicMiraxQueryPlan(
 assert.equal(hiring.search_strategy, 'organic_web_search')
 assert.ok(hiring.required_signals.includes('hiring_operational'))
 assert.ok(hiring.source_plan?.some((lane) => lane.lane === 'job_market'))
-assert.ok(hiring.source_plan?.every((lane) => lane.coverage_status !== 'supported'))
+assert.equal(hiring.source_plan?.find((lane) => lane.lane === 'job_market')?.coverage_status, 'supported')
+assert.deepEqual(hiring.source_plan?.find((lane) => lane.lane === 'job_market')?.adapter_ids, ['structured_hiring_v1'])
 assert.equal(hiring.source_coverage?.status, 'generic_fallback_partial')
 
 console.log('adapter routing three traces: OK')

@@ -24,8 +24,13 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - Fase 3 Procurement: adapter discovery-first `public_procurement_v1` su boundary ANAC/TED.
 - 20 replay positivi e 6 avversariali verificano winner, authority/publisher, stato, settore, geografia e freshness.
 - Provenienza, evidenza, importo, CPV, data, dedup, cursor ed exhaustion sono canonici e fail-closed.
-- Registry runtime: `technology_audit`, `google_business_maps` e `public_procurement_portal` supported; hiring resta unsupported.
+- Fase 4 Hiring: adapter `structured_hiring_v1` per JSON-LD, vacancy individuali, ATS e careers ufficiali.
+- 20 replay PMI positivi; pagine generiche, scadute, enterprise, ruoli errati, publisher e recruiter proxy restano respinti.
+- Dominio, azienda diretta, ruolo, luogo, data, stato attivo, freshness, PMI, dedup e provenance sono fail-closed.
+- Hard cap pre-query verificato: budget `EUR 0,009` consente una sola reservation/query da `EUR 0,005`.
+- Registry runtime: Digital Audit, Procurement e Hiring supported; fallback web resta esplicitamente parziale.
+- Test Hiring, forensic legacy, lifecycle, contratti e compile Python/TypeScript: verdi; costo provider reale `EUR 0`.
 - Test Fase 3, regressioni strutturate, contratti e compile Python/TypeScript: verdi; costo provider `EUR 0`.
 
 ## Prossimo passo sicuro
-- Implementare Hiring Adapter discovery-first su fixture deterministiche; nessun canary/provider live prima dei gate offline verdi.
+- Implementare Marketing Investment/Expansion Adapter composito su fixture deterministiche; nessun canary/provider live.

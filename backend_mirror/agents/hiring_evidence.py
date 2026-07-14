@@ -18,7 +18,7 @@ _CONCRETE_HIRING_ACTION_RE = re.compile(
     re.I,
 )
 _OPERATIONAL_HIRING_ROLE_RE = re.compile(
-    r"\b(operai[oa]?|addett[oa]|autist[ai]|magazzinier[ei]|installator[ei]|"
+    r"\b(operai[oa]?|operator[ei]|addett[oa]|autist[ai]|magazzinier[ei]|installator[ei]|"
     r"manutentor[ei]|tecnic[oaie]|produzion[ei]|agricol[oaie]|cantiere|"
     r"logistic[oa]|saldator[ei]|elettricist[ai]|meccanic[oaie]|"
     r"warehouse\s+(?:worker|operator)|drivers?|operators?|installers?|"

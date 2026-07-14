@@ -6,6 +6,7 @@ import json
 import logging
 import re
 from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -19,6 +20,48 @@ _HIRING_ROLE_PATTERNS = (
     r"(?:assum(?:e|ono|endo)|cerca(?:no)?|ricerca(?:no)?)\s+(?:un\s+|una\s+|dei\s+|delle\s+)?([^,.;]{3,60})",
     r"(?:posizione|ruolo|offerta)\s+(?:di|per)\s+([^,.;]{3,60})",
 )
+
+_ATS_HOSTS = (
+    "boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co",
+    "myworkdayjobs.com", "smartrecruiters.com", "teamtailor.com",
+    "recruitee.com", "personio.de", "apply.workable.com",
+)
+
+
+def _job_location(value: Any) -> str:
+    values = value if isinstance(value, list) else [value]
+    parts: List[str] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        address = item.get("address") if isinstance(item.get("address"), dict) else item
+        for key in ("addressLocality", "addressRegion", "addressCountry", "name"):
+            raw = address.get(key)
+            if isinstance(raw, dict):
+                raw = raw.get("name")
+            text = str(raw or "").strip()
+            if text and text not in parts:
+                parts.append(text)
+    return ", ".join(parts)[:200]
+
+
+def _organization_size(organization: Dict[str, Any]) -> tuple[str, Optional[int]]:
+    raw = organization.get("numberOfEmployees")
+    if isinstance(raw, dict):
+        raw = raw.get("value") or raw.get("maxValue")
+    try:
+        employees = int(raw) if raw not in (None, "") else None
+    except (TypeError, ValueError):
+        employees = None
+    if employees is None:
+        return "", None
+    if employees <= 9:
+        return "micro", employees
+    if employees <= 49:
+        return "small", employees
+    if employees <= 249:
+        return "medium", employees
+    return "enterprise", employees
 
 
 def infer_hiring_roles(plan: Dict[str, Any]) -> List[str]:
@@ -80,6 +123,15 @@ def extract_jobposting_leads(html: str, source_url: str) -> List[Dict[str, Any]]
                 website = ""
             title = str(obj.get("title") or obj.get("name") or "Posizione aperta").strip()
             date_posted = str(obj.get("datePosted") or "").strip()
+            valid_through = str(obj.get("validThrough") or "").strip()
+            vacancy_url = str(obj.get("url") or source_url).strip()
+            location = _job_location(obj.get("jobLocation") or obj.get("applicantLocationRequirements"))
+            source_host = (urlparse(source_url).hostname or "").lower().removeprefix("www.")
+            official_host = normalize_domain(website)
+            is_recognized_ats = any(source_host == host or source_host.endswith(f".{host}") for host in _ATS_HOSTS)
+            source_class = "company_careers" if official_host == source_host or is_recognized_ats else "job_board"
+            company_size, employee_count = _organization_size(organization)
+            description = BeautifulSoup(str(obj.get("description") or ""), "html.parser").get_text(" ", strip=True)
             evidence = f"{name} cerca {title}"
             if date_posted:
                 evidence += f" (pubblicata {date_posted[:10]})"
@@ -91,7 +143,18 @@ def extract_jobposting_leads(html: str, source_url: str) -> List[Dict[str, Any]]
                     "matched_signals": ["hiring"],
                     "hiring_title": title[:200],
                     "evidence_date": date_posted[:40],
-                    "source_url": source_url,
+                    "valid_through": valid_through[:40],
+                    "location": location,
+                    "source_url": vacancy_url[:1000],
+                    "source_publisher": source_host,
+                    "source_class": source_class,
+                    "extraction_method": "schema_org_jobposting",
+                    "active": True,
+                    "description": description[:2000],
+                    "company_size": company_size,
+                    "employee_count": employee_count,
+                    "employer_is_direct": bool(website) and (official_host == source_host or is_recognized_ats),
+                    "official_domain_verified": bool(website) and (official_host == source_host or is_recognized_ats),
                     "source_lane": "hiring_jsonld",
                 }
             )

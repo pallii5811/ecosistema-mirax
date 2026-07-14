@@ -111,6 +111,6 @@ def test_ted_parser_requires_award_and_explicit_winner() -> None:
 
 def test_runtime_binding_is_registered_without_claiming_other_adapters() -> None:
     ids = {item.adapter_id for item in default_source_capability_registry().capabilities()}
-    assert ids == {"legacy_digital_audit_v1", "public_procurement_v1"}
+    assert ids == {"legacy_digital_audit_v1", "public_procurement_v1", "structured_hiring_v1"}
     assert source_runtime_coverage("public_procurement_portal") == "supported"
-    assert source_runtime_coverage("company_careers") == "unsupported"
+    assert source_runtime_coverage("company_careers") == "supported"

@@ -195,8 +195,31 @@ export const PROCUREMENT_CAPABILITY: SourceCapability = {
   coverage_status: 'supported',
 }
 
+export const HIRING_CAPABILITY: SourceCapability = {
+  adapter_id: 'structured_hiring_v1',
+  adapter_version: '1.0.0',
+  supported_intents: ['organic_web_search', 'commercial_search', 'hiring'],
+  supported_signals: ['hiring', 'hiring_operational', 'hiring_sales', 'hiring_marketing', 'hiring_technology'],
+  source_classes: ['company_careers', 'job_board'],
+  geographic_coverage: ['global'],
+  freshness_max_age_days: 1,
+  discovery_mode: 'discovery_first',
+  supports_pagination: true,
+  supports_cursor_resume: true,
+  max_results_per_page: 100,
+  max_results_per_run: null,
+  estimated_cost_eur_per_operation: 0.005,
+  authentication_requirements: ['search_provider_with_cost_governor'],
+  rate_limit_per_minute: 20,
+  provenance_guarantees: ['company', 'vacancy_url', 'publisher', 'official_domain', 'extraction_method'],
+  evidence_guarantees: ['vacancy_title', 'location', 'published_at', 'active_status', 'excerpt'],
+  exhaustion_semantics: 'best_effort',
+  coverage_status: 'supported',
+}
+
 export const SOURCE_CAPABILITY_REGISTRY = new SourceCapabilityRegistry([
   DIGITAL_AUDIT_CAPABILITY,
   PROCUREMENT_CAPABILITY,
+  HIRING_CAPABILITY,
   GENERIC_WEB_RESEARCH_CAPABILITY,
 ])
