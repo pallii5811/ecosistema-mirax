@@ -57,8 +57,10 @@ try {
     [searchId, canaryId],
   )
   const gate = gates.rows[0]
+  const replayedPlan = intent.plan_replay === true && /^[0-9a-f-]{36}$/i.test(String(intent.plan_replay_source_search_id || ''))
+  const compilerGatePassed = replayedPlan ? gate.compiler_calls === 0 : gate.compiler_calls === 1
   if (gate.other_active_jobs || gate.other_active_canaries || gate.open_reservations ||
-      gate.compiler_calls !== 1 || Number(gate.total_cost_eur) > 0.05 ||
+      !compilerGatePassed || Number(gate.total_cost_eur) > 0.05 ||
       gate.candidates || gate.publications || gate.charges) {
     throw new Error(`authorization ledger/state gate failed: ${JSON.stringify(gate)}`)
   }

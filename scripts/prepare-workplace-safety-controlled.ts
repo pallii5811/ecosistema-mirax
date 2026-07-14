@@ -21,6 +21,8 @@ config({ path: '.env.ecosistema.secrets' })
 
 const ORPHAN_SEARCH_ID = '6ecc8d72-db71-4b06-a215-9cc0fb92f303'
 const FALLBACK_HIRING = process.argv.includes('--fallback-hiring')
+const REUSE_LAST_PLAN = process.argv.includes('--reuse-last-plan')
+if (REUSE_LAST_PLAN && !FALLBACK_HIRING) throw new Error('--reuse-last-plan requires --fallback-hiring')
 const VERTICAL = FALLBACK_HIRING ? 'workplace_safety_hiring' : 'workplace_safety'
 const DATASET_VERSION = 'mirax-gold-v5'
 const MAX_LEADS = 5
@@ -263,7 +265,24 @@ async function main() {
     }, null, 2))
     return
   }
-  required('ANTHROPIC_API_KEY')
+  if (!REUSE_LAST_PLAN) required('ANTHROPIC_API_KEY')
+
+  let replayTemplate: MiraxQueryPlan | null = null
+  let replaySourceSearchId = ''
+  if (REUSE_LAST_PLAN) {
+    const { data: priorSearches, error: priorError } = await service.from('searches')
+      .select('id,intent').order('created_at', { ascending: false }).limit(60)
+    if (priorError) throw priorError
+    const prior = (priorSearches || []).find((row) => {
+      const intent = row.intent as Record<string, unknown> | null
+      const candidate = intent?.uqe_plan as MiraxQueryPlan | undefined
+      return intent?.customer_visible === false && candidate?.canonical_plan &&
+        candidate.required_signals.length === 1 && candidate.required_signals[0] === 'hiring_operational'
+    })
+    if (!prior?.id) throw new Error('validated hiring replay plan unavailable')
+    replayTemplate = structuredClone((prior.intent as Record<string, unknown>).uqe_plan as MiraxQueryPlan)
+    replaySourceSearchId = String(prior.id)
+  }
 
   const { data: intentGate } = await service.from('evaluation_runs').select('id,status,metrics')
     .eq('dataset_version', DATASET_VERSION).eq('mode', 'intent_canary').eq('status', 'completed')
@@ -304,6 +323,8 @@ async function main() {
       customer_visible: false,
       source_planner: 'canonical_v5',
       prepare_only: true,
+      plan_source: REUSE_LAST_PLAN ? 'validated_shadow_replay' : 'llm_compiler',
+      replay_source_search_id: replaySourceSearchId || null,
     },
   }).select('id').single()
   if (runError || !run?.id) throw new Error(runError?.message || 'run insert failed')
@@ -332,13 +353,26 @@ async function main() {
   try {
     const meter = new PersistentResearchCostGovernor(service)
     await meter.initialize(searchId, MAX_LEADS)
-    plan = await buildMiraxQueryPlan(spec.query, {
-      requestedLeadCount: MAX_LEADS,
-      searchId,
-      costMeter: meter,
-      allowRepair: false,
-      onDiagnostic: (event) => compilerDiagnostics.push(event),
-    })
+    if (REUSE_LAST_PLAN && replayTemplate) {
+      plan = structuredClone(replayTemplate)
+      plan.original_query = spec.query
+      if (plan.canonical_plan) {
+        plan.canonical_plan.raw_query = spec.query
+        plan.canonical_plan.search_id = searchId
+        plan.canonical_plan.planner_metadata = {
+          ...plan.canonical_plan.planner_metadata,
+          generated_at: new Date().toISOString(),
+        }
+      }
+    } else {
+      plan = await buildMiraxQueryPlan(spec.query, {
+        requestedLeadCount: MAX_LEADS,
+        searchId,
+        costMeter: meter,
+        allowRepair: false,
+        onDiagnostic: (event) => compilerDiagnostics.push(event),
+      })
+    }
     if (!plan) throw new Error('PLAN_BUILD_FAILED')
     gateReport = evaluateGates(plan, compilerDiagnostics)
     if (gateReport.failed.length > 0) {
@@ -347,7 +381,8 @@ async function main() {
     }
 
     const compilerSnapshot = await snapshot(service, searchId)
-    if (compilerSnapshot.compilerCalls !== 1 || compilerSnapshot.repairCalls !== 0 ||
+    const expectedCompilerCalls = REUSE_LAST_PLAN ? 0 : 1
+    if (compilerSnapshot.compilerCalls !== expectedCompilerCalls || compilerSnapshot.repairCalls !== 0 ||
       compilerSnapshot.compilerCost > COMPILER_CAP_EUR || compilerSnapshot.reserved !== 0 ||
       compilerSnapshot.candidates !== 0 || compilerSnapshot.publications !== 0 || compilerSnapshot.charges !== 0) {
       failureReason = 'PREPARE_LEDGER_GATE_FAILED'
@@ -370,6 +405,8 @@ async function main() {
       uqe_plan: plan,
       prepare_only: true,
       execution_authorized: false,
+      plan_replay: REUSE_LAST_PLAN,
+      plan_replay_source_search_id: replaySourceSearchId || null,
     }
     const { error: readyError } = await service.from('searches').update({
       category: plan.sector || `Evaluation shadow ${VERTICAL}`,
@@ -495,6 +532,8 @@ async function main() {
     search_status: snap.search?.status,
     canary_status: 'running',
     execution_authorized: false,
+    plan_replay: REUSE_LAST_PLAN,
+    plan_replay_source_search_id: replaySourceSearchId || null,
     hard_budget_eur_reserved_for_execution: HARD_BUDGET_EUR,
     compiler_cap_eur: COMPILER_CAP_EUR,
   }, null, 2))
