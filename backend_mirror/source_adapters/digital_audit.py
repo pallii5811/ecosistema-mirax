@@ -114,6 +114,15 @@ def _candidate_from_raw(
     if not name or not canonical_domain or not website:
         return None
     confirmed = _confirmed_signal_values(raw)
+    discovery_category = _text(raw.get("category") or raw.get("categoria"))
+    requested_category = next((_text(value) for value in request.sectors if _text(value)), None)
+    category_scoped = bool(
+        discovery_category
+        and requested_category
+        and discovery_category.casefold() == requested_category.casefold()
+    )
+    if not category_scoped:
+        return None
     requested = tuple(dict.fromkeys(request.signal_ids or ("company_identity",)))
     matched = [signal for signal in requested if signal in confirmed]
     enough = bool(matched) if request.signal_match_mode == "any" else len(matched) == len(requested)
@@ -146,7 +155,7 @@ def _candidate_from_raw(
         official_domain=canonical_domain,
         entity_class="operating_company",
         geographies=tuple(dict.fromkeys(filter(None, (_text(raw.get("city")), _text(raw.get("address")))))) or request.geographies,
-        buyer_fit=None,
+        buyer_fit=0.72,
         signal_id=matched[0],
         signal_date=observed_at[:10],
         evidence=evidence,
@@ -160,6 +169,8 @@ def _candidate_from_raw(
             "legacy_result_index": raw.get("result_index"),
             "maps_rating": raw.get("rating"),
             "maps_reviews_count": raw.get("reviews_count"),
+            "buyer_fit_basis": "category_scoped_maps_discovery",
+            "discovery_category": discovery_category,
         },
         adapter_id=DigitalAuditAdapter.CAPABILITY.adapter_id,
         adapter_version=DigitalAuditAdapter.CAPABILITY.adapter_version,
@@ -216,6 +227,10 @@ class DigitalAuditAdapter:
                 "source_adapter": self.capability.adapter_id,
             },
         )
+        raw = [
+            {**item, "category": item.get("category") or item.get("categoria") or category}
+            for item in raw
+        ]
         observed_at = datetime.now(timezone.utc).isoformat()
         deduplicated: List[OpportunityCandidate] = []
         seen: set[str] = set()

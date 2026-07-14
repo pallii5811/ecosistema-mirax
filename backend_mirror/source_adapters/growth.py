@@ -161,6 +161,16 @@ def classify_growth_evidence(text: str, requested_signals: Sequence[str]) -> Tup
     return None, "weak_proxy" if _WEAK_GROWTH_RE.search(blob) else "none", None
 
 
+def proven_requested_signals(text: str, requested_signals: Sequence[str]) -> Tuple[str, ...]:
+    """Return canonical requested signals independently proven by the excerpt."""
+    proven: List[str] = []
+    for requested in dict.fromkeys(requested_signals):
+        classified, proof, match = classify_growth_evidence(text, (requested,))
+        if classified and match and proof in {"direct", "strong_proxy"}:
+            proven.append(requested)
+    return tuple(proven)
+
+
 def parse_growth_page(
     html: str,
     source_url: str,
@@ -333,6 +343,11 @@ def _record_valid(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
     if proof not in {"direct", "strong_proxy"}:
         return False, "EVIDENCE_TOO_WEAK"
     excerpt = _text(record.get("evidence_excerpt")) or ""
+    proven = set(proven_requested_signals(excerpt, request.signal_ids))
+    if request.signal_match_mode == "all" and not requested.issubset(proven):
+        return False, "EVIDENCE_PATTERN_UNPROVEN"
+    if request.signal_match_mode == "any" and not requested.intersection(proven):
+        return False, "EVIDENCE_PATTERN_UNPROVEN"
     classified, classified_proof, _ = classify_growth_evidence(excerpt, request.signal_ids)
     if not classified or (proof == "direct" and classified_proof != "direct"):
         return False, "EVIDENCE_PATTERN_UNPROVEN"
@@ -427,20 +442,30 @@ class GrowthSignalsAdapter:
                 proof = _text(record.get("proof_level")) or ""
                 excerpt = _text(record.get("evidence_excerpt")) or ""
                 confidence = 0.96 if proof == "direct" and source_class == "official_company_website" else 0.86
-                evidence = EvidenceRecord(
-                    signal_id=signal, source_url=source_url, source_publisher=publisher,
+                evidence_signals = (
+                    proven_requested_signals(excerpt, request.signal_ids)
+                    if request.signal_match_mode == "all"
+                    else (signal,)
+                )
+                evidence = tuple(EvidenceRecord(
+                    signal_id=evidence_signal, source_url=source_url, source_publisher=publisher,
                     source_class=source_class, excerpt=excerpt[:1200], observed_at=observed,
                     published_at=published, extraction_method=_text(record.get("extraction_method")) or "structured_growth_event",
                     confidence=confidence,
                     provenance={"proof_level": proof, "corroborated": record.get("corroborated") is True},
-                )
+                ) for evidence_signal in evidence_signals)
                 candidates.append(OpportunityCandidate(
                     canonical_company_name=company, company_identifiers={}, official_domain=domain,
                     entity_class="operating_company", geographies=(_text(record.get("geography")) or "",),
-                    buyer_fit=1.0, signal_id=signal, signal_date=published, evidence=(evidence,),
+                    buyer_fit=1.0, signal_id=signal, signal_date=published, evidence=evidence,
                     why_now=_text(record.get("why_now")) or f"{proof}: {excerpt[:240]}", contacts=(),
                     confidence=confidence, contradiction_flags=(),
-                    provenance={"adapter_id": self.capability.adapter_id, "proof_level": proof, "publisher": publisher},
+                    provenance={
+                        "adapter_id": self.capability.adapter_id,
+                        "proof_level": proof,
+                        "publisher": publisher,
+                        "matched_signal_ids": evidence_signals,
+                    },
                     adapter_id=self.capability.adapter_id, adapter_version=self.capability.adapter_version,
                 ))
                 if len(candidates) >= request.requested_count:

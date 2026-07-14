@@ -46,10 +46,17 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - Dominio, operating entity, evidence, buyer fit e freshness mancanti sono critical e limitano lo score a `0,49`.
 - Il qualifier conserva i gate fail-closed e rifiuta esplicitamente score `< 0,55`; nessun campo forte compensa un critical missing.
 - Fonte, freshness, segnale, urgenza, causality, valore commerciale, contattabilità e confidence sono spiegabili per lead.
-- Test scoring e ranking deterministico inclusi nella suite Source Adapter: `60 passed`; regressioni lifecycle: `47 passed`.
+- Test scoring e ranking deterministico inclusi nella suite Source Adapter: verdi.
 - TypeScript/Python compile e diff check verdi; nessuna chiamata provider, costo reale `EUR 0`.
+- Fase 9 offline: query nuove su Digital Audit, Procurement, Hiring, Marketing, Expansion, multi-segnale e fallback.
+- Archetipi strutturati: canary replay `5/5` e batch replay `20/20` qualified, score `>=0,55`, zero publication e costo `EUR 0`.
+- Corretto mismatch Digital Audit: buyer fit ora deriva dalla discovery categoria+territorio ed è tracciato; mismatch categoria resta respinto.
+- Corretto mismatch Growth `all`: ogni segnale deve essere provato nel testo e propagato in un EvidenceRecord canonico separato.
+- Fallback: `5/5`; su richiesta `20` con sole `12` evidenze restituisce `12/20` parziale, senza inventare exhaustion o lead.
+- Suite Source Adapter `75 passed`; regressioni lifecycle/commerciali `47 passed`; TypeScript/Python compile verdi.
+- Validazione live/human precision non eseguita e non certificata; worker e pubblicazione restano disattivati.
 - Test Hiring, forensic legacy, lifecycle, contratti e compile Python/TypeScript: verdi; costo provider reale `EUR 0`.
 - Test Fase 3, regressioni strutturate, contratti e compile Python/TypeScript: verdi; costo provider `EUR 0`.
 
 ## Prossimo passo sicuro
-- Eseguire validazione multi-query interamente offline su fixture versionate; nessun canary/provider live.
+- Verificare scala 100/500/5.000 interamente offline (shard, cursor, resume, dedup, progress, hard cap); nessun canary/provider live.

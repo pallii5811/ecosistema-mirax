@@ -15,6 +15,7 @@ from backend_mirror.source_adapters.growth import (
     GrowthSignalsAdapter,
     _default_growth_provider,
     parse_growth_page,
+    proven_requested_signals,
 )
 
 
@@ -77,6 +78,41 @@ def test_weak_stale_publisher_noise_geography_and_enterprise_are_rejected() -> N
     result = asyncio.run(GrowthSignalsAdapter((provider("marketing"),)).discover(request("investing_marketing")))
     expected = {item["expected_rejection"] for item in fixture_rows("negative")}
     assert expected.issubset(set(result.warnings))
+
+
+def test_all_mode_emits_one_canonical_evidence_per_explicit_signal() -> None:
+    record = fixture_rows("marketing")[0]
+    record.update({
+        "signal_id": "active_advertising",
+        "matched_signal_ids": ["investing_marketing", "expansion"],
+        "evidence_excerpt": (
+            "Marketing Fixture 01 Srl ha avviato una nuova campagna pubblicitaria "
+            "e inaugura una nuova sede a Milano."
+        ),
+    })
+
+    async def multi_provider(_request, _offset, _limit):
+        return GrowthProviderResult((record,), True, 0.0)
+
+    multi_request = replace(
+        request("investing_marketing", count=1),
+        signal_ids=("investing_marketing", "expansion"),
+        signal_match_mode="all",
+    )
+    result = asyncio.run(GrowthSignalsAdapter((multi_provider,)).discover(multi_request))
+    assert len(result.candidates) == 1
+    assert {item.signal_id for item in result.candidates[0].evidence} == {"investing_marketing", "expansion"}
+    assert result.candidates[0].provenance["matched_signal_ids"] == ("investing_marketing", "expansion")
+
+    missing_expansion = dict(record, evidence_excerpt="Marketing Fixture 01 Srl ha avviato una nuova campagna pubblicitaria.")
+
+    async def incomplete_provider(_request, _offset, _limit):
+        return GrowthProviderResult((missing_expansion,), True, 0.0)
+
+    rejected = asyncio.run(GrowthSignalsAdapter((incomplete_provider,)).discover(multi_request))
+    assert rejected.candidates == ()
+    assert "EVIDENCE_PATTERN_UNPROVEN" in rejected.warnings
+    assert proven_requested_signals(missing_expansion["evidence_excerpt"], multi_request.signal_ids) == ("investing_marketing",)
 
 
 def test_official_and_structured_news_parser_preserve_entity_boundary() -> None:

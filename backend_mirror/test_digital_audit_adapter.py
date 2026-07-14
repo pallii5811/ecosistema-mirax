@@ -9,6 +9,7 @@ import pytest
 from backend_mirror.contracts.source_registry import source_runtime_coverage
 from backend_mirror.source_adapters import AdapterDiscoveryRequest, DigitalAuditAdapter
 from backend_mirror.source_adapters.catalog import default_source_capability_registry
+from backend_mirror.source_adapters.orchestrator import default_candidate_qualifier
 
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "digital_audit_replay_v1.json"
@@ -61,7 +62,21 @@ def test_twenty_fixture_replay_preserves_legacy_results_and_canonicalizes() -> N
     assert all(candidate.entity_class == "operating_company" for candidate in result.candidates)
     assert all({item.signal_id for item in candidate.evidence} == {"no_pixel", "no_dmarc", "missing_instagram"} for candidate in result.candidates)
     assert all(candidate.contacts for candidate in result.candidates)
+    assert all(candidate.buyer_fit == 0.72 for candidate in result.candidates)
+    assert all(candidate.provenance["buyer_fit_basis"] == "category_scoped_maps_discovery" for candidate in result.candidates)
     assert all(candidate.adapter_id == "legacy_digital_audit_v1" for candidate in result.candidates)
+    decisions = [asyncio.run(default_candidate_qualifier(candidate)) for candidate in result.candidates]
+    assert all(decision.qualified for decision in decisions)
+
+
+def test_category_mismatch_cannot_be_promoted_as_target_fit() -> None:
+    raw = {**fixture_rows()[0], "category": "ristoranti"}
+
+    async def fake_runner(**_kwargs):
+        return [raw]
+
+    result = asyncio.run(DigitalAuditAdapter(fake_runner).discover(request(count=1)))
+    assert result.candidates == ()
 
 
 def test_failed_audit_cannot_prove_negative_technical_signal() -> None:
