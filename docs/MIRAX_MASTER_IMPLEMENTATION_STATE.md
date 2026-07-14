@@ -1,6 +1,6 @@
 # MIRAX Master Implementation State
 
-Ultimo aggiornamento verificato: 2026-07-14 Europe/Rome.
+Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 
 ## Checkpoint corrente
 - Repository `pallii5811/ecosistema-mirax`; branch `safety/mirax-v5-11-codex-checkpoint`.
@@ -21,7 +21,11 @@ Ultimo aggiornamento verificato: 2026-07-14 Europe/Rome.
 - Fase 2 Digital Audit: percorso Maps+audit legacy incapsulato in `legacy_digital_audit_v1` senza riscrittura.
 - 20 replay Digital Audit: dominio, evidenze tecniche, contatti, dedup e requested_count verdi.
 - Timeout/fetch fallito non qualifica più l'assenza di tecnologia; exhaustion legacy dichiarata best-effort.
-- Registry runtime: `technology_audit` e `google_business_maps` supported; procurement/hiring restano unsupported.
+- Fase 3 Procurement: adapter discovery-first `public_procurement_v1` su boundary ANAC/TED.
+- 20 replay positivi e 6 avversariali verificano winner, authority/publisher, stato, settore, geografia e freshness.
+- Provenienza, evidenza, importo, CPV, data, dedup, cursor ed exhaustion sono canonici e fail-closed.
+- Registry runtime: `technology_audit`, `google_business_maps` e `public_procurement_portal` supported; hiring resta unsupported.
+- Test Fase 3, regressioni strutturate, contratti e compile Python/TypeScript: verdi; costo provider `EUR 0`.
 
-## Prossimo passo dopo il reset
-- Implementare Procurement Adapter discovery-first su fixture ANAC/TED; nessun provider live prima dei replay verdi.
+## Prossimo passo sicuro
+- Implementare Hiring Adapter discovery-first su fixture deterministiche; nessun canary/provider live prima dei gate offline verdi.

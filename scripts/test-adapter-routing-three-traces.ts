@@ -7,7 +7,8 @@ const procurement = buildHeuristicMiraxQueryPlan(
 assert.equal(procurement.search_strategy, 'organic_web_search')
 assert.ok(procurement.required_signals.includes('tender_won'))
 assert.ok(procurement.source_plan?.some((lane) => lane.lane === 'public_procurement'))
-assert.ok(procurement.source_plan?.every((lane) => lane.coverage_status !== 'supported'))
+assert.equal(procurement.source_plan?.find((lane) => lane.lane === 'public_procurement')?.coverage_status, 'supported')
+assert.deepEqual(procurement.source_plan?.find((lane) => lane.lane === 'public_procurement')?.adapter_ids, ['public_procurement_v1'])
 assert.equal(procurement.source_coverage?.status, 'generic_fallback_partial')
 
 const marketing = buildHeuristicMiraxQueryPlan(

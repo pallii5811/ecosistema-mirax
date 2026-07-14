@@ -173,7 +173,30 @@ export const DIGITAL_AUDIT_CAPABILITY: SourceCapability = {
   coverage_status: 'supported',
 }
 
+export const PROCUREMENT_CAPABILITY: SourceCapability = {
+  adapter_id: 'public_procurement_v1',
+  adapter_version: '1.0.0',
+  supported_intents: ['organic_web_search', 'commercial_search', 'public_procurement'],
+  supported_signals: ['tender_won', 'contract_awarded'],
+  source_classes: ['public_procurement_portal'],
+  geographic_coverage: ['italy', 'eu'],
+  freshness_max_age_days: 1,
+  discovery_mode: 'discovery_first',
+  supports_pagination: true,
+  supports_cursor_resume: true,
+  max_results_per_page: 100,
+  max_results_per_run: null,
+  estimated_cost_eur_per_operation: 0,
+  authentication_requirements: [],
+  rate_limit_per_minute: 30,
+  provenance_guarantees: ['publisher', 'award_id', 'authority', 'winner_role', 'source_url'],
+  evidence_guarantees: ['contract_award', 'award_date', 'winner_name', 'excerpt'],
+  exhaustion_semantics: 'partition',
+  coverage_status: 'supported',
+}
+
 export const SOURCE_CAPABILITY_REGISTRY = new SourceCapabilityRegistry([
   DIGITAL_AUDIT_CAPABILITY,
+  PROCUREMENT_CAPABILITY,
   GENERIC_WEB_RESEARCH_CAPABILITY,
 ])

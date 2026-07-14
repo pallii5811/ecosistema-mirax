@@ -48,6 +48,9 @@
     },
     {
       "id": "public_procurement_portal",
+      "implementation_id": "public_procurement_v1",
+      "capability_version": "1.0.0",
+      "runtime_coverage": "supported",
       "signals_supported": ["tender_won", "contract_awarded", "seeking_supplier"],
       "trust_level": 0.98,
       "primary": true,

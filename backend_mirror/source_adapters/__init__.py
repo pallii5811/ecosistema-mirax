@@ -15,6 +15,7 @@ from .contracts import (
     normalize_opportunity_candidate,
 )
 from .digital_audit import DigitalAuditAdapter
+from .procurement import ProcurementAdapter, ProcurementProviderResult
 
 __all__ = [
     "AdapterDiscoveryRequest",
@@ -25,6 +26,8 @@ __all__ = [
     "DigitalAuditAdapter",
     "EvidenceRecord",
     "OpportunityCandidate",
+    "ProcurementAdapter",
+    "ProcurementProviderResult",
     "QualifiedLead",
     "SourceAdapter",
     "SourceCapability",
