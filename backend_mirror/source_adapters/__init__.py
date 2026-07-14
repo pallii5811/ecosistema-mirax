@@ -21,6 +21,7 @@ from .generic_web import GenericWebProviderResult, GenericWebResearchAdapter
 from .orchestrator import (
     AdapterProgress,
     OrchestrationResult,
+    ProgressCallback,
     QualificationDecision,
     SearchProgress,
     UniversalSourceOrchestrator,
@@ -46,6 +47,7 @@ __all__ = [
     "GenericWebResearchAdapter",
     "AdapterProgress",
     "OrchestrationResult",
+    "ProgressCallback",
     "QualificationDecision",
     "SearchProgress",
     "UniversalSourceOrchestrator",

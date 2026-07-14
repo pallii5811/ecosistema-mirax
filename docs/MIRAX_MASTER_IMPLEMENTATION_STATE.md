@@ -55,8 +55,14 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - Fallback: `5/5`; su richiesta `20` con sole `12` evidenze restituisce `12/20` parziale, senza inventare exhaustion o lead.
 - Suite Source Adapter `75 passed`; regressioni lifecycle/commerciali `47 passed`; TypeScript/Python compile verdi.
 - Validazione live/human precision non eseguita e non certificata; worker e pubblicazione restano disattivati.
+- Fase 10 offline: stress `100/100`, `500/500`, `5.000/5.000` qualified con cinque shard e dedup globale.
+- Progress snapshot monotoni; resume cursor per adapter verificato senza replay delle pagine già acquisite.
+- Budget `EUR 0,009`: esattamente una call simulata da `EUR 0,005`; seconda call bloccata prima dell'esecuzione.
+- Esaurimento autorevole: `600/1.000` e `partial_sources_exhausted`, senza riempimento artificiale.
+- Suite Source Adapter/scale `82 passed`; lease, idempotenza, cost governor e lifecycle `61 passed`.
+- Costo provider reale `EUR 0`; nessun deploy, canary, worker persistente, publication o charge cliente.
 - Test Hiring, forensic legacy, lifecycle, contratti e compile Python/TypeScript: verdi; costo provider reale `EUR 0`.
 - Test Fase 3, regressioni strutturate, contratti e compile Python/TypeScript: verdi; costo provider `EUR 0`.
 
 ## Prossimo passo sicuro
-- Verificare scala 100/500/5.000 interamente offline (shard, cursor, resume, dedup, progress, hard cap); nessun canary/provider live.
+- Integrare il nuovo orchestratore nel worker soltanto dietro flag shadow fail-closed e disattivato; nessun deploy/canary/provider live.

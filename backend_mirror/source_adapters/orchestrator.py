@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import inspect
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
@@ -42,6 +43,7 @@ class QualificationDecision:
 
 
 CandidateQualifier = Callable[[OpportunityCandidate], Awaitable[QualificationDecision]]
+ProgressCallback = Callable[["SearchProgress"], Any]
 
 
 @dataclass
@@ -234,6 +236,8 @@ class UniversalSourceOrchestrator:
         request: AdapterDiscoveryRequest,
         *,
         required_source_classes: Sequence[str] = (),
+        resume_cursors: Optional[Mapping[str, DiscoveryCursor]] = None,
+        progress_callback: Optional[ProgressCallback] = None,
     ) -> OrchestrationResult:
         started_dt = datetime.now(timezone.utc)
         started = started_dt.isoformat()
@@ -246,6 +250,18 @@ class UniversalSourceOrchestrator:
         states = {adapter_id: AdapterProgress(adapter_id) for adapter_id in coverage.adapter_ids}
         if not states:
             return self._empty_result("failed_terminal", coverage, request, started, states, ("no_executable_adapter",))
+        supplied_cursors = dict(resume_cursors or {})
+        unknown_cursor_adapters = set(supplied_cursors) - set(states)
+        if unknown_cursor_adapters:
+            raise ValueError(f"resume cursor references unselected adapter(s): {sorted(unknown_cursor_adapters)}")
+        for adapter_id, cursor in supplied_cursors.items():
+            states[adapter_id].next_cursor = cursor
+        if request.cursor is not None:
+            if supplied_cursors:
+                raise ValueError("use request.cursor or resume_cursors, not both")
+            if len(states) != 1:
+                raise ValueError("request.cursor is ambiguous with multiple adapters; use resume_cursors")
+            next(iter(states.values())).next_cursor = request.cursor
 
         raw_count = 0
         discovered = 0
@@ -257,6 +273,26 @@ class UniversalSourceOrchestrator:
         rejection_by_entity: Dict[str, str] = {}
         terminal: Optional[TerminalStatus] = None
         round_index = 0
+
+        async def emit_progress() -> None:
+            if progress_callback is None:
+                return
+            audited_now = sum(1 for decision in decisions.values() if decision.audited)
+            evidence_now = sum(1 for decision in decisions.values() if decision.evidence_verified)
+            snapshot = SearchProgress(
+                requested_count=request.requested_count,
+                discovered_count=discovered,
+                raw_candidate_count=raw_count,
+                unique_entity_count=len(accumulated),
+                resolved_count=sum(1 for item in accumulated.values() if item.official_domain),
+                audited_count=audited_now,
+                evidence_verified_count=evidence_now,
+                qualified_count=len(qualified_by_entity),
+                rejected_count=len(accumulated) - len(qualified_by_entity),
+            )
+            outcome = progress_callback(snapshot)
+            if inspect.isawaitable(outcome):
+                await outcome
 
         while round_index < self.max_rounds and time.monotonic() - start_clock < self.max_seconds:
             active = [state for state in states.values() if not state.exhausted]
@@ -337,6 +373,7 @@ class UniversalSourceOrchestrator:
                     if len(qualified_by_entity) >= request.requested_count:
                         terminal = "completed_requested_count"
                         break
+                await emit_progress()
                 if terminal:
                     break
             if terminal:
