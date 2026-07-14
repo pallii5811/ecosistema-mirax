@@ -101,12 +101,17 @@ def request_from_plan(
     """Translate a canonical compiler plan without semantic repair or LLM use."""
     ranking = plan.get("ranking_policy") if isinstance(plan.get("ranking_policy"), Mapping) else {}
     evidence_policy = plan.get("evidence_policy") if isinstance(plan.get("evidence_policy"), Mapping) else {}
+    signal_policy = plan.get("signal_policy") if isinstance(plan.get("signal_policy"), Mapping) else {}
+    source_policy = plan.get("source_policy") if isinstance(plan.get("source_policy"), Mapping) else {}
+    budget_policy = plan.get("budget_policy") if isinstance(plan.get("budget_policy"), Mapping) else {}
     target = plan.get("target") if isinstance(plan.get("target"), Mapping) else {}
     geographies = target.get("geographies") if isinstance(target.get("geographies"), list) else None
     if not geographies:
         location = str(plan.get("location") or "").strip()
         geographies = [location, "italy"] if location else ["italy"]
-    signals = tuple(str(item).strip() for item in plan.get("required_signals") or () if str(item).strip())
+    signals = tuple(str(item).strip() for item in (
+        signal_policy.get("required_signals") or plan.get("required_signals") or ()
+    ) if str(item).strip())
     if not signals:
         raise ValueError("canonical plan requires at least one signal")
     mode = str(ranking.get("signal_match_mode") or plan.get("signal_match_mode") or "all").lower()
@@ -115,14 +120,35 @@ def request_from_plan(
     freshness = evidence_policy.get("max_age_days")
     if freshness is None:
         freshness = ranking.get("max_signal_age_days")
+    if freshness is None:
+        ages = signal_policy.get("maximum_age_days_by_signal")
+        if isinstance(ages, Mapping):
+            required_ages = [ages.get(signal) for signal in signals if ages.get(signal) is not None]
+            freshness = min(int(value) for value in required_ages) if required_ages else None
     count = requested_count if requested_count is not None else int(plan.get("requested_count") or 1)
     technical = dict(plan.get("technical_filters") or {}) if isinstance(plan.get("technical_filters"), Mapping) else {}
     technical.update({
         "query_origin": technical.get("query_origin") or "compiler_plan",
-        "parent_query": technical.get("parent_query") or str(plan.get("original_query") or ""),
+        "parent_query": technical.get("parent_query") or str(plan.get("original_query") or plan.get("raw_query") or ""),
         "discovery_round": int(technical.get("discovery_round") or 1),
+        "company_sizes": tuple(str(item) for item in target.get("company_sizes") or ()),
+        "employee_range": target.get("employee_range"),
+        "revenue_range": target.get("revenue_range"),
+        "required_attributes": tuple(str(item) for item in target.get("required_attributes") or ()),
+        "excluded_attributes": tuple(str(item) for item in target.get("excluded_attributes") or ()),
+        "excluded_entities": tuple(str(item) for item in target.get("excluded_entities") or ()),
+        "optional_signals": tuple(str(item) for item in signal_policy.get("optional_signals") or ()),
+        "negative_signals": tuple(str(item) for item in signal_policy.get("negative_signals") or ()),
+        "minimum_signal_confidence": signal_policy.get("minimum_signal_confidence"),
+        "preferred_source_classes": tuple(str(item) for item in source_policy.get("preferred_source_classes") or ()),
+        "allowed_source_classes": tuple(str(item) for item in source_policy.get("allowed_source_classes") or ()),
+        "excluded_source_classes": tuple(str(item) for item in source_policy.get("excluded_source_classes") or ()),
+        "minimum_evidence_confidence": evidence_policy.get("minimum_evidence_confidence"),
     })
+    industries = tuple(str(item).strip() for item in target.get("industries") or () if str(item).strip())
     sector = str(plan.get("sector") or "").strip()
+    hard_budget = budget_policy.get("hard_cost_eur")
+    effective_budget = min(budget_eur, float(hard_budget)) if hard_budget is not None else budget_eur
     return AdapterDiscoveryRequest(
         intent=str(plan.get("search_strategy") or "commercial_search"),
         signal_ids=signals,
@@ -130,9 +156,9 @@ def request_from_plan(
         geographies=tuple(str(item).strip() for item in geographies if str(item).strip()),
         freshness_max_age_days=int(freshness) if freshness is not None else None,
         requested_count=count,
-        budget_eur=budget_eur,
+        budget_eur=effective_budget,
         query=str(plan.get("original_query") or plan.get("raw_query") or "").strip(),
-        sectors=(sector,) if sector else (),
+        sectors=industries or ((sector,) if sector else ()),
         technical_filters=technical,
     )
 
@@ -173,12 +199,16 @@ def _merge_candidates(left: OpportunityCandidate, right: OpportunityCandidate) -
         provenance={**left.provenance, **right.provenance, "matched_signal_ids": matched, "contributing_adapters": adapters},
         adapter_id=left.adapter_id,
         adapter_version=left.adapter_version,
+        official_domain_verified=left.official_domain_verified or right.official_domain_verified,
+        official_domain_confidence=max(left.official_domain_confidence, right.official_domain_confidence),
     )
 
 
 async def default_candidate_qualifier(candidate: OpportunityCandidate) -> QualificationDecision:
     if not candidate.official_domain:
         return QualificationDecision(False, False, False, "OFFICIAL_DOMAIN_UNRESOLVED")
+    if not candidate.official_domain_verified or candidate.official_domain_confidence < 0.70:
+        return QualificationDecision(False, False, False, "OFFICIAL_DOMAIN_UNVERIFIED")
     if candidate.entity_class != "operating_company":
         return QualificationDecision(False, False, False, "NON_OPERATING_ENTITY")
     evidence_verified = bool(candidate.evidence) and all(

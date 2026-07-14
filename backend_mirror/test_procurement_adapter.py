@@ -10,6 +10,7 @@ import pytest
 from backend_mirror.contracts.source_registry import source_runtime_coverage
 from backend_mirror.source_adapters import (
     AdapterDiscoveryRequest,
+    DomainResolutionResult,
     DiscoveryCursor,
     ProcurementAdapter,
     ProcurementProviderResult,
@@ -28,7 +29,7 @@ def fixture_rows() -> list[dict]:
     return rows
 
 
-def request(*, count: int = 20, cursor: DiscoveryCursor | None = None) -> AdapterDiscoveryRequest:
+def request(*, count: int = 20, budget: float = 0.125, cursor: DiscoveryCursor | None = None) -> AdapterDiscoveryRequest:
     return AdapterDiscoveryRequest(
         intent="public_procurement",
         signal_ids=("tender_won",),
@@ -36,7 +37,7 @@ def request(*, count: int = 20, cursor: DiscoveryCursor | None = None) -> Adapte
         geographies=("Torino", "Piemonte", "italy"),
         freshness_max_age_days=30,
         requested_count=count,
-        budget_eur=0.125,
+        budget_eur=budget,
         query="imprese edili a Torino che hanno vinto gare negli ultimi giorni",
         sectors=("imprese edili",),
         technical_filters={},
@@ -51,9 +52,24 @@ def provider(source_id: str, *, exhausted: bool = True):
     return _provider
 
 
+async def verified_domain(_name, presented_url, _location, _budget):
+    return DomainResolutionResult(
+        url=presented_url,
+        confidence=0.96,
+        score=96,
+        evidence=("company_tokens_in_host", "schema_org_identity_match"),
+        resolution_source="fixture_identity",
+        resolution_method="positive_page_identity",
+    ) if presented_url else None
+
+
+def adapter(providers):
+    return ProcurementAdapter(providers, domain_resolver=verified_domain)
+
+
 def test_twenty_recent_winners_from_anac_and_ted_are_canonical() -> None:
-    adapter = ProcurementAdapter((provider("anac_opendata"), provider("ted_europa")))
-    result = asyncio.run(adapter.discover(request()))
+    subject = adapter((provider("anac_opendata"), provider("ted_europa")))
+    result = asyncio.run(subject.discover(request()))
 
     assert len(result.candidates) == 20
     assert len({candidate.canonical_company_name for candidate in result.candidates}) == 20
@@ -69,7 +85,7 @@ def test_twenty_recent_winners_from_anac_and_ted_are_canonical() -> None:
 
 
 def test_negative_records_are_rejected_with_specific_codes() -> None:
-    result = asyncio.run(ProcurementAdapter((provider("anac_opendata"), provider("ted_europa"))).discover(request()))
+    result = asyncio.run(adapter((provider("anac_opendata"), provider("ted_europa"))).discover(request()))
     assert {
         "ENTITY_NOT_WINNER",
         "PUBLISHER_OR_AUTHORITY_AS_WINNER",
@@ -84,13 +100,61 @@ def test_cursor_and_exhaustion_are_explicit() -> None:
         rows = fixture_rows()[offset:offset + 2]
         return ProcurementProviderResult(tuple(rows), False, 0.0)
 
-    first = asyncio.run(ProcurementAdapter((one_page,)).discover(request(count=5)))
+    first = asyncio.run(adapter((one_page,)).discover(request(count=5)))
     assert first.exhaustion.exhausted is False
     assert first.exhaustion.next_cursor is not None
     assert first.exhaustion.next_cursor.value == "procurement:v1:20"
 
     with pytest.raises(ValueError, match="invalid procurement cursor"):
-        asyncio.run(ProcurementAdapter((one_page,)).discover(request(count=5, cursor=DiscoveryCursor("bad"))))
+        asyncio.run(adapter((one_page,)).discover(request(count=5, cursor=DiscoveryCursor("bad"))))
+
+
+def test_missing_anac_domain_requires_positive_resolution_and_budget() -> None:
+    rows = fixture_rows()[:2]
+    for row in rows:
+        row["official_domain"] = ""
+
+    async def one_provider(_request, _offset, _limit):
+        return ProcurementProviderResult(tuple(rows), True, 0.0)
+
+    calls = []
+
+    async def resolver(name, _presented, _location, budget):
+        calls.append((name, budget))
+        return DomainResolutionResult(
+            url=f"https://{name.lower().replace(' ', '-')}.example",
+            confidence=0.94,
+            score=94,
+            evidence=("company_tokens_in_host", "schema_org_identity_match"),
+            resolution_source="serp_identity",
+            resolution_method="positive_page_identity",
+            cost_eur=0.005,
+        )
+
+    result = asyncio.run(ProcurementAdapter((one_provider,), domain_resolver=resolver).discover(
+        request(count=2, budget=0.005),
+    ))
+    assert len(result.candidates) == 1
+    assert result.candidates[0].official_domain_verified is True
+    assert result.candidates[0].official_domain_confidence == 0.94
+    assert result.cost_eur == 0.005
+    assert len(calls) == 1
+    assert "DOMAIN_RESOLUTION_BUDGET_EXHAUSTED" in result.warnings
+
+
+def test_unverified_domain_resolution_never_promotes_candidate() -> None:
+    row = fixture_rows()[0]
+    row["official_domain"] = ""
+
+    async def one_provider(_request, _offset, _limit):
+        return ProcurementProviderResult((row,), True, 0.0)
+
+    async def unresolved(*_args):
+        return None
+
+    result = asyncio.run(ProcurementAdapter((one_provider,), domain_resolver=unresolved).discover(request(count=1)))
+    assert result.candidates == ()
+    assert "OFFICIAL_DOMAIN_UNRESOLVED" in result.warnings
 
 
 def test_ted_parser_requires_award_and_explicit_winner() -> None:

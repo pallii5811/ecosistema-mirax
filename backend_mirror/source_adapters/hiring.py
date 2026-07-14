@@ -442,6 +442,8 @@ class HiringAdapter:
                     provenance={"adapter_id": self.capability.adapter_id, "vacancy_url": source_url, "publisher": publisher},
                     adapter_id=self.capability.adapter_id,
                     adapter_version=self.capability.adapter_version,
+                    official_domain_verified=record.get("official_domain_verified") is True,
+                    official_domain_confidence=0.96 if source_class == "company_careers" else 0.86,
                 ))
                 if len(candidates) >= request.requested_count:
                     break

@@ -403,6 +403,8 @@ class GenericWebResearchAdapter:
                         "limitations": "sampled web evidence; no global source exhaustion claim",
                     },
                     adapter_id=self.capability.adapter_id, adapter_version=self.capability.adapter_version,
+                    official_domain_verified=record.get("official_domain_verified") is True,
+                    official_domain_confidence=0.80,
                 ))
                 if len(candidates) >= request.requested_count:
                     break

@@ -174,6 +174,8 @@ def _candidate_from_raw(
         },
         adapter_id=DigitalAuditAdapter.CAPABILITY.adapter_id,
         adapter_version=DigitalAuditAdapter.CAPABILITY.adapter_version,
+        official_domain_verified=True,
+        official_domain_confidence=0.86,
     )
 
 

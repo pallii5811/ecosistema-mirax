@@ -235,6 +235,10 @@ def score_opportunity(
         penalties["official_domain_missing"] = 0.40
         missing.append("official_domain")
         critical.append("official_domain")
+    elif not candidate.official_domain_verified or candidate.official_domain_confidence < 0.70:
+        penalties["official_domain_unverified"] = 0.40
+        missing.append("official_domain_verification")
+        critical.append("official_domain_verification")
     total = max(0.0, min(1.0, sum(item.contribution for item in components) - sum(penalties.values())))
     if critical:
         total = min(total, 0.49)

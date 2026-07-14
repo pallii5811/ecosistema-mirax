@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -77,6 +79,8 @@ def candidate(company: str, domain: str, signal: str, adapter_id: str) -> Opport
         provenance={"adapter_id": adapter_id},
         adapter_id=adapter_id,
         adapter_version="1.0.0",
+        official_domain_verified=True,
+        official_domain_confidence=0.95,
     )
 
 
@@ -233,3 +237,24 @@ def test_plan_boundary_maps_canonical_fields_without_llm_repair() -> None:
     assert mapped.requested_count == 25
     assert mapped.budget_eur == 0.125
     assert mapped.technical_filters["query_origin"] == "compiler_plan"
+
+
+def test_plan_boundary_maps_real_v1_contract_without_semantic_loss() -> None:
+    root = Path(__file__).resolve().parents[1]
+    plan = json.loads((root / "contracts" / "fixtures" / "commercial-search-plan.valid.json").read_text(encoding="utf-8"))
+    mapped = request_from_plan(plan, requested_count=25, budget_eur=1.0)
+    assert mapped.intent == "commercial_search"
+    assert mapped.signal_ids == ("hiring_operational",)
+    assert mapped.signal_match_mode == "all"
+    assert mapped.geographies == ("Lombardia",)
+    assert mapped.freshness_max_age_days == 120
+    assert mapped.requested_count == 25
+    assert mapped.budget_eur == 0.125
+    assert mapped.query == plan["raw_query"]
+    assert mapped.sectors == ("logistica", "edilizia", "produzione")
+    assert mapped.technical_filters["company_sizes"] == ("micro", "small", "medium")
+    assert mapped.technical_filters["employee_range"] == {"min": 5, "max": 249}
+    assert mapped.technical_filters["negative_signals"] == ("business_closed",)
+    assert mapped.technical_filters["preferred_source_classes"] == (
+        "company_careers", "public_procurement_portal",
+    )

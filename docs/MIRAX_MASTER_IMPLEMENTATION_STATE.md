@@ -61,6 +61,11 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - Esaurimento autorevole: `600/1.000` e `partial_sources_exhausted`, senza riempimento artificiale.
 - Suite Source Adapter/scale `82 passed`; lease, idempotenza, cost governor e lifecycle `61 passed`.
 - Costo provider reale `EUR 0`; nessun deploy, canary, worker persistente, publication o charge cliente.
+- Boundary piano v1 reale corretto: segnali, freshness, geografie, settori, target, source policy e hard budget non si perdono.
+- `official_domain_verified` e confidence sono ora campi canonici; dominio presente ma non verificato viene respinto.
+- Procurement usa resolver identità iniettabile: ANAC senza dominio risolve entro reservation o fallisce chiuso.
+- Hard cap Procurement applicato prima di provider e resolver; budget `EUR 0,005` permette una sola resolution da `EUR 0,005`.
+- Suite Source Adapter `85 passed`; domain resolver, cost, lease, lifecycle e contratto piano `68 passed`.
 - Test Hiring, forensic legacy, lifecycle, contratti e compile Python/TypeScript: verdi; costo provider reale `EUR 0`.
 - Test Fase 3, regressioni strutturate, contratti e compile Python/TypeScript: verdi; costo provider `EUR 0`.
 

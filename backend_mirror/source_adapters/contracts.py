@@ -162,6 +162,8 @@ class OpportunityCandidate:
     provenance: Mapping[str, Any]
     adapter_id: str
     adapter_version: str
+    official_domain_verified: bool = False
+    official_domain_confidence: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.canonical_company_name or not self.signal_id:
@@ -170,6 +172,10 @@ class OpportunityCandidate:
             raise ValueError("candidate confidence must be between 0 and 1")
         if self.buyer_fit is not None and not 0 <= self.buyer_fit <= 1:
             raise ValueError("buyer_fit must be between 0 and 1")
+        if not 0 <= self.official_domain_confidence <= 1:
+            raise ValueError("official_domain_confidence must be between 0 and 1")
+        if self.official_domain_verified and not self.official_domain:
+            raise ValueError("verified official domain requires a domain")
 
 
 @dataclass(frozen=True)
@@ -182,8 +188,8 @@ class QualifiedLead:
     def __post_init__(self) -> None:
         if not 0 <= self.opportunity_value_score <= 1:
             raise ValueError("opportunity value score must be between 0 and 1")
-        if not self.candidate.official_domain or not self.candidate.evidence:
-            raise ValueError("qualified lead requires official domain and evidence")
+        if not self.candidate.official_domain or not self.candidate.official_domain_verified or not self.candidate.evidence:
+            raise ValueError("qualified lead requires verified official domain and evidence")
 
 
 @dataclass(frozen=True)
@@ -244,6 +250,15 @@ def normalize_opportunity_candidate(
         or domain_verification.get("official_domain")
         or domain_verification.get("canonical_domain")
     )
+    domain_confidence = domain_verification.get("confidence") or payload.get("official_domain_confidence") or 0.0
+    try:
+        domain_confidence = max(0.0, min(1.0, float(domain_confidence)))
+    except (TypeError, ValueError):
+        domain_confidence = 0.0
+    domain_verified = payload.get("official_domain_verified") is True or (
+        str(domain_verification.get("status") or "").lower() == "verified"
+        and domain_confidence >= 0.70
+    )
     raw_evidence = payload.get("evidence") or payload.get("evidence_records") or ()
     if isinstance(raw_evidence, Mapping):
         raw_evidence = (raw_evidence,)
@@ -298,4 +313,6 @@ def normalize_opportunity_candidate(
         provenance=payload.get("provenance") if isinstance(payload.get("provenance"), Mapping) else {},
         adapter_id=adapter_id,
         adapter_version=adapter_version,
+        official_domain_verified=domain_verified,
+        official_domain_confidence=domain_confidence,
     )

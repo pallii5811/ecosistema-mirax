@@ -102,6 +102,8 @@ class ScaleShardAdapter:
                 provenance={"urgency_score": 0.9, "causality_score": 0.9, "commercial_value_score": 0.8},
                 adapter_id=self.capability.adapter_id,
                 adapter_version=self.capability.adapter_version,
+                official_domain_verified=True,
+                official_domain_confidence=0.95,
             ))
         next_offset = offset + limit
         exhausted = next_offset >= self.total

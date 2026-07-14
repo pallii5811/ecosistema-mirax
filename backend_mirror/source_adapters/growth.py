@@ -467,6 +467,8 @@ class GrowthSignalsAdapter:
                         "matched_signal_ids": evidence_signals,
                     },
                     adapter_id=self.capability.adapter_id, adapter_version=self.capability.adapter_version,
+                    official_domain_verified=record.get("official_domain_verified") is True,
+                    official_domain_confidence=0.96 if source_class == "official_company_website" else 0.86,
                 ))
                 if len(candidates) >= request.requested_count:
                     break

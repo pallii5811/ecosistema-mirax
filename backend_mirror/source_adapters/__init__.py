@@ -29,7 +29,7 @@ from .orchestrator import (
     request_from_plan,
 )
 from .opportunity_scoring import OpportunityScore, ScoreComponent, rank_opportunities, score_opportunity
-from .procurement import ProcurementAdapter, ProcurementProviderResult
+from .procurement import DomainResolutionResult, ProcurementAdapter, ProcurementProviderResult
 
 __all__ = [
     "AdapterDiscoveryRequest",
@@ -38,6 +38,7 @@ __all__ = [
     "ContactRecord",
     "DiscoveryCursor",
     "DigitalAuditAdapter",
+    "DomainResolutionResult",
     "EvidenceRecord",
     "HiringAdapter",
     "HiringProviderResult",

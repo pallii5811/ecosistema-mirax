@@ -11,6 +11,7 @@ import pytest
 from backend_mirror.source_adapters import (
     AdapterDiscoveryRequest,
     DigitalAuditAdapter,
+    DomainResolutionResult,
     GenericWebProviderResult,
     GenericWebResearchAdapter,
     GrowthProviderResult,
@@ -74,7 +75,17 @@ def _procurement_adapter() -> ProcurementAdapter:
             return ProcurementProviderResult(tuple(row for row in rows if row["source_id"] == source_id), True, 0.0)
         return run
 
-    return ProcurementAdapter((provider("anac_opendata"), provider("ted_europa")))
+    async def resolver(_name, presented_url, _location, _budget):
+        return DomainResolutionResult(
+            url=presented_url, confidence=0.96, score=96,
+            evidence=("company_tokens_in_host", "schema_org_identity_match"),
+            resolution_source="fixture_identity", resolution_method="positive_page_identity",
+        ) if presented_url else None
+
+    return ProcurementAdapter(
+        (provider("anac_opendata"), provider("ted_europa")),
+        domain_resolver=resolver,
+    )
 
 
 def _hiring_adapter() -> HiringAdapter:

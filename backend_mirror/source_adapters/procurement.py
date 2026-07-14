@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -28,6 +29,55 @@ class ProcurementProviderResult:
 
 
 ProcurementProvider = Callable[[AdapterDiscoveryRequest, int, int], Awaitable[ProcurementProviderResult]]
+_DOMAIN_SEARCH_COST_EUR = 0.005
+
+
+@dataclass(frozen=True)
+class DomainResolutionResult:
+    url: str
+    confidence: float
+    score: int
+    evidence: Tuple[str, ...]
+    resolution_source: str
+    resolution_method: str
+    cost_eur: float = 0.0
+
+
+DomainResolver = Callable[[str, str, str, float], Awaitable[Optional[DomainResolutionResult]]]
+
+
+async def _default_domain_resolver(
+    company_name: str,
+    presented_url: str,
+    location: str,
+    budget_eur: float,
+) -> Optional[DomainResolutionResult]:
+    """Resolve and positively verify ownership; probable/dead domains fail closed."""
+    from backend_mirror.agents.domain_resolver import resolve_official_identity, verify_company_domain
+
+    if presented_url:
+        raw = await asyncio.to_thread(verify_company_domain, company_name, presented_url, location)
+        cost = 0.0
+        source = "extracted_website"
+    else:
+        if budget_eur + 1e-9 < _DOMAIN_SEARCH_COST_EUR:
+            return None
+        raw = await asyncio.to_thread(resolve_official_identity, company_name, location, max_results=5)
+        cost = _DOMAIN_SEARCH_COST_EUR
+        source = str((raw or {}).get("resolution_source") or "serp_identity")
+    if not raw or str(raw.get("status") or "").lower() != "verified":
+        return None
+    confidence = float(raw.get("confidence") or 0.0)
+    score = int(raw.get("score") or 0)
+    evidence = tuple(str(item) for item in raw.get("evidence") or () if str(item))
+    if confidence < 0.70 or score < 70 or not evidence:
+        return None
+    return DomainResolutionResult(
+        url=str(raw.get("url") or ""), confidence=confidence, score=score,
+        evidence=evidence, resolution_source=source,
+        resolution_method=str(raw.get("resolution_method") or "positive_page_identity"),
+        cost_eur=cost,
+    )
 
 
 def _text(value: Any) -> Optional[str]:
@@ -180,7 +230,7 @@ class ProcurementAdapter:
         supports_cursor_resume=True,
         max_results_per_page=100,
         max_results_per_run=None,
-        estimated_cost_eur_per_operation=0.0,
+        estimated_cost_eur_per_operation=_DOMAIN_SEARCH_COST_EUR,
         authentication_requirements=(),
         rate_limit_per_minute=30,
         provenance_guarantees=("publisher", "award_id", "authority", "winner_role", "source_url"),
@@ -189,10 +239,15 @@ class ProcurementAdapter:
         coverage_status="supported",
     )
 
-    def __init__(self, providers: Sequence[ProcurementProvider] = (_anac_provider, _ted_provider)) -> None:
+    def __init__(
+        self,
+        providers: Sequence[ProcurementProvider] = (_anac_provider, _ted_provider),
+        domain_resolver: DomainResolver = _default_domain_resolver,
+    ) -> None:
         if not providers:
             raise ValueError("at least one procurement provider is required")
         self._providers = tuple(providers)
+        self._domain_resolver = domain_resolver
 
     @property
     def capability(self) -> SourceCapability:
@@ -204,7 +259,21 @@ class ProcurementAdapter:
         offset = _cursor_offset(request.cursor)
         per_provider = min(100, max(request.requested_count * 2, 20))
         started = datetime.now(timezone.utc).isoformat()
-        provider_results = [await provider(request, offset, per_provider) for provider in self._providers]
+        provider_results: List[ProcurementProviderResult] = []
+        spent = 0.0
+        for provider in self._providers:
+            remaining = max(0.0, request.budget_eur - spent)
+            bounded_request = AdapterDiscoveryRequest(
+                intent=request.intent, signal_ids=request.signal_ids, signal_match_mode=request.signal_match_mode,
+                geographies=request.geographies, freshness_max_age_days=request.freshness_max_age_days,
+                requested_count=request.requested_count, budget_eur=remaining, query=request.query,
+                sectors=request.sectors, technical_filters=request.technical_filters, cursor=request.cursor,
+            )
+            result = await provider(bounded_request, offset, per_provider)
+            if result.cost_eur > remaining + 1e-9:
+                raise RuntimeError("PROCUREMENT_PROVIDER_EXCEEDED_HARD_COST_CAP")
+            provider_results.append(result)
+            spent += result.cost_eur
         observed = datetime.now(timezone.utc).isoformat()
         candidates: List[OpportunityCandidate] = []
         seen_entities: set[str] = set()
@@ -251,7 +320,27 @@ class ProcurementAdapter:
                         "source_id": record.get("source_id"),
                     },
                 )
-                official_domain = _domain(record.get("official_domain"))
+                presented_domain = _text(record.get("official_domain")) or ""
+                remaining_budget = max(0.0, request.budget_eur - spent)
+                if not presented_domain and remaining_budget + 1e-9 < _DOMAIN_SEARCH_COST_EUR:
+                    rejection_codes.append("DOMAIN_RESOLUTION_BUDGET_EXHAUSTED")
+                    continue
+                resolution = await self._domain_resolver(
+                    name,
+                    presented_domain,
+                    _text(record.get("geography")) or "",
+                    remaining_budget,
+                )
+                if resolution is None:
+                    rejection_codes.append("OFFICIAL_DOMAIN_UNRESOLVED")
+                    continue
+                if resolution.cost_eur > remaining_budget + 1e-9:
+                    raise RuntimeError("PROCUREMENT_DOMAIN_RESOLVER_EXCEEDED_HARD_COST_CAP")
+                spent += resolution.cost_eur
+                official_domain = _domain(resolution.url)
+                if not official_domain:
+                    rejection_codes.append("OFFICIAL_DOMAIN_UNRESOLVED")
+                    continue
                 candidates.append(OpportunityCandidate(
                     canonical_company_name=name,
                     company_identifiers={"fiscal_id": identifier} if identifier else {},
@@ -266,9 +355,24 @@ class ProcurementAdapter:
                     contacts=(),
                     confidence=0.98,
                     contradiction_flags=(),
-                    provenance={"adapter_id": self.capability.adapter_id, "award_id": award_id, "authority": record.get("authority")},
+                    provenance={
+                        "adapter_id": self.capability.adapter_id,
+                        "award_id": award_id,
+                        "authority": record.get("authority"),
+                        "domain_verification": {
+                            "status": "verified",
+                            "confidence": resolution.confidence,
+                            "score": resolution.score,
+                            "evidence": resolution.evidence,
+                            "resolution_source": resolution.resolution_source,
+                            "resolution_method": resolution.resolution_method,
+                            "url": resolution.url,
+                        },
+                    },
                     adapter_id=self.capability.adapter_id,
                     adapter_version=self.capability.adapter_version,
+                    official_domain_verified=True,
+                    official_domain_confidence=resolution.confidence,
                 ))
                 if len(candidates) >= request.requested_count:
                     break
@@ -289,7 +393,7 @@ class ProcurementAdapter:
                 next_cursor=next_cursor,
             ),
             operations=sum(len(result.records) for result in provider_results),
-            cost_eur=sum(result.cost_eur for result in provider_results),
+            cost_eur=spent,
             started_at=started,
             completed_at=observed,
             warnings=tuple(sorted(set(rejection_codes))),

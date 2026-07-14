@@ -51,6 +51,8 @@ def candidate(**changes: object) -> OpportunityCandidate:
         provenance={"urgency_score": 0.95, "causality_score": 0.94, "commercial_value_score": 0.86},
         adapter_id="structured_hiring_v1",
         adapter_version="1.0.0",
+        official_domain_verified=True,
+        official_domain_confidence=0.96,
     )
     return replace(base, **changes)
 
@@ -75,6 +77,8 @@ def test_direct_recent_first_party_opportunity_is_top_tier() -> None:
 def test_critical_missing_fields_cannot_be_compensated() -> None:
     incomplete = candidate(
         official_domain=None,
+        official_domain_verified=False,
+        official_domain_confidence=0.0,
         buyer_fit=None,
         signal_date=None,
         evidence=(),
@@ -144,3 +148,10 @@ def test_default_qualifier_exposes_score_and_rejects_low_value() -> None:
     assert rejected.rejection_code == "OPPORTUNITY_VALUE_TOO_LOW"
     assert rejected.opportunity_value_score < 0.55
     assert rejected.reasons
+
+    unverified = asyncio.run(default_candidate_qualifier(candidate(
+        official_domain_verified=False,
+        official_domain_confidence=0.69,
+    )))
+    assert unverified.qualified is False
+    assert unverified.rejection_code == "OFFICIAL_DOMAIN_UNVERIFIED"
