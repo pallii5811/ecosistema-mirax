@@ -250,8 +250,12 @@ function defaultSourcePlan(query: string, signals: string[]): UqeSourcePlanItem[
   if (signals.some((signal) => ['registry_change', 'new_company', 'executive_change'].includes(signal))) {
     add('public_registry', ['registro imprese', 'albo pubblico', 'comunicati societari'], ['identita legale', 'evento', 'data'])
   }
-  if (signals.some((signal) => ['crm_change', 'tech_migration', 'no_pixel', 'site_stale'].includes(signal))) {
-    add('technology', ['sito ufficiale', 'job posting tecnici', 'case study fornitore'], ['dominio ufficiale', 'tecnologia', 'evidenza'])
+  if (signals.some((signal) => ['crm_change', 'tech_migration', 'no_pixel', 'no_gtm', 'no_dmarc', 'missing_instagram', 'missing_google_ads', 'seo_errors', 'site_stale'].includes(signal))) {
+    add(
+      'technology',
+      ['technology_audit', 'official_company_website'],
+      signals.filter((signal) => ['crm_change', 'tech_migration', 'no_pixel', 'no_gtm', 'no_dmarc', 'missing_instagram', 'missing_google_ads', 'seo_errors', 'site_stale'].includes(signal)),
+    )
   }
   if (signals.some((signal) => ['investing_marketing', 'meta_ads_started', 'google_ads_started'].includes(signal))) {
     add(
@@ -1079,6 +1083,12 @@ function inferEconomicIntentSignals(query: string): string[] {
   if (/\b(gara|gare|appalt\w*|aggiudic\w*|contratt\w+\s+affidat\w*)\b/i.test(q)) {
     add('tender_won')
   }
+  if (/\b(?:senza|no|manca\w*)\s+dmarc\b/i.test(q)) add('no_dmarc')
+  if (/\b(?:senza|no|manca\w*)\s+(?:gtm|google\s+tag\s+manager)\b/i.test(q)) add('no_gtm')
+  if (/\b(?:senza|no|manca\w*)\s+instagram\b/i.test(q)) add('missing_instagram')
+  if (/\b(?:senza|no|manca\w*)\s+google\s+ads\b/i.test(q)) add('missing_google_ads')
+  if (/\b(?:errori|problemi|disastro)\s+seo\b/i.test(q)) add('seo_errors')
+  if (/\bsenza\b[^,.]{0,40}\bpixel\b/i.test(q)) add('no_pixel')
 
   const sellerDefaults = sellerPlaybookDefaults(query)
   if (sellerDefaults?.signals?.length) {
@@ -1100,6 +1110,7 @@ function inferEconomicIntentSignals(query: string): string[] {
   }
   if (
     !buyerMarketingSpend &&
+    !isNegativeMarketingAuditQuery(q) &&
     /\b(marketing|seo\b|google ads|meta ads|social media|agenzia)\b/i.test(q)
   ) {
     add('hiring')
@@ -1162,6 +1173,10 @@ export function isSignalLedAbstractQuery(query: string, requiredSignals: string[
   return true
 }
 
+function isNegativeMarketingAuditQuery(query: string): boolean {
+  return /\b(?:senza|no|manca\w*)\s+(?:google\s+ads|meta\s+(?:ads|pixel)|facebook\s+pixel)\b/i.test(query)
+}
+
 function signalLedAgenticSector(plan: MiraxQueryPlan, query: string): string {
   if (isBuyerMarketingInvestmentQuery(query)) return 'Segnali acquisto'
   const sector = plan.sector?.trim() || ''
@@ -1184,12 +1199,12 @@ export function applyRoutingGuards(plan: MiraxQueryPlan, query: string): MiraxQu
   if (!q) return plan
 
   const signalLed =
-    isBuyerMarketingInvestmentQuery(q) ||
+    (isBuyerMarketingInvestmentQuery(q) && !isNegativeMarketingAuditQuery(q)) ||
     isSignalLedAbstractQuery(q, plan.required_signals)
 
   if (signalLed) {
     const signals = new Set(plan.required_signals)
-    if (isBuyerMarketingInvestmentQuery(q)) {
+    if (isBuyerMarketingInvestmentQuery(q) && !isNegativeMarketingAuditQuery(q)) {
       signals.add('investing_marketing')
       signals.delete('funding_received')
       signals.delete('expansion')
@@ -1261,15 +1276,22 @@ export function applySourceCapabilityGuards(plan: MiraxQueryPlan): MiraxQueryPla
     const laneSignals = lane.expected_evidence
       .map((signal) => canonicalSignalId(signal) || signal)
       .filter((signal) => plan.required_signals.includes(signal))
-    const signalIds = laneSignals.length ? laneSignals : plan.required_signals
+    const signalIds = laneSignals.length
+      ? laneSignals
+      : plan.required_signals.length
+        ? plan.required_signals
+        : ['company_identity']
     const coverage = SOURCE_CAPABILITY_REGISTRY.resolve({
       intent: plan.search_strategy,
       signal_ids: signalIds,
       signal_match_mode: plan.ranking_policy?.signal_match_mode || 'all',
-      geographies: plan.location ? [plan.location] : [],
+      geographies: plan.location ? [plan.location, 'italy'] : ['italy'],
       freshness_max_age_days: plan.evidence_policy?.max_age_days ?? null,
       requested_count: 1,
       budget_eur: 0,
+      query: plan.original_query,
+      sectors: plan.sector ? [plan.sector] : [],
+      technical_filters: plan.technical_filters,
     }, SOURCE_CLASSES_BY_LANE[lane.lane], true)
     return {
       ...lane,
@@ -1315,7 +1337,7 @@ function isRealGeoLocation(location: string): boolean {
 
 function inferStrategyFromQuery(query: string, sector: string, location: string, signals: string[]): UqeSearchStrategy {
   if (isSellerAbstractQuery(query)) return 'organic_web_search'
-  if (isBuyerMarketingInvestmentQuery(query) || isSignalLedAbstractQuery(query, signals)) {
+  if ((isBuyerMarketingInvestmentQuery(query) && !isNegativeMarketingAuditQuery(query)) || isSignalLedAbstractQuery(query, signals)) {
     return 'organic_web_search'
   }
   const q = query.toLowerCase()
@@ -1464,6 +1486,19 @@ export function buildHeuristicMiraxQueryPlan(userInput: string): MiraxQueryPlan 
   const technical_filters = technicalFiltersFromHeuristic(
     (spec.technical_filters || {}) as Record<string, unknown>,
   )
+  if (/\b(?:senza|no|manca\w*)\s+dmarc\b/i.test(query)) technical_filters.has_dmarc = false
+  if (/\b(?:senza|no|manca\w*)\s+instagram\b/i.test(query)) technical_filters.has_instagram = false
+  if (/\b(?:senza|no|manca\w*)\s+google\s+ads\b/i.test(query)) technical_filters.has_google_ads = false
+  if (/\bsenza\b[^,.]{0,40}\bpixel\b/i.test(query)) technical_filters.has_meta_pixel = false
+  required_signals = normalizeSignals([
+    ...required_signals,
+    ...(technical_filters.has_meta_pixel === false ? ['no_pixel'] : []),
+    ...(technical_filters.has_gtm === false ? ['no_gtm'] : []),
+    ...(technical_filters.has_dmarc === false ? ['no_dmarc'] : []),
+    ...(technical_filters.has_instagram === false ? ['missing_instagram'] : []),
+    ...(technical_filters.has_google_ads === false ? ['missing_google_ads'] : []),
+    ...(technical_filters.errors_seo === true ? ['seo_errors'] : []),
+  ])
 
   if (sellerDefaults) {
     sector = sellerDefaults.sector

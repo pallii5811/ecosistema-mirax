@@ -147,6 +147,33 @@ export const GENERIC_WEB_RESEARCH_CAPABILITY: SourceCapability = {
   coverage_status: 'generic_fallback_partial',
 }
 
+export const DIGITAL_AUDIT_CAPABILITY: SourceCapability = {
+  adapter_id: 'legacy_digital_audit_v1',
+  adapter_version: '1.0.0',
+  supported_intents: ['maps', 'hybrid', 'digital_audit', 'commercial_search'],
+  supported_signals: [
+    'company_identity', 'website_weakness', 'site_stale', 'missing_analytics',
+    'no_pixel', 'no_gtm', 'outdated_technology', 'cybersecurity_exposure',
+    'no_dmarc', 'seo_errors', 'missing_instagram', 'missing_google_ads',
+  ],
+  source_classes: ['google_business_maps', 'technology_audit', 'official_company_website'],
+  geographic_coverage: ['italy'],
+  freshness_max_age_days: 1,
+  discovery_mode: 'discovery_first',
+  supports_pagination: false,
+  supports_cursor_resume: false,
+  max_results_per_page: 200,
+  max_results_per_run: 200,
+  estimated_cost_eur_per_operation: 0.011,
+  authentication_requirements: ['google_maps_browser_access'],
+  rate_limit_per_minute: 10,
+  provenance_guarantees: ['company_name', 'official_domain', 'audit_observed_at'],
+  evidence_guarantees: ['direct_observation', 'signal_id', 'source_url', 'excerpt'],
+  exhaustion_semantics: 'best_effort',
+  coverage_status: 'supported',
+}
+
 export const SOURCE_CAPABILITY_REGISTRY = new SourceCapabilityRegistry([
+  DIGITAL_AUDIT_CAPABILITY,
   GENERIC_WEB_RESEARCH_CAPABILITY,
 ])

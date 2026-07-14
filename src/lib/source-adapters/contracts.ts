@@ -42,6 +42,9 @@ export interface AdapterDiscoveryRequest {
   freshness_max_age_days: number | null
   requested_count: number
   budget_eur: number
+  query: string
+  sectors: string[]
+  technical_filters: Record<string, unknown>
   cursor?: DiscoveryCursor | null
 }
 

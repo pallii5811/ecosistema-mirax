@@ -108,7 +108,10 @@
     },
     {
       "id": "technology_audit",
-      "signals_supported": ["website_weakness", "site_stale", "missing_analytics", "no_pixel", "no_gtm", "outdated_technology", "cybersecurity_exposure", "crm_detected", "crm_change", "crm_installed", "tech_migration", "technology_migration"],
+      "implementation_id": "legacy_digital_audit_v1",
+      "capability_version": "1.0.0",
+      "runtime_coverage": "supported",
+      "signals_supported": ["website_weakness", "site_stale", "missing_analytics", "missing_google_ads", "no_pixel", "no_gtm", "outdated_technology", "cybersecurity_exposure", "no_dmarc", "seo_errors", "missing_instagram", "crm_detected", "crm_change", "crm_installed", "tech_migration", "technology_migration"],
       "trust_level": 0.94,
       "primary": true,
       "cost_eur_per_operation": 0.001,
@@ -168,6 +171,9 @@
     },
     {
       "id": "google_business_maps",
+      "implementation_id": "legacy_digital_audit_v1",
+      "capability_version": "1.0.0",
+      "runtime_coverage": "supported",
       "signals_supported": ["company_identity", "new_location", "negative_reviews", "customer_service_strain"],
       "trust_level": 0.62,
       "primary": false,

@@ -130,6 +130,9 @@ class AdapterDiscoveryRequest:
     freshness_max_age_days: Optional[int]
     requested_count: int
     budget_eur: float
+    query: str = ""
+    sectors: Tuple[str, ...] = ()
+    technical_filters: Mapping[str, Any] = field(default_factory=dict)
     cursor: Optional[DiscoveryCursor] = None
 
     def __post_init__(self) -> None:
@@ -214,7 +217,7 @@ class SourceAdapter(Protocol):
     @property
     def capability(self) -> SourceCapability: ...
 
-    def discover(self, request: AdapterDiscoveryRequest) -> AdapterExecutionResult: ...
+    async def discover(self, request: AdapterDiscoveryRequest) -> AdapterExecutionResult: ...
 
 
 def normalize_opportunity_candidate(

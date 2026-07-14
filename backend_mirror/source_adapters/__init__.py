@@ -14,6 +14,7 @@ from .contracts import (
     SourceExhaustion,
     normalize_opportunity_candidate,
 )
+from .digital_audit import DigitalAuditAdapter
 
 __all__ = [
     "AdapterDiscoveryRequest",
@@ -21,6 +22,7 @@ __all__ = [
     "CapabilityCoverage",
     "ContactRecord",
     "DiscoveryCursor",
+    "DigitalAuditAdapter",
     "EvidenceRecord",
     "OpportunityCandidate",
     "QualifiedLead",

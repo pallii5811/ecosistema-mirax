@@ -18,7 +18,10 @@ Ultimo aggiornamento verificato: 2026-07-14 Europe/Rome.
 - Normalizzatore candidato unico al boundary; dominio verificato nested promosso nel campo canonico.
 - Replay offline procurement, marketing investment e hiring operational: routing semantico corretto, fallback esplicito.
 - Test Fase 1, contratti esistenti e TypeScript compile: verdi; costo provider `EUR 0`.
+- Fase 2 Digital Audit: percorso Maps+audit legacy incapsulato in `legacy_digital_audit_v1` senza riscrittura.
+- 20 replay Digital Audit: dominio, evidenze tecniche, contatti, dedup e requested_count verdi.
+- Timeout/fetch fallito non qualifica più l'assenza di tecnologia; exhaustion legacy dichiarata best-effort.
+- Registry runtime: `technology_audit` e `google_business_maps` supported; procurement/hiring restano unsupported.
 
 ## Prossimo passo dopo il reset
-- Convertire il percorso Digital Audit esistente nel primo adapter conforme, preservandone il comportamento.
-- Nessun canary finche fixture/replay Digital Audit non sono verdi.
+- Implementare Procurement Adapter discovery-first su fixture ANAC/TED; nessun provider live prima dei replay verdi.

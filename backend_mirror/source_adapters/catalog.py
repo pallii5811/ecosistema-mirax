@@ -106,3 +106,9 @@ class SourceCapabilityRegistry:
 
         reasons = [*rejection_reasons, "no_executable_adapter"]
         return CapabilityCoverage("unsupported", tuple(selected), tuple(sorted(covered)), tuple(sorted(missing or required_signals)), tuple(reasons))
+
+
+def default_source_capability_registry() -> SourceCapabilityRegistry:
+    from .digital_audit import DigitalAuditAdapter
+
+    return SourceCapabilityRegistry((DigitalAuditAdapter(),))

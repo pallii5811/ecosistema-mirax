@@ -94,6 +94,11 @@ export type UqeSignalType =
   | 'crm_installed'
   | 'tech_migration'
   | 'funding_received'
+  | 'no_dmarc'
+  | 'no_gtm'
+  | 'missing_instagram'
+  | 'missing_google_ads'
+  | 'seo_errors'
 
 export interface MiraxQueryPlan {
   /** Query originale dell'utente */
@@ -173,6 +178,11 @@ export const UQE_SIGNAL_ALIASES: Record<string, UqeSignalType> = {
   sector_investment: 'sector_investment',
   gara: 'tender_won',
   tender_won: 'tender_won',
+  no_dmarc: 'no_dmarc',
+  no_gtm: 'no_gtm',
+  missing_instagram: 'missing_instagram',
+  missing_google_ads: 'missing_google_ads',
+  seo_errors: 'seo_errors',
   no_pixel: 'no_pixel',
   'no meta pixel': 'no_pixel',
   'senza pixel': 'no_pixel',

@@ -20,7 +20,7 @@ from backend_mirror.source_adapters import (
 class StubAdapter:
     capability: SourceCapability
 
-    def discover(self, request: AdapterDiscoveryRequest) -> AdapterExecutionResult:
+    async def discover(self, request: AdapterDiscoveryRequest) -> AdapterExecutionResult:
         now = datetime.now(timezone.utc).isoformat()
         return AdapterExecutionResult(
             adapter_id=self.capability.adapter_id,

@@ -41,6 +41,9 @@ function request(overrides: Partial<AdapterDiscoveryRequest> = {}): AdapterDisco
     freshness_max_age_days: 14,
     requested_count: 100,
     budget_eur: 0.125,
+    query: 'fixture query',
+    sectors: ['fixture sector'],
+    technical_filters: {},
     ...overrides,
   }
 }
@@ -56,7 +59,7 @@ const fallback = capability('generic_web', ['*'], {
 })
 
 assert.equal(new SourceCapabilityRegistry().resolve(request(), [], false).status, 'unsupported')
-assert.equal(sourceRuntimeCoverage('technology_audit'), 'unsupported')
+assert.equal(sourceRuntimeCoverage('technology_audit'), 'supported')
 assert.equal(sourceRuntimeCoverage('search_snippet'), 'generic_fallback_partial')
 assert.equal(new SourceCapabilityRegistry([fallback]).resolve(request()).status, 'generic_fallback_partial')
 
