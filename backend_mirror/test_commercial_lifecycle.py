@@ -16,6 +16,55 @@ FIXTURE_CANDIDATES = [
 ]
 FIXTURE = next((path for path in FIXTURE_CANDIDATES if path.is_file()), FIXTURE_CANDIDATES[0])
 PLAN = json.loads(FIXTURE.read_text(encoding="utf-8"))
+MILANO_PLAN = {
+    "schema_version": "1.0.0",
+    "raw_query": (
+        "Trova imprese di pulizia a Milano con sito ufficiale, criticità SEO e "
+        "assenza di strumenti di tracciamento pubblicitario."
+    ),
+    "target": {
+        "industries": ["imprese di pulizia"],
+        "geographies": ["Milano"],
+        "entity_types": ["company"],
+        "company_sizes": ["micro", "piccola", "media"],
+        "local_business_preference": True,
+        "required_attributes": ["sito web ufficiale attivo"],
+        "excluded_attributes": [],
+        "excluded_entities": [],
+    },
+    "signal_policy": {
+        "required_signals": ["website_weakness", "missing_advertising_pixel", "missing_analytics"],
+        "optional_signals": [],
+        "negative_signals": [],
+        "minimum_signal_confidence": 0.75,
+        "maximum_age_days_by_signal": {
+            "website_weakness": 30,
+            "missing_analytics": 14,
+            "missing_advertising_pixel": 14,
+        },
+    },
+    "source_policy": {
+        "allowed_source_classes": ["technology_audit"],
+        "preferred_source_classes": ["technology_audit"],
+        "excluded_source_classes": ["search_snippet"],
+        "minimum_independent_sources": 1,
+        "primary_source_required_for": [],
+    },
+    "evidence_policy": {
+        "require_official_domain": True,
+        "require_source_url": True,
+        "require_observed_at": True,
+        "minimum_evidence_confidence": 0.75,
+    },
+    "budget_policy": {"hard_cost_eur": 0.125, "target_cost_eur": 0.105},
+    "commercial_hypotheses": [],
+    "seller": {
+        "offer_category": "Digital marketing / SEO / Web analytics services",
+        "products_or_services": ["Audit e ottimizzazione SEO"],
+        "problems_solved": ["Scarsa visibilità organica sui motori di ricerca"],
+        "preferred_buyer_roles": ["Titolare/Owner"],
+    },
+}
 
 
 def valid_lead():
@@ -278,3 +327,120 @@ def test_ownerless_non_shadow_never_persists_or_publishes():
     ) == []
     assert service.calls == []
     assert service.rpc_calls == []
+
+
+def digital_audit_lead(**overrides):
+    now = "2026-07-15T05:32:07+00:00"
+    lead = {
+        "azienda": "Shine Cleaning – Impresa di Pulizie Milano",
+        "sito": "https://shinecleaning.it",
+        "entity_type": "company",
+        "citta": "Milano",
+        "company_size_class": "unknown",
+        "operating_company_probability": 0.95,
+        "source_adapter_id": "legacy_digital_audit_v1",
+        "matched_signals": ["website_weakness", "missing_advertising_pixel", "missing_analytics"],
+        "why_now": "Critical SEO and missing ad tracking on the official website create an immediate optimization opportunity for this Milano cleaning company.",
+        "lead_quality_contract": {"score": 72},
+        "last_audited_at": now,
+        "technical_report": {"audit_status": "complete"},
+        "domain_verification": {
+            "status": "verified",
+            "confidence": 0.95,
+            "score": 95,
+            "url": "https://shinecleaning.it/",
+            "resolution_source": "source_adapter",
+            "resolution_method": "verified_source_adapter",
+            "adapter_id": "legacy_digital_audit_v1",
+            "resolved_at": now,
+            "evidence": ["maps_business_website", "direct_website_audit"],
+        },
+        "business_signals": [
+            {
+                "type": "website_weakness",
+                "status": "verified",
+                "confidence": 0.95,
+                "source_url": "https://shinecleaning.it/",
+                "source_class": "technology_audit",
+                "evidence": "critical SEO/HTML issues observed in direct audit",
+                "date": now,
+            },
+            {
+                "type": "missing_advertising_pixel",
+                "status": "verified",
+                "confidence": 0.95,
+                "source_url": "https://shinecleaning.it/",
+                "source_class": "technology_audit",
+                "evidence": "Meta/Facebook Pixel absent in direct HTML audit",
+                "date": now,
+            },
+            {
+                "type": "missing_analytics",
+                "status": "verified",
+                "confidence": 0.95,
+                "source_url": "https://shinecleaning.it/",
+                "source_class": "technology_audit",
+                "evidence": "GA4 absent in direct technical audit",
+                "date": now,
+            },
+        ],
+    }
+    lead.update(overrides)
+    return lead
+
+
+def test_digital_audit_buyer_fit_passes_with_verified_signal_groups():
+    gate = evaluate_publication_gate(digital_audit_lead(), MILANO_PLAN, cost_within_budget=True)
+    assert gate["publishable"] is True
+    assert gate["buyer_fit_method"] == "category_scoped_digital_audit_deterministic"
+    assert gate["buyer_fit_pass"] is True
+    assert gate["buyer_fit_score"] >= 88
+
+
+def test_digital_audit_buyer_fit_fails_wrong_category():
+    lead = digital_audit_lead(matched_signals=[], business_signals=[])
+    gate = evaluate_publication_gate(lead, MILANO_PLAN, cost_within_budget=True)
+    assert gate["publishable"] is False
+
+
+def test_digital_audit_buyer_fit_fails_wrong_geography():
+    gate = evaluate_publication_gate(digital_audit_lead(citta="Roma"), MILANO_PLAN, cost_within_budget=True)
+    assert gate["publishable"] is False
+    assert "buyer_fit_verified" in gate["failures"] or "relevant_buying_signal_present" in gate["failures"]
+
+
+def test_digital_audit_buyer_fit_fails_unofficial_domain():
+    lead = digital_audit_lead()
+    lead["domain_verification"]["status"] = "probable"
+    gate = evaluate_publication_gate(lead, MILANO_PLAN, cost_within_budget=True)
+    assert gate["official_domain_verified"] is False
+    assert gate["publishable"] is False
+
+
+def test_digital_audit_buyer_fit_fails_without_seo_signal():
+    lead = digital_audit_lead(
+        matched_signals=["missing_advertising_pixel", "missing_analytics"],
+        business_signals=[
+            item for item in digital_audit_lead()["business_signals"] if item["type"] != "website_weakness"
+        ],
+    )
+    gate = evaluate_publication_gate(lead, MILANO_PLAN, cost_within_budget=True)
+    assert gate["publishable"] is False
+    assert "relevant_buying_signal_present" in gate["failures"]
+
+
+def test_digital_audit_buyer_fit_fails_with_complete_tracking():
+    lead = digital_audit_lead(
+        matched_signals=["website_weakness"],
+        business_signals=[digital_audit_lead()["business_signals"][0]],
+    )
+    gate = evaluate_publication_gate(lead, MILANO_PLAN, cost_within_budget=True)
+    assert gate["publishable"] is False
+
+
+def test_digital_audit_missing_generic_hypothesis_does_not_block_deterministic_fit():
+    plan = copy.deepcopy(MILANO_PLAN)
+    plan["commercial_hypotheses"] = []
+    gate = evaluate_publication_gate(digital_audit_lead(), plan, cost_within_budget=True)
+    assert gate["publishable"] is True
+    assert gate["signal_semantically_linked_to_seller_offer"] is True

@@ -5,10 +5,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping, MutableMapping, Optional, Tuple
+from typing import Any, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 from .catalog import SourceCapabilityRegistry, default_source_capability_registry
-from .contracts import OpportunityCandidate
+from .contracts import DiscoveryCursor, OpportunityCandidate
 from .orchestrator import OrchestrationResult, ProgressCallback, UniversalSourceOrchestrator, request_from_plan
 
 
@@ -95,6 +95,7 @@ async def execute_source_adapter_shadow(
     environ: Optional[Mapping[str, str]] = None,
     persistent_client: Any = None,
     search_id: Optional[str] = None,
+    resume_state: Optional[Mapping[str, Any]] = None,
 ) -> OrchestrationResult:
     env = environ or os.environ
     decision = source_adapter_shadow_decision(intent, environ=env)
@@ -112,10 +113,17 @@ async def execute_source_adapter_shadow(
         raise PermissionError("SOURCE_ADAPTER_SHADOW_ZERO_BUDGET")
     if (persistent_client is None) != (search_id is None):
         raise ValueError("persistent_client and search_id must be provided together")
-    request = request_from_plan(plan, requested_count=requested_count, budget_eur=cap)
+    resume = dict(resume_state or intent.get("shadow_resume") or {})
+    prior_cost_eur = float(resume.get("prior_cost_eur") or 0.0)
+    request = request_from_plan(plan, requested_count=max(1, requested_count), budget_eur=cap)
     source_policy = plan.get("source_policy") or {}
     preferred = tuple(str(item) for item in source_policy.get("preferred_source_classes") or ())
     mandatory = _mandatory_adapter_ids(intent, plan)
+    resume_cursors: dict[str, DiscoveryCursor] = {}
+    for adapter_id, cursor_value in dict(resume.get("resume_cursors") or {}).items():
+        text = str(cursor_value or "").strip()
+        if text:
+            resume_cursors[str(adapter_id)] = DiscoveryCursor(text)
     # worker_supabase exposes backend_mirror on sys.path and paid providers
     # import these modules by their runtime names. Reusing that exact namespace
     # avoids creating a second ContextVar that provider threads cannot see.
@@ -123,7 +131,7 @@ async def execute_source_adapter_shadow(
     from cost_governor import ResearchCostGovernor
 
     governor = ResearchCostGovernor.from_plan(
-        {"canonical_plan": plan},
+        {"canonical_plan": plan, "_prior_cost_eur": prior_cost_eur},
         requested_count,
         persistent_client=persistent_client,
         search_id=search_id,
@@ -136,16 +144,78 @@ async def execute_source_adapter_shadow(
             required_source_classes=preferred,
             mandatory_adapter_ids=mandatory,
             progress_callback=progress_callback,
+            resume_cursors=resume_cursors or None,
         )
     finally:
         reset_current_cost_governor(token)
-    if result.cost_eur > cap + 1e-9:
+    if result.cost_eur + prior_cost_eur > cap + 1e-9:
         raise RuntimeError("SOURCE_ADAPTER_SHADOW_HARD_CAP_EXCEEDED")
     if governor.committed_micro_eur > governor.hard_micro_eur:
         raise RuntimeError("SOURCE_ADAPTER_SHADOW_PERSISTENT_CAP_EXCEEDED")
     if result.progress.published_count != 0:
         raise RuntimeError("SOURCE_ADAPTER_SHADOW_PUBLICATION_FORBIDDEN")
     return result
+
+
+def build_shadow_resume_state(
+    result: OrchestrationResult,
+    *,
+    qualified_lead_payloads: Sequence[Mapping[str, Any]],
+    prior_state: Optional[Mapping[str, Any]] = None,
+    requested_count: int,
+) -> dict[str, Any]:
+    prior = dict(prior_state or {})
+    resume_cursors: dict[str, str] = dict(prior.get("resume_cursors") or {})
+    provider_exhausted = True
+    acquisition: dict[str, Any] = dict(prior.get("acquisition") or {})
+    for item in result.adapter_progress:
+        if item.next_cursor is not None:
+            resume_cursors[item.adapter_id] = item.next_cursor.value
+        provider_exhausted = provider_exhausted and item.exhausted
+        if item.acquisition_telemetry:
+            acquisition.update(dict(item.acquisition_telemetry))
+    processed_domains = list(dict.fromkeys(
+        list(prior.get("processed_domains") or [])
+        + [
+            str(payload.get("sito") or payload.get("website") or "").replace("https://", "").replace("http://", "").split("/")[0]
+            for payload in qualified_lead_payloads
+            if isinstance(payload, Mapping)
+        ]
+    ))
+    cumulative_orchestrator = len(qualified_lead_payloads)
+    resumable = (
+        result.status == "partial_time_limit"
+        and not provider_exhausted
+        and cumulative_orchestrator < requested_count
+        and bool(resume_cursors)
+    )
+    return {
+        "resumable": resumable,
+        "resume_cursors": resume_cursors,
+        "prior_cost_eur": round(float(prior.get("prior_cost_eur") or 0.0) + float(result.cost_eur or 0.0), 6),
+        "cumulative_orchestrator_qualified": cumulative_orchestrator,
+        "qualified_lead_payloads": [dict(item) for item in qualified_lead_payloads if isinstance(item, Mapping)],
+        "processed_domains": processed_domains,
+        "acquisition": acquisition,
+        "termination_reason": result.status,
+        "provider_exhausted": provider_exhausted,
+    }
+
+
+def merge_shadow_qualified_payloads(
+    prior_payloads: Sequence[Mapping[str, Any]],
+    new_payloads: Sequence[Mapping[str, Any]],
+) -> list[MutableMapping[str, Any]]:
+    merged: dict[str, MutableMapping[str, Any]] = {}
+    for payload in (*prior_payloads, *new_payloads):
+        if not isinstance(payload, Mapping):
+            continue
+        domain = str(payload.get("sito") or payload.get("website") or "").lower().replace("https://", "").replace("http://", "").split("/")[0]
+        if domain.startswith("www."):
+            domain = domain[4:]
+        if domain:
+            merged[domain] = dict(payload)
+    return list(merged.values())
 
 
 def candidate_to_lifecycle_shadow_payload(

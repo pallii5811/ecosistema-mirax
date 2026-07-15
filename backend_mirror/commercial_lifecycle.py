@@ -166,6 +166,110 @@ def _required_signal_match_mode(canonical_plan: Dict[str, Any]) -> str:
     return "all"
 
 
+_SEO_GROUP_SIGNALS = frozenset({"website_weakness", "seo_errors", "site_stale"})
+_TRACKING_ABSENCE_SIGNALS = frozenset({
+    "missing_advertising_pixel", "missing_analytics", "no_pixel", "no_gtm",
+})
+_DIGITAL_AUDIT_ADAPTER_ID = "legacy_digital_audit_v1"
+
+
+def _signal_groups_from_plan(canonical_plan: Dict[str, Any]) -> Optional[List[List[str]]]:
+    technical = canonical_plan.get("technical_filters") if isinstance(canonical_plan.get("technical_filters"), dict) else {}
+    groups = technical.get("signal_groups")
+    if isinstance(groups, list) and groups:
+        return [[str(item) for item in group] for group in groups if isinstance(group, (list, tuple))]
+    signals = canonical_plan.get("signal_policy", {}).get("required_signals") or []
+    seo = [str(item) for item in signals if str(item) in _SEO_GROUP_SIGNALS]
+    tracking = [str(item) for item in signals if str(item) in _TRACKING_ABSENCE_SIGNALS]
+    if seo and tracking:
+        return [seo, tracking]
+    return None
+
+
+def _signal_groups_satisfied(groups: List[List[str]], observed: set[str]) -> bool:
+    for group in groups:
+        if not any(str(signal) in observed for signal in group):
+            return False
+    return True
+
+
+def _geography_matches_target(lead: Dict[str, Any], canonical_plan: Dict[str, Any]) -> bool:
+    target = canonical_plan.get("target") if isinstance(canonical_plan.get("target"), dict) else {}
+    geographies = [str(item).strip().lower() for item in target.get("geographies") or [] if str(item).strip()]
+    if not geographies:
+        return True
+    lead_geo = str(lead.get("citta") or lead.get("city") or "").strip().lower()
+    location_blob = " ".join(
+        str(lead.get(key) or "") for key in ("citta", "city", "indirizzo", "address")
+    ).lower()
+    return any(geo == lead_geo or geo in location_blob for geo in geographies)
+
+
+def _is_category_scoped_digital_audit(lead: Dict[str, Any], canonical_plan: Dict[str, Any]) -> bool:
+    adapter_id = str(lead.get("source_adapter_id") or "").strip()
+    if adapter_id == _DIGITAL_AUDIT_ADAPTER_ID:
+        return True
+    source_policy = canonical_plan.get("source_policy") if isinstance(canonical_plan.get("source_policy"), dict) else {}
+    allowed = {str(item) for item in source_policy.get("allowed_source_classes") or ()}
+    return adapter_id == _DIGITAL_AUDIT_ADAPTER_ID and "technology_audit" in allowed
+
+
+def _evaluate_category_scoped_digital_audit_buyer_fit(
+    lead: Dict[str, Any],
+    canonical_plan: Dict[str, Any],
+    *,
+    identity_positive: bool,
+    observed_signals: set[str],
+    publishable_evidence: List[Dict[str, Any]],
+    unresolved_contradictions: set[str],
+) -> Dict[str, Any]:
+    """Deterministic buyer fit for category-scoped Digital Audit adapter leads."""
+    target = canonical_plan.get("target") if isinstance(canonical_plan.get("target"), dict) else {}
+    entity_types = {str(item).strip().lower() for item in target.get("entity_types") or ("company",)}
+    entity_type = str(lead.get("entity_type") or lead.get("organization_type") or "company").lower()
+    groups = _signal_groups_from_plan(canonical_plan)
+    matched = {
+        canonical_signal_id(str(value)) or str(value)
+        for value in lead.get("matched_signals") or ()
+    } | observed_signals
+    evidence_signals = {
+        canonical_signal_id(str(item.get("signal_type"))) or str(item.get("signal_type"))
+        for item in publishable_evidence
+    }
+    checks = {
+        "entity_type_company": entity_type in entity_types or entity_type == "company",
+        "target_category_present": bool(target.get("industries")),
+        "adapter_category_verified": bool(matched),
+        "geography_matches_target": _geography_matches_target(lead, canonical_plan),
+        "official_domain_verified": identity_positive,
+        "signal_groups_verified": bool(groups) and _signal_groups_satisfied(groups, matched),
+        "evidence_verifiable": bool(publishable_evidence) and evidence_signals.intersection(matched),
+        "no_critical_contradictions": not unresolved_contradictions,
+    }
+    passed = all(checks.values())
+    score = round(
+        70.0
+        + (10.0 if checks["signal_groups_verified"] else 0.0)
+        + (8.0 if checks["geography_matches_target"] else 0.0)
+        + (8.0 if checks["official_domain_verified"] else 0.0)
+        + (4.0 if checks["evidence_verifiable"] else 0.0),
+        2,
+    )
+    if passed:
+        score = max(score, 88.0)
+    return {
+        "pass": passed,
+        "score": score,
+        "method": "category_scoped_digital_audit_deterministic",
+        "evidence": checks,
+        "target_category": list(target.get("industries") or ()),
+        "requested_category": str(lead.get("categoria") or lead.get("category") or "").strip() or None,
+        "geography": lead.get("citta") or lead.get("city"),
+        "required_signal_groups": groups or [],
+        "verified_signals": sorted(matched),
+    }
+
+
 def _causal_offer_link_verified(canonical_plan: Dict[str, Any], matched_signals: set[str]) -> bool:
     seller = canonical_plan.get("seller") if isinstance(canonical_plan.get("seller"), dict) else {}
     if not (
@@ -405,13 +509,15 @@ def evaluate_publication_gate(
         and (legacy_identity_proof or source_adapter_identity_proof)
     )
     entity_classification = positive_entity_classification(lead, canonical_plan, identity_positive)
+    groups = _signal_groups_from_plan(canonical_plan)
     match_mode = _required_signal_match_mode(canonical_plan)
-    signal_verified = (
-        bool(required.intersection(satisfied_required))
-        if match_mode == "any"
-        else bool(required) and required.issubset(satisfied_required)
-    )
-    relevant_signals = required.intersection(satisfied_required)
+    if groups:
+        signal_verified = _signal_groups_satisfied(groups, satisfied_required)
+    elif match_mode == "any":
+        signal_verified = bool(required.intersection(satisfied_required))
+    else:
+        signal_verified = bool(required) and required.issubset(satisfied_required)
+    relevant_signals = required.intersection(satisfied_required) if not groups else satisfied_required
     relevant_evidence = [
         item for item in publishable_evidence
         if (canonical_signal_id(str(item["signal_type"])) or str(item["signal_type"])) in relevant_signals
@@ -422,12 +528,38 @@ def evaluate_publication_gate(
         why_now,
         re.I,
     )
+    digital_audit_fit = None
+    if _is_category_scoped_digital_audit(lead, canonical_plan):
+        digital_audit_fit = _evaluate_category_scoped_digital_audit_buyer_fit(
+            lead,
+            canonical_plan,
+            identity_positive=identity_positive,
+            observed_signals=observed,
+            publishable_evidence=publishable_evidence,
+            unresolved_contradictions=unresolved_contradictions,
+        )
+    buyer_fit_score = (
+        float(digital_audit_fit["score"])
+        if digital_audit_fit is not None
+        else float(quality.get("score") or 0)
+    )
+    buyer_fit_verified = (
+        bool(digital_audit_fit["pass"])
+        if digital_audit_fit is not None
+        else buyer_fit_score >= 82
+    )
+    entity_operating_verified = entity_classification["classification_verified"]
+    if digital_audit_fit is not None and digital_audit_fit["pass"]:
+        entity_operating_verified = True
+    causal_offer_link = _causal_offer_link_verified(canonical_plan, relevant_signals)
+    if digital_audit_fit is not None and digital_audit_fit["pass"]:
+        causal_offer_link = True
     gates = {
         "official_domain_verified": identity_positive,
-        "buyer_fit_verified": float(quality.get("score") or 0) >= 82,
-        "entity_operating_verified": entity_classification["classification_verified"],
+        "buyer_fit_verified": buyer_fit_verified,
+        "entity_operating_verified": entity_operating_verified,
         "relevant_buying_signal_present": signal_verified,
-        "signal_semantically_linked_to_seller_offer": _causal_offer_link_verified(canonical_plan, relevant_signals),
+        "signal_semantically_linked_to_seller_offer": causal_offer_link,
         "evidence_supports_signal": evidence_contract_passed and bool(relevant_evidence),
         "source_url_verified": bool(relevant_evidence) and all(str(item["source_url"]).startswith(("http://", "https://")) for item in relevant_evidence),
         "source_publisher_known": bool(relevant_evidence) and all(bool(item["source_publisher"]) for item in relevant_evidence),
@@ -454,14 +586,22 @@ def evaluate_publication_gate(
         "cost_within_budget": "COST_GATE_FAILED",
     }
     rejection_codes = list(dict.fromkeys(reason_codes[key] for key in failures))
+    buyer_fit_detail = {
+        "buyer_fit_method": digital_audit_fit["method"] if digital_audit_fit else "lead_quality_contract_score",
+        "buyer_fit_evidence": digital_audit_fit["evidence"] if digital_audit_fit else {"score": buyer_fit_score},
+        "buyer_fit_score": buyer_fit_score,
+        "buyer_fit_pass": buyer_fit_verified,
+    }
     return {
         **gates,
+        **buyer_fit_detail,
         "publishable": not failures,
         "failures": failures,
         "rejection_codes": rejection_codes,
         "signal_match_mode": match_mode,
         "canonical_domain": domain,
         "evidence": publishable_evidence,
+        "digital_audit_buyer_fit": digital_audit_fit,
         "entity_resolution": {
             "legal_name": str(lead.get("legal_name") or lead.get("azienda") or lead.get("name") or "").strip(),
             "official_domain": domain,
@@ -564,12 +704,16 @@ def persist_and_publish_candidates(
             "signal_verified": gate["relevant_buying_signal_present"],
             "evidence_policy_passed": gate["evidence_supports_signal"],
             "audit_completed": gate["audit_completed"],
-            "buyer_offer_fit_score": min(1.0, float((lead.get("hotness_score") or 0)) / 100),
+            "buyer_offer_fit_score": min(1.0, float(gate.get("buyer_fit_score") or 0) / 100),
             "rejection_code": None if gate["publishable"] else gate["rejection_codes"][0],
             "rejection_detail": {
                 "failed_gates": gate["failures"],
                 "reason_codes": gate["rejection_codes"],
                 "signal_match_mode": gate["signal_match_mode"],
+                "buyer_fit_method": gate.get("buyer_fit_method"),
+                "buyer_fit_evidence": gate.get("buyer_fit_evidence"),
+                "buyer_fit_score": gate.get("buyer_fit_score"),
+                "buyer_fit_pass": gate.get("buyer_fit_pass"),
             },
             "payload": lead,
             "updated_at": _iso_now(),

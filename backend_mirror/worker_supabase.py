@@ -4149,6 +4149,82 @@ def _shadow_execution_is_authorized(intent: Any) -> bool:
     )
 
 
+def _shadow_resume_state_from_progress(progress: Any) -> Dict[str, Any]:
+    if not isinstance(progress, dict):
+        return {}
+    resume = progress.get("shadow_resume")
+    return dict(resume) if isinstance(resume, dict) else {}
+
+
+def _load_prior_shadow_qualified_payloads(job: Dict[str, Any], *, supabase: Any = None) -> List[Dict[str, Any]]:
+    progress = job.get("progress") if isinstance(job.get("progress"), dict) else {}
+    resume = _shadow_resume_state_from_progress(progress)
+    stored = resume.get("qualified_lead_payloads")
+    if isinstance(stored, list) and stored:
+        return [dict(item) for item in stored if isinstance(item, dict)]
+    search_id = str(job.get("id") or "").strip()
+    if supabase is not None and search_id:
+        try:
+            resp = supabase.table("search_candidates").select("payload").eq("search_id", search_id).execute()
+            rows = getattr(resp, "data", None) or []
+            payloads = [dict(row["payload"]) for row in rows if isinstance(row, dict) and isinstance(row.get("payload"), dict)]
+            if payloads:
+                return payloads
+        except Exception:
+            pass
+    return []
+
+
+def _bootstrap_shadow_resume_from_progress(job: Dict[str, Any], *, supabase: Any = None) -> Dict[str, Any]:
+    progress = job.get("progress") if isinstance(job.get("progress"), dict) else {}
+    if progress.get("shadow_resume"):
+        return {}
+    if progress.get("termination_reason") != "partial_time_limit":
+        return {}
+    if progress.get("provider_exhausted"):
+        return {}
+    qualified = int(progress.get("qualified") or 0)
+    target = int(progress.get("target") or job.get("max_results") or 0)
+    if target and qualified >= target:
+        return {}
+    resume_cursors: Dict[str, str] = {}
+    acquisition: Dict[str, Any] = {}
+    for item in progress.get("adapter_telemetry") or []:
+        if not isinstance(item, dict):
+            continue
+        adapter_id = str(item.get("adapter_id") or "").strip()
+        cursor = item.get("next_cursor")
+        acq = item.get("acquisition") if isinstance(item.get("acquisition"), dict) else {}
+        if not cursor:
+            start = acq.get("next_start_index")
+            batch = acq.get("batch_cap") or acq.get("maps_batch_size")
+            raw = acq.get("raw_candidate_budget")
+            if start is not None and batch and raw:
+                cursor = f"da:v2:{start}:{batch}:{raw}"
+        if adapter_id and cursor:
+            resume_cursors[adapter_id] = str(cursor)
+        if acq:
+            acquisition.update(acq)
+    if not resume_cursors:
+        return {}
+    payloads = _load_prior_shadow_qualified_payloads(job, supabase=supabase)
+    return {
+        "resumable": True,
+        "resume_cursors": resume_cursors,
+        "prior_cost_eur": float(progress.get("cost_eur") or 0.0),
+        "cumulative_orchestrator_qualified": len(payloads) or qualified,
+        "qualified_lead_payloads": payloads,
+        "processed_domains": [
+            str(item.get("sito") or item.get("website") or "").replace("https://", "").replace("http://", "").split("/")[0]
+            for item in payloads
+        ],
+        "acquisition": acquisition,
+        "termination_reason": progress.get("termination_reason"),
+        "provider_exhausted": False,
+        "bootstrapped": True,
+    }
+
+
 def _source_adapter_shadow_is_requested(intent: Any) -> bool:
     return bool(
         isinstance(intent, dict)
@@ -4433,6 +4509,48 @@ def main() -> None:
                     .execute()
                 )
                 rows = getattr(resp, "data", None) or []
+                if not rows:
+                    resume_resp = (
+                        supabase.table("searches")
+                        .select("*")
+                        .eq("id", search_id_filter)
+                        .limit(1)
+                        .execute()
+                    )
+                    resume_rows = getattr(resume_resp, "data", None) or []
+                    if resume_rows:
+                        resume_job = resume_rows[0]
+                        resume_progress = resume_job.get("progress") if isinstance(resume_job.get("progress"), dict) else {}
+                        resume_state = resume_progress.get("shadow_resume") if isinstance(resume_progress, dict) else {}
+                        if (
+                            resume_job.get("status") == "completed"
+                            and isinstance(resume_state, dict)
+                            and resume_state.get("resumable")
+                        ):
+                            supabase.table("searches").update({
+                                "status": "pending",
+                                "updated_at": _utc_now_iso(),
+                            }).eq("id", search_id_filter).eq("status", "completed").execute()
+                        elif resume_job.get("status") == "completed":
+                            bootstrapped = _bootstrap_shadow_resume_from_progress(resume_job, supabase=supabase)
+                            if bootstrapped.get("resumable"):
+                                merged_progress = dict(resume_progress)
+                                merged_progress["shadow_resume"] = bootstrapped
+                                supabase.table("searches").update({
+                                    "status": "pending",
+                                    "progress": merged_progress,
+                                    "updated_at": _utc_now_iso(),
+                                }).eq("id", search_id_filter).eq("status", "completed").execute()
+                        if resume_job.get("status") == "completed":
+                            resp = (
+                                supabase.table("searches")
+                                .select("*")
+                                .eq("id", search_id_filter)
+                                .eq("status", "pending")
+                                .limit(1)
+                                .execute()
+                            )
+                            rows = getattr(resp, "data", None) or []
             elif mode in {"all", "user"}:
                 # Priority 1: realtime user jobs (most recent first)
                 expected_pending_status = "pending"
@@ -4949,12 +5067,17 @@ def main() -> None:
             if _source_adapter_shadow_is_requested(intent):
                 from commercial_lifecycle import persist_and_publish_candidates
                 from source_adapters.shadow_runtime import (
+                    build_shadow_resume_state,
                     execute_source_adapter_shadow,
+                    merge_shadow_qualified_payloads,
                     serialize_shadow_qualified_leads,
                     source_adapter_shadow_decision,
                 )
 
                 shadow_decision = source_adapter_shadow_decision(intent)
+                prior_shadow_resume = _shadow_resume_state_from_progress(job.get("progress"))
+                prior_qualified_payloads = _load_prior_shadow_qualified_payloads(job, supabase=supabase)
+                remaining_qualified_target = max(1, int(job_max) - len(prior_qualified_payloads))
                 if not shadow_decision.enabled:
                     _heartbeat_stop.set()
                     supabase.table("searches").update({
@@ -5002,12 +5125,14 @@ def main() -> None:
                 try:
                     shadow_result = _run_coro_blocking(execute_source_adapter_shadow(
                         intent,
-                        requested_count=job_max,
+                        requested_count=remaining_qualified_target,
                         progress_callback=_on_source_adapter_progress,
                         persistent_client=supabase,
                         search_id=str(job_id),
+                        resume_state=prior_shadow_resume,
                     ))
-                    shadow_leads = serialize_shadow_qualified_leads(shadow_result)
+                    new_shadow_leads = serialize_shadow_qualified_leads(shadow_result)
+                    shadow_leads = merge_shadow_qualified_payloads(prior_qualified_payloads, new_shadow_leads)
                     canonical_shadow_plan = _canonical_plan_from_intent(intent)
                     if canonical_shadow_plan is None:
                         raise RuntimeError("CANONICAL_PLAN_MISSING_AFTER_VALIDATION")
@@ -5020,18 +5145,31 @@ def main() -> None:
                         shadow_mode=True,
                     )
                     _heartbeat_stop.set()
+                    provider_exhausted = all(item.exhausted for item in shadow_result.adapter_progress) if shadow_result.adapter_progress else False
+                    cumulative_cost = round(float(prior_shadow_resume.get("prior_cost_eur") or 0.0) + float(shadow_result.cost_eur or 0.0), 6)
+                    shadow_resume = build_shadow_resume_state(
+                        shadow_result,
+                        qualified_lead_payloads=shadow_leads,
+                        prior_state={
+                            **prior_shadow_resume,
+                            "prior_cost_eur": float(prior_shadow_resume.get("prior_cost_eur") or 0.0),
+                        },
+                        requested_count=int(job_max),
+                    )
+                    resumable = bool(shadow_resume.get("resumable"))
+                    final_status = "pending" if resumable else "completed"
                     final_shadow_progress = {
-                        "stage": "source_adapter_shadow_completed",
+                        "stage": "source_adapter_shadow_resumable" if resumable else "source_adapter_shadow_completed",
                         "stop_reason": shadow_result.status,
-                        "target": shadow_result.progress.requested_count,
+                        "target": int(job_max),
                         "found": len(lifecycle_accepted),
-                        "discovered": shadow_result.progress.discovered_count,
-                        "raw": shadow_result.progress.raw_candidate_count,
-                        "unique_entities": shadow_result.progress.unique_entity_count,
+                        "discovered": shadow_result.progress.discovered_count + int(prior_shadow_resume.get("discovered") or 0),
+                        "raw": shadow_result.progress.raw_candidate_count + int(prior_shadow_resume.get("raw") or 0),
+                        "unique_entities": len(shadow_leads),
                         "resolved": shadow_result.progress.resolved_count,
                         "audited": shadow_result.progress.audited_count,
                         "evidence_verified": shadow_result.progress.evidence_verified_count,
-                        "qualified": shadow_result.progress.qualified_count,
+                        "qualified": len(shadow_leads),
                         "lifecycle_qualified": len(lifecycle_accepted),
                         "rejected": shadow_result.progress.rejected_count,
                         "rejection_codes": dict(shadow_result.rejection_codes),
@@ -5051,6 +5189,7 @@ def main() -> None:
                                 "exhausted": item.exhausted,
                                 "warnings": list(item.warnings),
                                 "acquisition": dict(getattr(item, "acquisition_telemetry", {}) or {}),
+                                "next_cursor": item.next_cursor.value if item.next_cursor else None,
                             }
                             for item in shadow_result.adapter_progress
                         ],
@@ -5060,13 +5199,15 @@ def main() -> None:
                             for trace in (getattr(item, "projection_traces", None) or [])
                         ],
                         "termination_reason": shadow_result.status,
-                        "provider_exhausted": shadow_result.status == "partial_sources_exhausted",
+                        "provider_exhausted": provider_exhausted,
+                        "shadow_resume": shadow_resume,
+                        "resume_cursor": next(iter(shadow_resume.get("resume_cursors", {}).values()), None),
                         "published": 0,
-                        "cost_eur": shadow_result.cost_eur,
+                        "cost_eur": cumulative_cost,
                         "updated_at": _utc_now_iso(),
                     }
                     supabase.table("searches").update({
-                        "status": "completed",
+                        "status": final_status,
                         "results": lifecycle_accepted,
                         "worker_id": None,
                         "heartbeat_at": None,
