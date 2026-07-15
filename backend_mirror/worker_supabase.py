@@ -11,6 +11,7 @@ import logging
 import concurrent.futures
 import socket
 import threading
+import types
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Set
@@ -34,6 +35,42 @@ _REPO_ROOT = os.path.abspath(os.path.join(_BACKEND_DIR, ".."))
 for _p in (_REPO_ROOT, _BACKEND_DIR):
     if _p and _p not in sys.path:
         sys.path.insert(0, _p)
+
+
+def _install_flat_runtime_package_alias(
+    backend_dir: str,
+    repo_root: str,
+    *,
+    module_name: str,
+) -> bool:
+    """Expose a flat immutable release through the canonical package name.
+
+    Staging deploys the contents of ``backend_mirror`` directly into the
+    immutable release directory. Source adapters intentionally use canonical
+    ``backend_mirror.*`` imports, so a flat release needs a package alias even
+    though a repository checkout does not. This has no effect when the real
+    package directory exists.
+    """
+    if os.path.isdir(os.path.join(repo_root, "backend_mirror")):
+        return False
+    package = sys.modules.get("backend_mirror")
+    if package is None:
+        package = types.ModuleType("backend_mirror")
+        package.__file__ = os.path.join(backend_dir, "__init__.py")
+        package.__path__ = [backend_dir]
+        package.__package__ = "backend_mirror"
+        sys.modules["backend_mirror"] = package
+    current = sys.modules.get(module_name)
+    if current is not None:
+        sys.modules.setdefault("backend_mirror.worker_supabase", current)
+    return True
+
+
+_install_flat_runtime_package_alias(
+    _BACKEND_DIR,
+    _REPO_ROOT,
+    module_name=__name__,
+)
 
 from job_leases import build_claim_payload, is_processing_job_stale
 from url_safety import assert_safe_public_url, install_playwright_ssrf_guard

@@ -62,7 +62,7 @@ set -a
 # shellcheck disable=SC1091
 source ./.env
 set +a
-"${PYTHON}" -c 'import worker_supabase; import agents.agentic_gap_fill; import agents.data_extractor; import agents.structured_lanes; print("staging release imports OK")'
+"${PYTHON}" -c 'import worker_supabase; import agents.agentic_gap_fill; import agents.data_extractor; import agents.structured_lanes; from source_adapters.shadow_runtime import source_adapter_shadow_decision; assert source_adapter_shadow_decision; print("staging release imports OK")'
 "${PYTHON}" -c 'from contracts.signal_ontology import load_signal_ontology; from contracts.source_registry import load_source_registry; assert len(load_signal_ontology()["signals"]) >= 35; assert len(load_source_registry()) >= 10; print("staging local contracts OK")'
 "${PYTHON}" -c 'from test_commercial_lifecycle import test_publication_gate_requires_budget_and_why_now_and_causal_plan as a, test_explicit_or_signal_policy_accepts_one_verified_signal_but_and_requires_all as b; a(); b(); print("staging high-value gate tests OK")'
 
