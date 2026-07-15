@@ -182,6 +182,7 @@ def extract_jobposting_leads(html: str, source_url: str) -> List[Dict[str, Any]]
             valid_through = str(obj.get("validThrough") or "").strip()
             vacancy_url = str(obj.get("url") or source_url).strip()
             location = _job_location(obj.get("jobLocation") or obj.get("applicantLocationRequirements"))
+            source_host = normalize_domain(urlparse(source_url).hostname or "")
             resolved = resolve_hiring_employer_domains(
                 employer_name=name,
                 organization_website=website,

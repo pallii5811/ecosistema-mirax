@@ -33,6 +33,9 @@ class HiringDiscoveryState:
     zero_yield_sources: Tuple[str, ...] = ()
     query_stats: Tuple[Mapping[str, Any], ...] = ()
     prefetch_traces: Tuple[Mapping[str, Any], ...] = ()
+    url_outcomes: Tuple[Mapping[str, Any], ...] = ()
+    retry_urls: Tuple[str, ...] = ()
+    parser_epoch: int = 1
 
     @property
     def total_spent_eur(self) -> float:
@@ -66,6 +69,9 @@ class HiringDiscoveryState:
             "zero_yield_sources": list(self.zero_yield_sources),
             "query_stats": [dict(item) for item in self.query_stats],
             "prefetch_traces": [dict(item) for item in self.prefetch_traces],
+            "url_outcomes": [dict(item) for item in self.url_outcomes],
+            "retry_urls": list(self.retry_urls),
+            "parser_epoch": int(self.parser_epoch),
         }
 
     @classmethod
@@ -88,6 +94,11 @@ class HiringDiscoveryState:
             prefetch_traces=tuple(
                 dict(item) for item in payload.get("prefetch_traces") or () if isinstance(item, Mapping)
             ),
+            url_outcomes=tuple(
+                dict(item) for item in payload.get("url_outcomes") or () if isinstance(item, Mapping)
+            ),
+            retry_urls=tuple(str(item) for item in payload.get("retry_urls") or ()),
+            parser_epoch=int(payload.get("parser_epoch") or 1),
         )
 
 
@@ -116,3 +127,14 @@ def load_discovery_state(cursor: DiscoveryCursor | None, technical_filters: Mapp
 def encode_discovery_cursor(state: HiringDiscoveryState) -> DiscoveryCursor:
     payload = base64.urlsafe_b64encode(json.dumps(state.to_dict(), separators=(",", ":")).encode("utf-8")).decode("ascii").rstrip("=")
     return DiscoveryCursor(f"hiring:v2:{payload}", partition="hiring_sources")
+
+
+def url_outcomes_map(state: HiringDiscoveryState) -> dict[str, dict[str, Any]]:
+    mapped: dict[str, dict[str, Any]] = {}
+    for item in state.url_outcomes:
+        if not isinstance(item, Mapping):
+            continue
+        key = str(item.get("canonical_url") or item.get("url") or "").lower().rstrip("/")
+        if key:
+            mapped[key] = dict(item)
+    return mapped

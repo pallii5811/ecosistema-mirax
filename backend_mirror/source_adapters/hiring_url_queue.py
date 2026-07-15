@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 from urllib.parse import urlparse
 
 from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, normalize_domain
@@ -123,7 +123,7 @@ def classify_url_prefetch(
     elif seen_canonical is not None and canonical in seen_canonical:
         rejection_code = "DUPLICATE"
     elif _SERP_INTERNAL_RE.search(url) or _LISTING_PATH_RE.search(path_text):
-        rejection_code = "NOT_INDIVIDUAL_VACANCY"
+        rejection_code = "LISTING_PAGE"
     elif _is_aggregator(host) and not _individual_vacancy_path(path_text):
         rejection_code = "AGGREGATOR_WITHOUT_EMPLOYER"
     elif _staffing_brand(host, path_text) and not _individual_vacancy_path(path_text):
@@ -191,6 +191,32 @@ def classify_url_prefetch(
         "rejection_code": rejection_code or ("ACCEPTED" if prefetch_accept else "NOT_INDIVIDUAL_VACANCY"),
         "query_source": query_source,
     }
+
+
+def build_processing_batch(
+    urls: list[str],
+    url_query_meta: Mapping[str, tuple[str, str]],
+    *,
+    retry_urls: Sequence[str] = (),
+    start_offset: int = 0,
+    batch_cap: int = 24,
+) -> list[dict[str, Any]]:
+    """Merge selective retry URLs (first) with pending queue slice."""
+    retry_items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for url in retry_urls:
+        canonical = url.lower().rstrip("/")
+        if not url or canonical in seen:
+            continue
+        seen.add(canonical)
+        query, query_source = url_query_meta.get(url, url_query_meta.get(canonical, ("", "retry")))
+        item = classify_url_prefetch(url, query_source=query_source, seen_canonical=None)
+        item["query"] = query
+        item["is_retry"] = True
+        retry_items.append(item)
+    retry_items.sort(key=lambda row: (row["priority"], row["canonical_url"]))
+    pending = build_priority_queue(urls, url_query_meta, start_offset=start_offset)
+    return (retry_items + pending)[: max(0, batch_cap)]
 
 
 def build_priority_queue(

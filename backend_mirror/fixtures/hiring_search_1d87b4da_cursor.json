@@ -1,0 +1,1728 @@
+{
+  "query_index": 10,
+  "url_offset": 100,
+  "discovery_spent_eur": 0.05,
+  "parsing_spent_eur": 0,
+  "domain_spent_eur": 0,
+  "executed_query_keys": [
+    "serp:ats:commerciale:Brescia:\"commerciale\" \"Brescia\" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)",
+    "serp:ats:commerciale:Brianza:\"commerciale\" \"Brianza\" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)",
+    "serp:ats:commerciale:Lombardia:\"commerciale\" \"Lombardia\" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)",
+    "serp:careers:commerciale:Bergamo:\"commerciale\" \"lavora con noi\" PMI e aziende B2B Bergamo",
+    "serp:careers:commerciale:Brescia:\"commerciale\" \"lavora con noi\" PMI e aziende B2B Brescia",
+    "serp:careers:commerciale:Brianza:\"commerciale\" \"lavora con noi\" PMI e aziende B2B Brianza",
+    "serp:careers:commerciale:Lombardia:\"commerciale\" \"lavora con noi\" PMI e aziende B2B Lombardia",
+    "serp:local_vacancy:commerciale:Brescia:\"commerciale\" \"Brescia\" (\"posizione aperta\" OR candidati OR apply)",
+    "serp:local_vacancy:commerciale:Lombardia:\"commerciale\" \"Lombardia\" (\"posizione aperta\" OR candidati OR apply)",
+    "serp:local_vacancy:commerciale:Milano:\"commerciale\" \"Milano\" (\"posizione aperta\" OR candidati OR apply)"
+  ],
+  "seen_urls": [
+    "https://it.linkedin.com/jobs/venditore-commerciale-offerte-di-lavoro-milano-lm?trk=guest_job_details_jd_jserp_more_jobs_link",
+    "https://crown-it.career.softgarden.de/jobs/58159902/venditore-tecnico-commerciale-lombardia",
+    "https://www.pagepersonnel.it/jobs/back-office-commerciale/lombardia",
+    "https://www.pagepersonnel.it/jobs/tecnico-commerciale/lombardia",
+    "https://airliquidehr.wd3.myworkdayjobs.com/en-us/airliquideexternalcareer/job/italy-moncalieri/commerciale---lombardia-nord_r10094218/apply/usemylastapplication",
+    "https://studiosantagostino-1746448557.teamtailor.com/jobs/7515180-agente-di-commercio-settore-cleaning-area-lombardia",
+    "https://airliquidehr.wd3.myworkdayjobs.com/en-ca/airliquideexternalcareer/job/italy-moncalieri/commerciale---lombardia-nord_r10094218/apply/applymanually",
+    "https://www.altiprofili.it/candidati/offerta/commerciale-lombardia-nord---settore-edilizia/5406",
+    "https://www.subito.it/annunci-lombardia/vendita/offerte-lavoro/?q=commerciale",
+    "https://www.careerjet.it/offerte-lavoro-commerciale/lombardia",
+    "https://www.telestar-automation.it/ricerca-di-lavoro-tecnico-commerciale-lombardia.htm",
+    "https://www.openjobmetis.it/it/candidati/offerte-di-lavoro",
+    "https://comozero.it/attualita/nel-centro-commerciale-nel-cuore-della-lombardia-200-posti-di-lavoro-disponibili-per-tantissimi-settori-anche-per-le-olimpiadi",
+    "https://jobtech.it/candidati/annuncio/consulente-commerciale-finanza-agevolata-lombardia-2?ref=talent",
+    "https://www.mestierilombardia.it/commerciale",
+    "https://www.umana.it/per-le-persone/offerte-di-lavoro",
+    "https://it.indeed.com/q-agenti-di-commercio-l-milano,-lombardia-offerte-lavoro.html",
+    "https://it.fashionjobs.com/annoncesregione/lombardia,266.html",
+    "https://it.grafton.com/offerte-lavoro/tecnico-commerciale-jo/lombardia-re",
+    "https://www.etalentum.com/it/candidati/offerta-lavoro/26509/responsabile-commerciale-beni-culturali.html",
+    "https://mango.wd3.myworkdayjobs.com/es/mango_work_your_passion/job/stage-visual-merchandiser---ft---arese-sc-_jr134814-1",
+    "https://airliquidehr.wd3.myworkdayjobs.com/en-us/airliquideexternalcareer/job/trezzano---sales---vitalaire/commerciale---lombardia-nord_r10094218/apply/applymanually",
+    "https://airliquidehr.wd3.myworkdayjobs.com/en-us/airliquideexternalcareer/job/commerciale---lombardia-nord_r10094218",
+    "https://solenis.wd1.myworkdayjobs.com/en-us/solenis/job/commerciale-junior-b2b--lombardia-_r0028690/apply/applymanually",
+    "https://airliquidehr.wd3.myworkdayjobs.com/pl-pl/airliquideexternalcareer/job/commerciale---lombardia-nord_r10094218/apply/autofillwithresume",
+    "https://solenis.wd1.myworkdayjobs.com/fr-fr/solenis/job/commerciale-junior-b2b--lombardia-_r0028690/apply/applymanually",
+    "https://ttiemea.wd3.myworkdayjobs.com/es/tti/job/fme-jss_jr2275",
+    "https://lyreco.wd3.myworkdayjobs.com/da-dk/lyreco_careers/job/dpi-sales-specialist----divisione-antinfortunistica-lombardia_jr-1000030109",
+    "https://bdrthermea.wd103.myworkdayjobs.com/external/job/bassano-del-grappa/application-engineer-lombardia-e-piemonte---engineering-team-specialist-lombardia-e-piemonte_r103642",
+    "https://bdrthermea.wd103.myworkdayjobs.com/de-de/external/job/application-engineer-lombardia-e-piemonte---engineering-team-specialist-lombardia-e-piemonte_r103642",
+    "https://teamsystem.wd103.myworkdayjobs.com/teamsystem/job/italy-milano/junior-sales-consultant---enterprise-solutions---lombardia_jr0000001693",
+    "https://gsk.wd5.myworkdayjobs.com/en-us/gskcareers/job/area-manager-severe-asthma---nasal-polyps----lombardia_442246",
+    "https://jj.wd5.myworkdayjobs.com/jj/job/milano-italy/informatore-scientifico-del-farmaco---immunologia---lombardia--piemonte--tempo-determinato----_r-086249",
+    "https://ing.wd3.myworkdayjobs.com/it-it/icsgblcor/job/agente-in-attivit-finanziaria---percorso-beginner_req-10083295",
+    "https://convatec.wd1.myworkdayjobs.com/de-de/convatec/job/territory-manager---lombardia_jr00018297",
+    "https://moog.wd5.myworkdayjobs.com/fr-fr/moog_external_career_site/job/tecnico-commerciale-oleodinamica-industriale_r-25-15348",
+    "https://jj.wd5.myworkdayjobs.com/en-us/jj/job/informatore-scientifico-del-farmaco---immunologia---lombardia--piemonte--tempo-determinato----_r-086249",
+    "https://bdrthermea.wd103.myworkdayjobs.com/zh-cn/external/job/help-desk-specialist_r103627-1",
+    "https://dedalus.wd3.myworkdayjobs.com/pt-br/external/job/ita---milan---trinita/project-manager_jr107017",
+    "https://otis.wd5.myworkdayjobs.com/da-dk/rec_ext_gateway/job/tecnici-ascensoristi-manutentori--lombardia_20155906",
+    "https://www.forte-group.it/lavora-con-noi/posizioni-aperte",
+    "https://www.castaldosolutions.it/articles/blog/7-cose-pmi-non-caricare-chatgpt",
+    "https://www.brand039.com/blog",
+    "https://www.pagepersonnel.it/jobs/commerciale/page_action/aggregate",
+    "https://www.vianova.it/lavora-con-noi",
+    "https://www.europrotex.it/lavora-con-noi",
+    "https://www.spsproject.net/lavora-con-noi-opportunita",
+    "https://www.jobijoba.it/annunci-di-lavoro/13/dc10cdaa099acff6acb2e3d879326a11",
+    "https://www.tready.it/web-marketing-articoli-news/content-marketing-b2b-esempi-pratici-2026",
+    "https://www.trovoagente.it/ricerca-venditori-annuncio.php?rif=514597",
+    "https://www.assolombarda.it/servizi/internazionalizzazione/informazioni/bando-export-su-misura",
+    "https://vigilpro.it/istituto-di-vigilanza-milano",
+    "https://squaremarketing.it/trovare-clienti-con-linkedin-la-guida-completa",
+    "https://www.innovhub-ssi.it/progetti/een/rete-een.kl",
+    "https://it.trabajo.org/offerta-1389-99664d5327cf9c3ca2942a195366343b",
+    "https://it.indeed.com/q-azienda-commerciale-l-milano,-lombardia-offerte-lavoro.html",
+    "https://formazione.promositalia.com/corsi/corsi-multipli/go-global-costruire-e-sviluppare-relazioni-commerciali-nei-mercati-esteri.kl",
+    "https://it.jooble.org/lavoro-area-manager/lombardia",
+    "https://it.indeed.com/q-b2b-offerte-lavoro.html",
+    "https://www.michaelpage.it/jobs/commerciale/italia",
+    "https://www.cairorcsmedia.it/lavora-con-noi",
+    "https://inrecruiting.intervieweb.it/cespim/jobs/commerciale-piva-area-milano-716991/it/?d=google-jobs",
+    "https://it.linkedin.com/jobs/stage-area-commerciale-offerte-di-lavoro-milano-lm?trk=public_jobs_search-for-more-jobs-link",
+    "https://careers.verisure.com/it/it/job/r2022100220/consulente-commerciale-milano",
+    "https://www.pagepersonnel.it/jobs/commerciale-estero",
+    "https://carriera.noicompriamoauto.it/jobs/commerciale-telefonico-milano-modalit-ibrida-40779",
+    "https://auto1-group.com/it/jobs/commerciale-telefonico-milano-40779",
+    "https://www.subito.it/annunci-lombardia/vendita/cerco-lavoro/milano/?q=commerciale",
+    "https://lavoro.jobtech.it/annuncio/commerciale-milano-healthtech",
+    "https://www.applavoro.it/annunci-lavoro-milano",
+    "https://www.careerjet.it/offerte-lavoro-back-office-commerciale/milano",
+    "https://www.afolmet.it/offerte-lavoro",
+    "https://www.risorse.it/offerte-di-lavoro/commerciale-business-development-/lombardia",
+    "https://www.umana.it/per-le-persone/campagne/lavorare-a-melzo-mi-e-in-provincia-di-milano",
+    "https://www.altiprofili.it/candidati/ricerche-in-corso",
+    "https://it.indeed.com/q-commerciale-junior-l-milano,-lombardia-offerte-lavoro.html",
+    "https://www.lhh.com/it-it/cerca-lavoro/direttore-commerciale-milano-milano/jn-122025-918558",
+    "https://www.clubmedjobs.com/it/occupazione/milan-lombardy-italy-satıs-jobs/2619/32114880/3175395-3174618-3173434-6542283-3173435/4",
+    "https://jobs.iziwork.com/it/offerta-lavoro/back-office-commerciale-milano-20-1327667718/candidati",
+    "https://it.jooble.org/lavoro-ufficio-commerciale/milano",
+    "https://synsphere.it/partner-microsoft",
+    "https://www.kennew.it/contatti/lavora-con-noi",
+    "https://promositalia.com/media/notizie/bando-masterclass-pid-2026-go-to-market-usa-per-le-imprese-del-sistema-casa.kl",
+    "https://www.pagepersonnel.it/jobs/tecnico-commerciale",
+    "https://www.oto.agency/blog/come-funziona-whatsapp-business-guida-completa-per-imprese-e-marketer",
+    "https://www.comark.it/ecommerce-b2b-cosa-e-come-funziona-perche-importante-pmi",
+    "https://www.bconsole.com/tour-guidati",
+    "https://www.passepartout.net/software/gestionale-aziendale",
+    "https://www.hangler.it/web-agency-bergamo",
+    "https://www.nur.it/focus/1194/agenzia-geo-lombardia",
+    "https://www.sit-web.it",
+    "https://www.bluenext.it/it/azienda",
+    "https://www.assolombarda.it/servizi/internazionalizzazione/informazioni/bando-connessi-2026",
+    "https://www.ifoa.it/corsi/pd_marketing_market_developer",
+    "https://mgpg.it/2020/03/03/metodo-aida-nella-vendita",
+    "https://www.nebu.it/aree/provincia-di-mantova",
+    "https://it.indeed.com/q-grandi-aziende-l-bergamo,-lombardia-offerte-lavoro.html",
+    "https://it.jooble.org/lavoro-più-richiesti/bergamo",
+    "https://www.lavoraconnoi.com/annunci/?search=nespresso+b2b+sales+account+bergamo&loc=remote",
+    "https://it.linkedin.com/jobs/back-office-commerciale-offerte-di-lavoro-brescia",
+    "https://careers.verisure.com/it/it/job/r2021120311/commerciale-con-benefit-auto-brescia",
+    "https://www.pagepersonnel.it/jobs/commerciale/brescia-e-provincia",
+    "https://www.nettowork.it/posizioni-aperte/tecnico-commerciale-brescia-bergamo",
+    "https://pitchmeai.com/jobs/deliveroo/commerciale-atsmr6a9kff5rubdm8fep",
+    "https://bebee.com/it/jobs/role/tecnico-commerciale/brescia",
+    "https://www.cercolavoro.com/offerte-di-lavoro-brescia",
+    "https://careers.deliveroo.co.uk/role/commerciale-brescia-ftc-12-months-f4afbb437f80/apply",
+    "https://it.jooble.org/jdp/6085962579437986778",
+    "https://www.subito.it/annunci-lombardia/vendita/offerte-lavoro/brescia/?q=commerciale",
+    "https://www.risorse.it/offerte-di-lavoro/lombardia/brescia",
+    "https://brescia.bakeca.it/annunci/sales-agenti-promoter-commerciali/?keyword=responsabile+commerciale",
+    "https://jobtech.it/candidati/annuncio/agente-di-commercio-brescia?ref=talent",
+    "https://it.indeed.com/q-candidati-in-cerca-lavoro-l-brescia,-lombardia-offerte-lavoro.html",
+    "https://mango.wd3.myworkdayjobs.com/it-it/mango_work_your_passion/job/stage-visual-merchandiser_jr132265-1",
+    "https://verisure.wd3.myworkdayjobs.com/en-us/equest/job/consulente-commerciale-junior_r2026020902/apply/applymanually",
+    "https://verisure.wd3.myworkdayjobs.com/en-us/vonqjp/job/consulente-commerciale-junior_r2026020902-1",
+    "https://airliquidehr.wd3.myworkdayjobs.com/airliquideexternalcareer/job/italy-brescia/informatore-medico-scientifico---f-m-_r10095178",
+    "https://otis.wd5.myworkdayjobs.com/en-us/rec_ext_gateway/job/tecnici-ascensoristi-con-patentino-italia_20156321",
+    "https://otis.wd5.myworkdayjobs.com/it-it/rec_ext_gateway/job/tecnici-ascensoristi-con-patentino-italia_20156321",
+    "https://otis.wd5.myworkdayjobs.com/es/rec_ext_gateway/job/tecnici-ascensoristi-con-patentino-italia_20156321",
+    "https://sellagroup.wd3.myworkdayjobs.com/it-it/id01",
+    "https://lyreco.wd3.myworkdayjobs.com/de-de/lyreco_careers/job/field-based---france/attach-commercial-b2b-pme--h-f----st-brieuc_jr-1000023419",
+    "https://sedgwick.wd1.myworkdayjobs.com/en-us/sedgwick/job/expert-en-responsabilit-civile-commerciale---claims-adjuster---liability-commercial_r50265",
+    "https://mouvrh.wd103.myworkdayjobs.com/fr-fr/external_career_site_fresh",
+    "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+    "https://unilever.wd3.myworkdayjobs.com/unilever_experienced_professionals/4/refreshfacet/318c8bb6f553100021d223d9780d30be",
+    "https://ag.wd3.myworkdayjobs.com/fr-fr/airbus",
+    "https://ag.wd3.myworkdayjobs.com/fr-fr/airbus/job/export-control-support-manager--h-f-_jr10388084",
+    "https://galileo.wd3.myworkdayjobs.com/fr-fr/esg-finance-alternance/job/alternance---conseiller-en-gestion-de-patrimoine--h-f--_r-23081",
+    "https://northbridgefinancial.wd3.myworkdayjobs.com/fr-ca/nbfc/job/associate-underwriter--mid-market--quebec-city-_r4876-1",
+    "https://hackerone.com/brave",
+    "https://status.brave.app",
+    "https://careers.lodestar.eu/job/01-2026-sales-account-manager",
+    "https://dlike.it/lavora-con-noi",
+    "https://www.bancaifis.it/chi-siamo/lavora-con-noi/chi-stiamo-cercando",
+    "https://www.pagepersonnel.it/jobs/commerciale/brescia-e-provincia?page=1",
+    "https://www.menatcode.it/it/lavora-con-noi",
+    "https://dracmaservice.it/lavora-con-noi",
+    "https://assix.it/lavora-con-noi-2",
+    "https://cving.com/en/job-offers/brescia/consulente-di-vendita-lombardia?p=1&index_start=-5180&order=1&orp=true&verified=true&ea=1&id=5336391",
+    "https://www.dexanet.com/lavora-con-noi",
+    "https://pclab.bs.it/analisi-dati-intelligenza-artificiale-pmi-brescia",
+    "https://www.nebu.it/aree/provincia-di-brescia",
+    "https://www.opensourcemanagement.it/come-attrarre-i-talenti-migliori-in-azienda-la-guida-per-imprenditori",
+    "https://mgpg.it/2026/05/14/local-seo-per-pmi",
+    "https://neoweb.it/it/realizzazione-siti-web-borno.html",
+    "https://it.indeed.com/q-grandi-aziende-l-brescia,-lombardia-offerte-lavoro.html",
+    "https://areajob.it",
+    "https://www.lhh.com/it-it/cerca-lavoro/business-development-manager-fotovoltaico-b2b-brescia-milano/jn-072026-1123925",
+    "https://it.jooble.org/lavoro-web-marketing/brescia",
+    "https://www.oriens.consulting/consulenza/strategy",
+    "https://envea.wd103.myworkdayjobs.com/en-us/externalcareersite/job/tecnico-commerciale---sales-engineer_jr100171",
+    "https://verisure.wd3.myworkdayjobs.com/vonqjp/job/venditore---monza_r2022100225-3",
+    "https://envea.wd103.myworkdayjobs.com/en-us/externalcareersite/job/ita-verano-brianza/tecnico-commerciale---sales-engineer_jr100171/apply/usemylastapplication?source=linkedin",
+    "https://www.gruppoitaliaretail.it/blog-detail/post/319466/modello-di-business-canvas-applicato-a-una-pmi-manifatturiera-caso-pratico",
+    "https://www.sixor.it/blog/2026/05/20/sito-web-in-brianza",
+    "https://www.pagepersonnel.it/jobs/industriali/sector-sales",
+    "https://getmuffin.io/partner",
+    "https://bulltech.it/azienda-informatica-milano",
+    "https://www.tready.it/web-agency-lombardia-agenzia-marketing",
+    "https://it.jobsora.com/lavoro-business-agent-bardi",
+    "https://innovafinance.com/novita-e-approfondimenti/startup-e-pmi-innovative-da-dove-iniziare",
+    "https://www.assolombarda.it/servizi/internazionalizzazione/informazioni/stati-uniti-masterclass-pid-2026-un2019opportunita-strategica-per-le-pmi-del-sistema-casa",
+    "https://www.artser.it/approfondimenti/progetto-export-italia-armenia-2026-nuove-opportunita-b2b-per-macchinari-industriali-e-packaging.html",
+    "https://neoweb.it/it/realizzazione-siti-web-servizi-b2b.html",
+    "https://www.abbrevia.it/sviluppo-business/analisi-mercati-potenziali-b2b",
+    "https://mercuri.it/insights/assistente-commerciale-cosa-fa",
+    "https://comunicazioneitaliana.net/persone/andrea-malacrida",
+    "https://www.esprinet.com/it",
+    "https://www.randstad.it/offerte-lavoro/q-commerciale-estero/re-lombardia/ci-muggio/page-3"
+  ],
+  "url_meta": [
+    {
+      "url": "https://it.linkedin.com/jobs/venditore-commerciale-offerte-di-lavoro-milano-lm?trk=guest_job_details_jd_jserp_more_jobs_link",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://crown-it.career.softgarden.de/jobs/58159902/venditore-tecnico-commerciale-lombardia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.pagepersonnel.it/jobs/back-office-commerciale/lombardia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.pagepersonnel.it/jobs/tecnico-commerciale/lombardia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://airliquidehr.wd3.myworkdayjobs.com/en-us/airliquideexternalcareer/job/italy-moncalieri/commerciale---lombardia-nord_r10094218/apply/usemylastapplication",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://studiosantagostino-1746448557.teamtailor.com/jobs/7515180-agente-di-commercio-settore-cleaning-area-lombardia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://airliquidehr.wd3.myworkdayjobs.com/en-ca/airliquideexternalcareer/job/italy-moncalieri/commerciale---lombardia-nord_r10094218/apply/applymanually",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.altiprofili.it/candidati/offerta/commerciale-lombardia-nord---settore-edilizia/5406",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.subito.it/annunci-lombardia/vendita/offerte-lavoro/?q=commerciale",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.careerjet.it/offerte-lavoro-commerciale/lombardia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.telestar-automation.it/ricerca-di-lavoro-tecnico-commerciale-lombardia.htm",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.openjobmetis.it/it/candidati/offerte-di-lavoro",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://comozero.it/attualita/nel-centro-commerciale-nel-cuore-della-lombardia-200-posti-di-lavoro-disponibili-per-tantissimi-settori-anche-per-le-olimpiadi",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://jobtech.it/candidati/annuncio/consulente-commerciale-finanza-agevolata-lombardia-2?ref=talent",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.mestierilombardia.it/commerciale",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.umana.it/per-le-persone/offerte-di-lavoro",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.indeed.com/q-agenti-di-commercio-l-milano,-lombardia-offerte-lavoro.html",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.fashionjobs.com/annoncesregione/lombardia,266.html",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.grafton.com/offerte-lavoro/tecnico-commerciale-jo/lombardia-re",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.etalentum.com/it/candidati/offerta-lavoro/26509/responsabile-commerciale-beni-culturali.html",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://mango.wd3.myworkdayjobs.com/es/mango_work_your_passion/job/stage-visual-merchandiser---ft---arese-sc-_jr134814-1",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://airliquidehr.wd3.myworkdayjobs.com/en-us/airliquideexternalcareer/job/trezzano---sales---vitalaire/commerciale---lombardia-nord_r10094218/apply/applymanually",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://airliquidehr.wd3.myworkdayjobs.com/en-us/airliquideexternalcareer/job/commerciale---lombardia-nord_r10094218",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://solenis.wd1.myworkdayjobs.com/en-us/solenis/job/commerciale-junior-b2b--lombardia-_r0028690/apply/applymanually",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://airliquidehr.wd3.myworkdayjobs.com/pl-pl/airliquideexternalcareer/job/commerciale---lombardia-nord_r10094218/apply/autofillwithresume",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://solenis.wd1.myworkdayjobs.com/fr-fr/solenis/job/commerciale-junior-b2b--lombardia-_r0028690/apply/applymanually",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://ttiemea.wd3.myworkdayjobs.com/es/tti/job/fme-jss_jr2275",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://lyreco.wd3.myworkdayjobs.com/da-dk/lyreco_careers/job/dpi-sales-specialist----divisione-antinfortunistica-lombardia_jr-1000030109",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://bdrthermea.wd103.myworkdayjobs.com/external/job/bassano-del-grappa/application-engineer-lombardia-e-piemonte---engineering-team-specialist-lombardia-e-piemonte_r103642",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://bdrthermea.wd103.myworkdayjobs.com/de-de/external/job/application-engineer-lombardia-e-piemonte---engineering-team-specialist-lombardia-e-piemonte_r103642",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://teamsystem.wd103.myworkdayjobs.com/teamsystem/job/italy-milano/junior-sales-consultant---enterprise-solutions---lombardia_jr0000001693",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://gsk.wd5.myworkdayjobs.com/en-us/gskcareers/job/area-manager-severe-asthma---nasal-polyps----lombardia_442246",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://jj.wd5.myworkdayjobs.com/jj/job/milano-italy/informatore-scientifico-del-farmaco---immunologia---lombardia--piemonte--tempo-determinato----_r-086249",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://ing.wd3.myworkdayjobs.com/it-it/icsgblcor/job/agente-in-attivit-finanziaria---percorso-beginner_req-10083295",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://convatec.wd1.myworkdayjobs.com/de-de/convatec/job/territory-manager---lombardia_jr00018297",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://moog.wd5.myworkdayjobs.com/fr-fr/moog_external_career_site/job/tecnico-commerciale-oleodinamica-industriale_r-25-15348",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://jj.wd5.myworkdayjobs.com/en-us/jj/job/informatore-scientifico-del-farmaco---immunologia---lombardia--piemonte--tempo-determinato----_r-086249",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://bdrthermea.wd103.myworkdayjobs.com/zh-cn/external/job/help-desk-specialist_r103627-1",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://dedalus.wd3.myworkdayjobs.com/pt-br/external/job/ita---milan---trinita/project-manager_jr107017",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://otis.wd5.myworkdayjobs.com/da-dk/rec_ext_gateway/job/tecnici-ascensoristi-manutentori--lombardia_20155906",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.forte-group.it/lavora-con-noi/posizioni-aperte",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.castaldosolutions.it/articles/blog/7-cose-pmi-non-caricare-chatgpt",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.brand039.com/blog",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.pagepersonnel.it/jobs/commerciale/page_action/aggregate",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.vianova.it/lavora-con-noi",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.europrotex.it/lavora-con-noi",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.spsproject.net/lavora-con-noi-opportunita",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.jobijoba.it/annunci-di-lavoro/13/dc10cdaa099acff6acb2e3d879326a11",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.tready.it/web-marketing-articoli-news/content-marketing-b2b-esempi-pratici-2026",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.trovoagente.it/ricerca-venditori-annuncio.php?rif=514597",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.assolombarda.it/servizi/internazionalizzazione/informazioni/bando-export-su-misura",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://vigilpro.it/istituto-di-vigilanza-milano",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://squaremarketing.it/trovare-clienti-con-linkedin-la-guida-completa",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.innovhub-ssi.it/progetti/een/rete-een.kl",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.trabajo.org/offerta-1389-99664d5327cf9c3ca2942a195366343b",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.indeed.com/q-azienda-commerciale-l-milano,-lombardia-offerte-lavoro.html",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://formazione.promositalia.com/corsi/corsi-multipli/go-global-costruire-e-sviluppare-relazioni-commerciali-nei-mercati-esteri.kl",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.jooble.org/lavoro-area-manager/lombardia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.indeed.com/q-b2b-offerte-lavoro.html",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.michaelpage.it/jobs/commerciale/italia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.cairorcsmedia.it/lavora-con-noi",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://inrecruiting.intervieweb.it/cespim/jobs/commerciale-piva-area-milano-716991/it/?d=google-jobs",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.linkedin.com/jobs/stage-area-commerciale-offerte-di-lavoro-milano-lm?trk=public_jobs_search-for-more-jobs-link",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://careers.verisure.com/it/it/job/r2022100220/consulente-commerciale-milano",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.pagepersonnel.it/jobs/commerciale-estero",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://carriera.noicompriamoauto.it/jobs/commerciale-telefonico-milano-modalit-ibrida-40779",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://auto1-group.com/it/jobs/commerciale-telefonico-milano-40779",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.subito.it/annunci-lombardia/vendita/cerco-lavoro/milano/?q=commerciale",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://lavoro.jobtech.it/annuncio/commerciale-milano-healthtech",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.applavoro.it/annunci-lavoro-milano",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.careerjet.it/offerte-lavoro-back-office-commerciale/milano",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.afolmet.it/offerte-lavoro",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.risorse.it/offerte-di-lavoro/commerciale-business-development-/lombardia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.umana.it/per-le-persone/campagne/lavorare-a-melzo-mi-e-in-provincia-di-milano",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.altiprofili.it/candidati/ricerche-in-corso",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.indeed.com/q-commerciale-junior-l-milano,-lombardia-offerte-lavoro.html",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.lhh.com/it-it/cerca-lavoro/direttore-commerciale-milano-milano/jn-122025-918558",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.clubmedjobs.com/it/occupazione/milan-lombardy-italy-satıs-jobs/2619/32114880/3175395-3174618-3173434-6542283-3173435/4",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://jobs.iziwork.com/it/offerta-lavoro/back-office-commerciale-milano-20-1327667718/candidati",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.jooble.org/lavoro-ufficio-commerciale/milano",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://synsphere.it/partner-microsoft",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.kennew.it/contatti/lavora-con-noi",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://promositalia.com/media/notizie/bando-masterclass-pid-2026-go-to-market-usa-per-le-imprese-del-sistema-casa.kl",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.pagepersonnel.it/jobs/tecnico-commerciale",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.oto.agency/blog/come-funziona-whatsapp-business-guida-completa-per-imprese-e-marketer",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.comark.it/ecommerce-b2b-cosa-e-come-funziona-perche-importante-pmi",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.bconsole.com/tour-guidati",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.passepartout.net/software/gestionale-aziendale",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.hangler.it/web-agency-bergamo",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.nur.it/focus/1194/agenzia-geo-lombardia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.sit-web.it",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.bluenext.it/it/azienda",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.assolombarda.it/servizi/internazionalizzazione/informazioni/bando-connessi-2026",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.ifoa.it/corsi/pd_marketing_market_developer",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://mgpg.it/2020/03/03/metodo-aida-nella-vendita",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.nebu.it/aree/provincia-di-mantova",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.indeed.com/q-grandi-aziende-l-bergamo,-lombardia-offerte-lavoro.html",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.jooble.org/lavoro-più-richiesti/bergamo",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.lavoraconnoi.com/annunci/?search=nespresso+b2b+sales+account+bergamo&loc=remote",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.linkedin.com/jobs/back-office-commerciale-offerte-di-lavoro-brescia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://careers.verisure.com/it/it/job/r2021120311/commerciale-con-benefit-auto-brescia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.pagepersonnel.it/jobs/commerciale/brescia-e-provincia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.nettowork.it/posizioni-aperte/tecnico-commerciale-brescia-bergamo",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://pitchmeai.com/jobs/deliveroo/commerciale-atsmr6a9kff5rubdm8fep",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://bebee.com/it/jobs/role/tecnico-commerciale/brescia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.cercolavoro.com/offerte-di-lavoro-brescia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://careers.deliveroo.co.uk/role/commerciale-brescia-ftc-12-months-f4afbb437f80/apply",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.jooble.org/jdp/6085962579437986778",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.subito.it/annunci-lombardia/vendita/offerte-lavoro/brescia/?q=commerciale",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.risorse.it/offerte-di-lavoro/lombardia/brescia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://brescia.bakeca.it/annunci/sales-agenti-promoter-commerciali/?keyword=responsabile+commerciale",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://jobtech.it/candidati/annuncio/agente-di-commercio-brescia?ref=talent",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.indeed.com/q-candidati-in-cerca-lavoro-l-brescia,-lombardia-offerte-lavoro.html",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://mango.wd3.myworkdayjobs.com/it-it/mango_work_your_passion/job/stage-visual-merchandiser_jr132265-1",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://verisure.wd3.myworkdayjobs.com/en-us/equest/job/consulente-commerciale-junior_r2026020902/apply/applymanually",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://verisure.wd3.myworkdayjobs.com/en-us/vonqjp/job/consulente-commerciale-junior_r2026020902-1",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://airliquidehr.wd3.myworkdayjobs.com/airliquideexternalcareer/job/italy-brescia/informatore-medico-scientifico---f-m-_r10095178",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://otis.wd5.myworkdayjobs.com/en-us/rec_ext_gateway/job/tecnici-ascensoristi-con-patentino-italia_20156321",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://otis.wd5.myworkdayjobs.com/it-it/rec_ext_gateway/job/tecnici-ascensoristi-con-patentino-italia_20156321",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://otis.wd5.myworkdayjobs.com/es/rec_ext_gateway/job/tecnici-ascensoristi-con-patentino-italia_20156321",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://sellagroup.wd3.myworkdayjobs.com/it-it/id01",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://lyreco.wd3.myworkdayjobs.com/de-de/lyreco_careers/job/field-based---france/attach-commercial-b2b-pme--h-f----st-brieuc_jr-1000023419",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://sedgwick.wd1.myworkdayjobs.com/en-us/sedgwick/job/expert-en-responsabilit-civile-commerciale---claims-adjuster---liability-commercial_r50265",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://mouvrh.wd103.myworkdayjobs.com/fr-fr/external_career_site_fresh",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://unilever.wd3.myworkdayjobs.com/unilever_experienced_professionals/4/refreshfacet/318c8bb6f553100021d223d9780d30be",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-fr/airbus",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-fr/airbus/job/export-control-support-manager--h-f-_jr10388084",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://galileo.wd3.myworkdayjobs.com/fr-fr/esg-finance-alternance/job/alternance---conseiller-en-gestion-de-patrimoine--h-f--_r-23081",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://northbridgefinancial.wd3.myworkdayjobs.com/fr-ca/nbfc/job/associate-underwriter--mid-market--quebec-city-_r4876-1",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://hackerone.com/brave",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://status.brave.app",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://careers.lodestar.eu/job/01-2026-sales-account-manager",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://dlike.it/lavora-con-noi",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.bancaifis.it/chi-siamo/lavora-con-noi/chi-stiamo-cercando",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.pagepersonnel.it/jobs/commerciale/brescia-e-provincia?page=1",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.menatcode.it/it/lavora-con-noi",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://dracmaservice.it/lavora-con-noi",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://assix.it/lavora-con-noi-2",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://cving.com/en/job-offers/brescia/consulente-di-vendita-lombardia?p=1&index_start=-5180&order=1&orp=true&verified=true&ea=1&id=5336391",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.dexanet.com/lavora-con-noi",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://pclab.bs.it/analisi-dati-intelligenza-artificiale-pmi-brescia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.nebu.it/aree/provincia-di-brescia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.opensourcemanagement.it/come-attrarre-i-talenti-migliori-in-azienda-la-guida-per-imprenditori",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://mgpg.it/2026/05/14/local-seo-per-pmi",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://neoweb.it/it/realizzazione-siti-web-borno.html",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.indeed.com/q-grandi-aziende-l-brescia,-lombardia-offerte-lavoro.html",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://areajob.it",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.lhh.com/it-it/cerca-lavoro/business-development-manager-fotovoltaico-b2b-brescia-milano/jn-072026-1123925",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.jooble.org/lavoro-web-marketing/brescia",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.oriens.consulting/consulenza/strategy",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://envea.wd103.myworkdayjobs.com/en-us/externalcareersite/job/tecnico-commerciale---sales-engineer_jr100171",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://verisure.wd3.myworkdayjobs.com/vonqjp/job/venditore---monza_r2022100225-3",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://envea.wd103.myworkdayjobs.com/en-us/externalcareersite/job/ita-verano-brianza/tecnico-commerciale---sales-engineer_jr100171/apply/usemylastapplication?source=linkedin",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.gruppoitaliaretail.it/blog-detail/post/319466/modello-di-business-canvas-applicato-a-una-pmi-manifatturiera-caso-pratico",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.sixor.it/blog/2026/05/20/sito-web-in-brianza",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.pagepersonnel.it/jobs/industriali/sector-sales",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://getmuffin.io/partner",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://bulltech.it/azienda-informatica-milano",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.tready.it/web-agency-lombardia-agenzia-marketing",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://it.jobsora.com/lavoro-business-agent-bardi",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://innovafinance.com/novita-e-approfondimenti/startup-e-pmi-innovative-da-dove-iniziare",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.assolombarda.it/servizi/internazionalizzazione/informazioni/stati-uniti-masterclass-pid-2026-un2019opportunita-strategica-per-le-pmi-del-sistema-casa",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.artser.it/approfondimenti/progetto-export-italia-armenia-2026-nuove-opportunita-b2b-per-macchinari-industriali-e-packaging.html",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://neoweb.it/it/realizzazione-siti-web-servizi-b2b.html",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.abbrevia.it/sviluppo-business/analisi-mercati-potenziali-b2b",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://mercuri.it/insights/assistente-commerciale-cosa-fa",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://comunicazioneitaliana.net/persone/andrea-malacrida",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.esprinet.com/it",
+      "query": "",
+      "query_source": "unknown"
+    },
+    {
+      "url": "https://www.randstad.it/offerte-lavoro/q-commerciale-estero/re-lombardia/ci-muggio/page-3",
+      "query": "",
+      "query_source": "unknown"
+    }
+  ],
+  "zero_yield_sources": [],
+  "query_stats": [
+    {
+      "query_key": "serp:local_vacancy:commerciale:Lombardia:\"commerciale\" \"Lombardia\" (\"posizione aperta\" OR candidati OR apply)",
+      "query": "\"commerciale\" \"Lombardia\" (\"posizione aperta\" OR candidati OR apply)",
+      "query_source": "serp:local_vacancy",
+      "results_returned": 20,
+      "urls_new": 20,
+      "cost_eur": 0.005
+    },
+    {
+      "query_key": "serp:ats:commerciale:Lombardia:\"commerciale\" \"Lombardia\" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)",
+      "query": "\"commerciale\" \"Lombardia\" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)",
+      "query_source": "serp:ats",
+      "results_returned": 20,
+      "urls_new": 20,
+      "cost_eur": 0.005
+    },
+    {
+      "query_key": "serp:careers:commerciale:Lombardia:\"commerciale\" \"lavora con noi\" PMI e aziende B2B Lombardia",
+      "query": "\"commerciale\" \"lavora con noi\" PMI e aziende B2B Lombardia",
+      "query_source": "serp:careers",
+      "results_returned": 20,
+      "urls_new": 20,
+      "cost_eur": 0.005
+    },
+    {
+      "query_key": "serp:local_vacancy:commerciale:Milano:\"commerciale\" \"Milano\" (\"posizione aperta\" OR candidati OR apply)",
+      "query": "\"commerciale\" \"Milano\" (\"posizione aperta\" OR candidati OR apply)",
+      "query_source": "serp:local_vacancy",
+      "results_returned": 20,
+      "urls_new": 20,
+      "cost_eur": 0.005
+    },
+    {
+      "query_key": "serp:careers:commerciale:Bergamo:\"commerciale\" \"lavora con noi\" PMI e aziende B2B Bergamo",
+      "query": "\"commerciale\" \"lavora con noi\" PMI e aziende B2B Bergamo",
+      "query_source": "serp:careers",
+      "results_returned": 20,
+      "urls_new": 19,
+      "cost_eur": 0.005
+    },
+    {
+      "query_key": "serp:local_vacancy:commerciale:Brescia:\"commerciale\" \"Brescia\" (\"posizione aperta\" OR candidati OR apply)",
+      "query": "\"commerciale\" \"Brescia\" (\"posizione aperta\" OR candidati OR apply)",
+      "query_source": "serp:local_vacancy",
+      "results_returned": 14,
+      "urls_new": 14,
+      "cost_eur": 0.005
+    },
+    {
+      "query_key": "serp:ats:commerciale:Brescia:\"commerciale\" \"Brescia\" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)",
+      "query": "\"commerciale\" \"Brescia\" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)",
+      "query_source": "serp:ats",
+      "results_returned": 19,
+      "urls_new": 19,
+      "cost_eur": 0.005
+    },
+    {
+      "query_key": "serp:careers:commerciale:Brescia:\"commerciale\" \"lavora con noi\" PMI e aziende B2B Brescia",
+      "query": "\"commerciale\" \"lavora con noi\" PMI e aziende B2B Brescia",
+      "query_source": "serp:careers",
+      "results_returned": 20,
+      "urls_new": 19,
+      "cost_eur": 0.005
+    },
+    {
+      "query_key": "serp:ats:commerciale:Brianza:\"commerciale\" \"Brianza\" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)",
+      "query": "\"commerciale\" \"Brianza\" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)",
+      "query_source": "serp:ats",
+      "results_returned": 3,
+      "urls_new": 3,
+      "cost_eur": 0.005
+    },
+    {
+      "query_key": "serp:careers:commerciale:Brianza:\"commerciale\" \"lavora con noi\" PMI e aziende B2B Brianza",
+      "query": "\"commerciale\" \"lavora con noi\" PMI e aziende B2B Brianza",
+      "query_source": "serp:careers",
+      "results_returned": 20,
+      "urls_new": 16,
+      "cost_eur": 0.005
+    }
+  ],
+  "prefetch_traces": [
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    },
+    {
+      "url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "canonical_url": "https://ag.wd3.myworkdayjobs.com/fr-ca/airbus/job/bristol-area/supply-chain-business-improvement-manager_jr10413494-1",
+      "source_domain": "ag.wd3.myworkdayjobs.com",
+      "source_class": "company_careers",
+      "priority": 1,
+      "preliminary_employer": "ag",
+      "preliminary_role": "",
+      "preliminary_location": "",
+      "prefetch_accept": true,
+      "prefetch_reject": false,
+      "rejection_code": "ACCEPTED",
+      "query_source": "unknown",
+      "query": ""
+    }
+  ]
+}

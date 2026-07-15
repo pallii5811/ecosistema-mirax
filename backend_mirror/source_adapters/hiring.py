@@ -25,9 +25,19 @@ from .hiring_budget import (
     URLS_PER_BATCH,
     encode_discovery_cursor,
     load_discovery_state,
+    url_outcomes_map,
 )
 from .hiring_recruiter import enrich_record_with_recruiter_fields
-from .hiring_url_queue import build_priority_queue
+from .hiring_url_queue import build_processing_batch
+from .hiring_ats_parsers import (
+    bootstrap_legacy_retry_urls,
+    build_greenhouse_api_url,
+    build_teamtailor_json_url,
+    build_workday_cxs_url,
+    classify_failure_for_retry,
+    detect_ats_vendor,
+    parse_vacancy_html,
+)
 
 from .contracts import (
     AdapterDiscoveryRequest,
@@ -228,11 +238,16 @@ def _jsonld_records(html: str, source_url: str) -> List[Dict[str, Any]]:
     return [dict(item) for item in extract_jobposting_leads(html, source_url)]
 
 
-def parse_hiring_page(html: str, source_url: str) -> List[Dict[str, Any]]:
-    """Parse acquired HTML; generic careers pages never become vacancies."""
-    structured = _jsonld_records(html, source_url)
-    if structured:
-        return structured
+def parse_hiring_page(
+    html: str,
+    source_url: str,
+    *,
+    structured_json: Optional[Mapping[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Parse acquired HTML/JSON into vacancy records."""
+    parsed = parse_vacancy_html(html, source_url, structured_json=structured_json)
+    if parsed.records:
+        return [dict(item) for item in parsed.records]
     if not _specific_vacancy_url(source_url):
         return []
     host = _host(source_url)
@@ -304,6 +319,7 @@ def _normalize_rejection_code(code: str) -> str:
     mapping = {
         "GENERIC_CAREERS_PAGE": "NOT_INDIVIDUAL_VACANCY",
         "VACANCY_TITLE_MISSING": "NOT_INDIVIDUAL_VACANCY",
+        "LISTING_PAGE": "LISTING_PAGE",
         "HIRING_ROLE_MISMATCH": "ROLE_MISMATCH",
         "OPERATIONAL_ROLE_UNPROVEN": "ROLE_MISMATCH",
         "VACANCY_STALE": "STALE_VACANCY",
@@ -312,12 +328,75 @@ def _normalize_rejection_code(code: str) -> str:
         "HIRING_COMPANY_MISSING": "EMPLOYER_UNRESOLVED",
         "DIRECT_EMPLOYER_UNVERIFIED": "EMPLOYER_UNRESOLVED",
         "RECRUITER_WITHOUT_EMPLOYER": "RECRUITER_FINAL_EMPLOYER_UNRESOLVED",
-        "FETCH_FAILED": "FETCH_TIMEOUT",
+        "FETCH_FAILED": "FETCH_HTTP_ERROR",
         "FETCH_EXCEPTION": "FETCH_TIMEOUT",
         "PARSE_EMPTY": "PARSE_FAILED",
         "FETCH_OR_PARSE_EMPTY": "PARSE_FAILED",
+        "AGGREGATOR_WITHOUT_EMPLOYER": "AGGREGATOR_WITHOUT_EMPLOYER",
     }
     return mapping.get(code, code or "PARSE_FAILED")
+
+
+async def _fetch_ats_structured_json(client: Any, url: str, html: str) -> Optional[Mapping[str, Any]]:
+    import asyncio
+
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (compatible; MIRAX-Hiring/1.0)",
+    }
+    candidates: List[str] = []
+    vendor = detect_ats_vendor(url)
+    if vendor == "workday":
+        api = build_workday_cxs_url(url, html)
+        if api:
+            candidates.append(api)
+    elif vendor == "teamtailor":
+        api = build_teamtailor_json_url(url)
+        if api:
+            candidates.append(api)
+    elif vendor == "greenhouse":
+        api = build_greenhouse_api_url(url)
+        if api:
+            candidates.append(api)
+    for api in candidates:
+        try:
+            response = await asyncio.wait_for(client.get(api, headers=headers), timeout=10.0)
+            if response.status_code != 200:
+                continue
+            content_type = str(response.headers.get("content-type") or "").lower()
+            if "json" not in content_type:
+                continue
+            payload = response.json()
+            if isinstance(payload, Mapping):
+                return payload
+        except Exception:
+            continue
+    return None
+
+
+def _append_url_outcome(state: HiringDiscoveryState, outcome: Mapping[str, Any]) -> None:
+    canonical = str(outcome.get("canonical_url") or outcome.get("url") or "").lower().rstrip("/")
+    if not canonical:
+        return
+    rows = [dict(item) for item in state.url_outcomes if isinstance(item, Mapping)]
+    for index, item in enumerate(rows):
+        key = str(item.get("canonical_url") or item.get("url") or "").lower().rstrip("/")
+        if key == canonical:
+            rows[index] = dict(outcome)
+            state.url_outcomes = tuple(rows)
+            return
+    rows.append(dict(outcome))
+    state.url_outcomes = tuple(rows)
+
+
+def _update_retry_queue(state: HiringDiscoveryState, url: str, rejection_code: str, *, is_retry: bool) -> None:
+    canonical = url.lower().rstrip("/")
+    retry = [item for item in state.retry_urls if item.lower().rstrip("/") != canonical]
+    if rejection_code == "ACCEPTED" or not classify_failure_for_retry(rejection_code):
+        state.retry_urls = tuple(retry)
+        return
+    retry.insert(0, url)
+    state.retry_urls = tuple(dict.fromkeys(retry))
 
 
 def _url_query_meta_from_state(state: HiringDiscoveryState) -> Dict[str, Tuple[str, str]]:
@@ -418,7 +497,18 @@ async def _default_hiring_provider(
     state.query_stats = tuple(query_stats)
     state.discovery_spent_eur = round(state.discovery_spent_eur + queries_run * QUERY_COST_EUR, 6)
 
-    queue_pending = state.url_offset < len(urls)
+    if state.parser_epoch < 2:
+        boot = bootstrap_legacy_retry_urls(
+            state.seen_urls,
+            state.url_offset,
+            parser_epoch=state.parser_epoch,
+            url_outcomes=url_outcomes_map(state),
+        )
+        if boot:
+            state.retry_urls = tuple(dict.fromkeys([*state.retry_urls, *boot]))
+        state.parser_epoch = 2
+
+    queue_pending = state.url_offset < len(urls) or bool(state.retry_urls)
     if not queue_pending and queries_run == 0:
         exhausted = discovery_locked and state.query_index >= len(query_pairs)
         return HiringProviderResult(
@@ -429,8 +519,14 @@ async def _default_hiring_provider(
     traces: List[Dict[str, Any]] = []
     prefetch_traces = list(state.prefetch_traces)
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Hiring/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
-    batch_cap = min(limit, URLS_PER_BATCH, queue_pending)
-    priority_queue = build_priority_queue(urls, url_query_meta, start_offset=state.url_offset)[:batch_cap]
+    batch_cap = min(limit, URLS_PER_BATCH, max(queue_pending, len(state.retry_urls)))
+    priority_queue = build_processing_batch(
+        urls,
+        url_query_meta,
+        retry_urls=state.retry_urls,
+        start_offset=state.url_offset,
+        batch_cap=batch_cap,
+    )
     domain_active: Dict[str, int] = {}
     urls_processed = 0
 
@@ -439,33 +535,43 @@ async def _default_hiring_provider(
             url = str(item.get("url") or "")
             if not url:
                 continue
+            is_retry = bool(item.get("is_retry"))
             prefetch_traces.append(dict(item))
+            canonical = url.lower().rstrip("/")
+            base_outcome: Dict[str, Any] = {
+                "url": url,
+                "canonical_url": canonical,
+                "source_domain": item.get("source_domain"),
+                "source_class": item.get("source_class"),
+                "priority": item.get("priority"),
+                "ats_vendor": detect_ats_vendor(url),
+            }
             if not item.get("prefetch_accept"):
+                rejection = _normalize_rejection_code(str(item.get("rejection_code") or "NOT_INDIVIDUAL_VACANCY"))
                 traces.append({
-                    "url": url,
+                    **base_outcome,
                     "query": item.get("query") or "",
                     "query_source": item.get("query_source") or "unknown",
-                    "rejection_code": _normalize_rejection_code(str(item.get("rejection_code") or "NOT_INDIVIDUAL_VACANCY")),
+                    "rejection_code": rejection,
                     "rejection_function": "classify_url_prefetch",
-                    "source_class": item.get("source_class"),
-                    "priority": item.get("priority"),
-                    "canonical_url": item.get("canonical_url"),
-                    "source_domain": item.get("source_domain"),
                     "prefetch_accept": False,
+                    "url_state": "rejected_final",
                 })
-                state.url_offset += 1
+                _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "rejected_final"})
+                if not is_retry:
+                    state.url_offset += 1
+                else:
+                    _update_retry_queue(state, url, rejection, is_retry=True)
                 urls_processed += 1
                 continue
             host = str(item.get("source_domain") or _host(url))
             if domain_active.get(host, 0) >= 2:
-                traces.append({
-                    "url": url,
-                    "query": item.get("query") or "",
-                    "query_source": item.get("query_source") or "unknown",
-                    "rejection_code": "FETCH_TIMEOUT",
-                    "rejection_function": "domain_rate_limit",
-                })
-                state.url_offset += 1
+                rejection = "FETCH_TIMEOUT"
+                traces.append({**base_outcome, "rejection_code": rejection, "rejection_function": "domain_rate_limit", "url_state": "retryable_parser_failure"})
+                _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure"})
+                _update_retry_queue(state, url, rejection, is_retry=is_retry)
+                if not is_retry:
+                    state.url_offset += 1
                 urls_processed += 1
                 continue
             domain_active[host] = domain_active.get(host, 0) + 1
@@ -473,30 +579,80 @@ async def _default_hiring_provider(
             query_source = str(item.get("query_source") or "unknown")
             try:
                 response = await asyncio.wait_for(client.get(url), timeout=12.0)
-                if response.status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
-                    traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="FETCH_TIMEOUT"))
-                    state.url_offset += 1
+                base_outcome.update({
+                    "http_status": response.status_code,
+                    "content_type": str(response.headers.get("content-type") or ""),
+                    "response_bytes": len(response.content or b""),
+                    "final_url": str(response.url),
+                })
+                if response.status_code != 200:
+                    rejection = "FETCH_HTTP_ERROR"
+                    traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
+                    _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure", "fetch_success": False})
+                    _update_retry_queue(state, url, rejection, is_retry=is_retry)
+                    if not is_retry:
+                        state.url_offset += 1
                     urls_processed += 1
                     continue
-                parsed = [enrich_record_with_recruiter_fields(row) for row in parse_hiring_page(response.text[:2_000_000], str(response.url))]
+                html = response.text[:2_000_000]
+                structured_json = await _fetch_ats_structured_json(client, url, html)
+                parsed_result = parse_vacancy_html(html, str(response.url), structured_json=structured_json)
+                base_outcome.update({
+                    "fetch_success": True,
+                    "javascript_shell": parsed_result.javascript_shell,
+                    "jsonld_jobposting_count": parsed_result.jsonld_count,
+                    "parser_selected": parsed_result.parser_id,
+                })
+                parsed = [enrich_record_with_recruiter_fields(row) for row in parsed_result.records]
                 if not parsed:
-                    traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="PARSE_FAILED"))
-                    state.url_offset += 1
+                    rejection = _normalize_rejection_code(parsed_result.failure_code or "PARSE_FAILED")
+                    traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
+                    _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure" if classify_failure_for_retry(rejection) else "rejected_final", "parser_result": "empty"})
+                    _update_retry_queue(state, url, rejection, is_retry=is_retry)
+                    if not is_retry:
+                        state.url_offset += 1
                     urls_processed += 1
                     continue
+                accepted = False
                 for record in parsed:
                     valid, rejection = _validate_record(record, request, date.today())
                     normalized = _normalize_rejection_code(rejection)
                     traces.append(_trace_url(
                         url=url, query=query, query_source=query_source, record=record, rejection=normalized,
                     ))
+                    _append_url_outcome(state, {
+                        **base_outcome,
+                        "vacancy_title": record.get("vacancy_title") or record.get("hiring_title"),
+                        "employer": record.get("company_name") or record.get("name"),
+                        "location": record.get("location"),
+                        "publication_date": record.get("published_at") or record.get("evidence_date"),
+                        "validation_result": "accepted" if valid else normalized,
+                        "rejection_code": "ACCEPTED" if valid else normalized,
+                        "url_state": "accepted" if valid else ("rejected_final" if not classify_failure_for_retry(normalized) else "retryable_parser_failure"),
+                        "parser_result": "success",
+                    })
                     if valid:
                         records.append(record)
+                        accepted = True
+                    elif not classify_failure_for_retry(normalized):
+                        _update_retry_queue(state, url, normalized, is_retry=is_retry)
+                if not accepted:
+                    last_code = str(traces[-1].get("rejection_code") or "PARSE_FAILED") if traces else "PARSE_FAILED"
+                    _update_retry_queue(state, url, last_code, is_retry=is_retry)
             except asyncio.TimeoutError:
-                traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="FETCH_TIMEOUT"))
+                rejection = "FETCH_TIMEOUT"
+                traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
+                _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure", "fetch_success": False})
+                _update_retry_queue(state, url, rejection, is_retry=is_retry)
             except Exception:
-                traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="FETCH_TIMEOUT"))
-            state.url_offset += 1
+                rejection = "FETCH_BLOCKED"
+                traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
+                _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure", "fetch_success": False})
+                _update_retry_queue(state, url, rejection, is_retry=is_retry)
+            if not is_retry:
+                state.url_offset += 1
+            elif traces and traces[-1].get("rejection_code") == "ACCEPTED":
+                _update_retry_queue(state, url, "ACCEPTED", is_retry=True)
             urls_processed += 1
 
     state.prefetch_traces = tuple(prefetch_traces)
@@ -506,6 +662,7 @@ async def _default_hiring_provider(
         actual_cost = round(queries_run * QUERY_COST_EUR, 6)
     exhausted = (
         state.url_offset >= len(urls)
+        and not state.retry_urls
         and (discovery_locked or state.query_index >= len(query_pairs))
     )
     return HiringProviderResult(
@@ -825,5 +982,14 @@ class HiringAdapter:
                 "queue_total_urls": len(discovery_state.seen_urls),
                 "queue_pending_urls": discovery_state.queue_pending(),
                 "urls_processed_total": discovery_state.url_offset,
+                "queue_retry_urls": len(discovery_state.retry_urls),
+                "url_outcomes_count": len(discovery_state.url_outcomes),
+                "parser_epoch": discovery_state.parser_epoch,
+                "acquisition": {
+                    "hiring_discovery": discovery_state.to_dict(),
+                    "url_traces": list(url_traces),
+                    "url_outcomes": list(discovery_state.url_outcomes),
+                    "prefetch_traces": list(discovery_state.prefetch_traces),
+                },
             },
         )
