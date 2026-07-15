@@ -143,6 +143,19 @@ def test_geography_freshness_and_requested_count_are_enforced(kwargs: dict, reas
     assert any(item.endswith(f":{reason}") for item in coverage.reasons)
 
 
+@pytest.mark.parametrize("italian_alias", ["Italia", "italia", "IT", "ITA"])
+def test_italian_geography_alias_selects_structured_adapter_without_fallback(italian_alias: str) -> None:
+    procurement = StubAdapter(capability("procurement_adapter", ("tender_won",), geography=("italy", "eu")))
+    fallback = StubAdapter(capability("generic_web_adapter", ("*",), geography=("global",), fallback=True))
+    coverage = SourceCapabilityRegistry((procurement, fallback)).resolve(
+        request(("tender_won",), geography=(italian_alias,)),
+        required_source_classes=("procurement_source",),
+    )
+    assert coverage.status == "supported"
+    assert coverage.adapter_ids == ("procurement_adapter",)
+    assert coverage.missing_signals == ()
+
+
 def test_boundary_normalizer_promotes_verified_domain_and_canonical_evidence() -> None:
     candidate = normalize_opportunity_candidate({
         "entity_name": "Acme S.r.l.",

@@ -12,6 +12,20 @@ def _normalized(values: Iterable[str]) -> set[str]:
     return {str(value).strip().lower() for value in values if str(value).strip()}
 
 
+def _normalized_geographies(values: Iterable[str]) -> set[str]:
+    aliases = {
+        "italia": "italy",
+        "italiano": "italy",
+        "italiana": "italy",
+        "it": "italy",
+        "ita": "italy",
+    }
+    return {
+        aliases.get(value, value)
+        for value in _normalized(values)
+    }
+
+
 @dataclass(frozen=True)
 class CapabilityCoverage:
     status: CoverageStatus
@@ -53,7 +67,7 @@ class SourceCapabilityRegistry:
     ) -> CapabilityCoverage:
         required_signals = _normalized(request.signal_ids)
         requested_sources = _normalized(required_source_classes)
-        geography = _normalized(request.geographies)
+        geography = _normalized_geographies(request.geographies)
         eligible: List[SourceCapability] = []
         generic: List[SourceCapability] = []
         rejection_reasons: List[str] = []
@@ -70,7 +84,7 @@ class SourceCapabilityRegistry:
             source_classes = _normalized(capability.source_classes)
             if requested_sources and not requested_sources.intersection(source_classes):
                 continue
-            supported_geo = _normalized(capability.geographic_coverage)
+            supported_geo = _normalized_geographies(capability.geographic_coverage)
             if geography and "global" not in supported_geo and not geography.intersection(supported_geo):
                 rejection_reasons.append(f"{capability.adapter_id}:geography")
                 continue

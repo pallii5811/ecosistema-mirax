@@ -5023,6 +5023,24 @@ def main() -> None:
                         "lifecycle_qualified": len(lifecycle_accepted),
                         "rejected": shadow_result.progress.rejected_count,
                         "rejection_codes": dict(shadow_result.rejection_codes),
+                        "coverage_status": shadow_result.coverage.status,
+                        "selected_adapters": list(shadow_result.coverage.adapter_ids),
+                        "missing_signals": list(shadow_result.coverage.missing_signals),
+                        "coverage_reasons": list(shadow_result.coverage.reasons),
+                        "adapter_telemetry": [
+                            {
+                                "adapter_id": item.adapter_id,
+                                "calls": item.calls,
+                                "operations": item.operations,
+                                "raw_candidates": item.raw_candidates,
+                                "unique_candidates": item.unique_candidates,
+                                "qualified": item.qualified,
+                                "cost_eur": item.cost_eur,
+                                "exhausted": item.exhausted,
+                                "warnings": list(item.warnings),
+                            }
+                            for item in shadow_result.adapter_progress
+                        ],
                         "published": 0,
                         "cost_eur": shadow_result.cost_eur,
                         "updated_at": _utc_now_iso(),
