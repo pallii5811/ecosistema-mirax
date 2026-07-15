@@ -829,7 +829,7 @@ async def _default_hiring_provider(
         tuple(records),
         exhausted,
         actual_cost,
-        ("QUEUE_ONLY" if discovery_locked and queries_run == 0 else ()),
+        (("QUEUE_ONLY",) if discovery_locked and queries_run == 0 else ()),
         tuple(traces),
         state,
         urls_processed,
