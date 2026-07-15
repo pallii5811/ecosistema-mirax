@@ -284,6 +284,7 @@ try {
   ])
   assert.deepEqual(digital.target.industries, ['imprese di pulizia'])
   assert.deepEqual(digital.target.geographies, ['Milano'])
+  assert.deepEqual(digital.target.entity_types, ['company'])
   assert.equal(digital.audit_policy.detect_technologies, true)
   assert.ok(digital.source_policy.allowed_source_classes.includes('technology_audit'))
   assert.ok(digital.commercial_hypotheses.every((item) => item.signals.length > 0))
