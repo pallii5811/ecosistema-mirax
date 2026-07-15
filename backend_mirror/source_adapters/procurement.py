@@ -136,6 +136,26 @@ def _target_tokens(request: AdapterDiscoveryRequest) -> set[str]:
     }
 
 
+def _geography_matches(record: Mapping[str, Any], request: AdapterDiscoveryRequest) -> bool:
+    requested = {item.casefold().strip() for item in request.geographies if item.strip()}
+    if not requested:
+        return True
+    source_id = (_text(record.get("source_id")) or "").casefold()
+    geography = (_text(record.get("geography") or record.get("province") or record.get("region")) or "").casefold()
+    geo_tokens = set(re.findall(r"[a-z0-9]+", geography))
+    italy_requested = bool(requested.intersection({"italy", "italia", "it", "ita"}))
+    country_matches = bool(
+        source_id == "anac_opendata"
+        or geo_tokens.intersection({"italy", "italia", "italian", "it", "ita"})
+        or any(token.startswith("it") and 3 <= len(token) <= 5 for token in geo_tokens)
+    )
+    local_requested = requested.difference({"italy", "italia", "it", "ita"})
+    local_matches = any(item in geography for item in local_requested)
+    if local_requested:
+        return bool(local_matches and (country_matches if italy_requested else True))
+    return bool(country_matches if italy_requested else True)
+
+
 def _record_is_valid(record: Mapping[str, Any], request: AdapterDiscoveryRequest, today: date) -> Tuple[bool, str]:
     name = _text(record.get("winner_name") or record.get("company_name"))
     role = (_text(record.get("role")) or "").lower()
@@ -153,9 +173,7 @@ def _record_is_valid(record: Mapping[str, Any], request: AdapterDiscoveryRequest
         return False, "AWARD_DATE_MISSING"
     if request.freshness_max_age_days is not None and (today - date.fromisoformat(awarded_at)).days > request.freshness_max_age_days:
         return False, "AWARD_STALE"
-    requested_geo = {item.casefold() for item in request.geographies if item.casefold() not in {"italy", "italia"}}
-    record_geo = (_text(record.get("geography") or record.get("province") or record.get("region")) or "").casefold()
-    if requested_geo and not any(item in record_geo for item in requested_geo):
+    if not _geography_matches(record, request):
         return False, "GEOGRAPHY_MISMATCH"
     tokens = _target_tokens(request)
     title = (_text(record.get("title") or record.get("object")) or "").lower()
@@ -209,7 +227,7 @@ async def _ted_provider(request: AdapterDiscoveryRequest, offset: int, limit: in
     page = offset // max(1, limit) + 1
     result = await discover_ted_awards(
         list(request.sectors) or [request.query],
-        location=next((geo for geo in request.geographies if geo.lower() not in {"italy", "italia"}), ""),
+        location=next((geo for geo in request.geographies if str(geo).strip()), ""),
         page=page,
         limit=limit,
     )

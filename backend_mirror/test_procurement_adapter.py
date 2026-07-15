@@ -16,6 +16,7 @@ from backend_mirror.source_adapters import (
     ProcurementProviderResult,
 )
 from backend_mirror.source_adapters.catalog import default_source_capability_registry
+from backend_mirror.source_adapters.procurement import _ted_provider
 from backend_mirror.ted_client import parse_ted_award_notice
 
 
@@ -155,6 +156,68 @@ def test_unverified_domain_resolution_never_promotes_candidate() -> None:
     result = asyncio.run(ProcurementAdapter((one_provider,), domain_resolver=unresolved).discover(request(count=1)))
     assert result.candidates == ()
     assert "OFFICIAL_DOMAIN_UNRESOLVED" in result.warnings
+
+
+def test_country_only_target_rejects_foreign_ted_before_domain_cost() -> None:
+    italian, foreign = fixture_rows()[0], fixture_rows()[1]
+    italian.update({"source_id": "ted_europa", "geography": "ITC4 Lombardia", "official_domain": "https://italian.example"})
+    foreign.update({"source_id": "ted_europa", "geography": "FR France", "official_domain": "https://foreign.example"})
+
+    async def one_provider(_request, _offset, _limit):
+        return ProcurementProviderResult((foreign, italian), True, 0.0)
+
+    calls = []
+
+    async def resolver(name, presented_url, _location, _budget):
+        calls.append(name)
+        return await verified_domain(name, presented_url, _location, _budget)
+
+    italy_only = AdapterDiscoveryRequest(
+        intent="public_procurement", signal_ids=("tender_won",), signal_match_mode="all",
+        geographies=("Italia",), freshness_max_age_days=30, requested_count=5,
+        budget_eur=0.125, query="imprese edili italiane", sectors=("imprese edili",),
+        technical_filters={},
+    )
+    result = asyncio.run(ProcurementAdapter((one_provider,), domain_resolver=resolver).discover(italy_only))
+
+    assert [candidate.canonical_company_name for candidate in result.candidates] == [italian["winner_name"]]
+    assert calls == [italian["winner_name"]]
+    assert "GEOGRAPHY_MISMATCH" in result.warnings
+
+
+def test_anac_records_are_intrinsically_italian_for_country_only_target() -> None:
+    row = fixture_rows()[0]
+    row.update({"source_id": "anac_opendata", "geography": "Lombardia", "official_domain": "https://anac-winner.example"})
+
+    async def one_provider(_request, _offset, _limit):
+        return ProcurementProviderResult((row,), True, 0.0)
+
+    italy_only = AdapterDiscoveryRequest(
+        intent="public_procurement", signal_ids=("tender_won",), signal_match_mode="all",
+        geographies=("Italia",), freshness_max_age_days=30, requested_count=1,
+        budget_eur=0.125, query="imprese edili italiane", sectors=("imprese edili",),
+        technical_filters={},
+    )
+    result = asyncio.run(adapter((one_provider,)).discover(italy_only))
+    assert len(result.candidates) == 1
+
+
+def test_ted_provider_keeps_country_in_discovery_query(monkeypatch) -> None:
+    captured = {}
+
+    async def fake_discover(keywords, *, location, page, limit):
+        captured.update({"keywords": keywords, "location": location, "page": page, "limit": limit})
+        return {"records": [], "exhausted": True, "cost_eur": 0.0}
+
+    monkeypatch.setattr("backend_mirror.ted_client.discover_ted_awards", fake_discover)
+    italy_only = AdapterDiscoveryRequest(
+        intent="public_procurement", signal_ids=("tender_won",), signal_match_mode="all",
+        geographies=("Italia",), freshness_max_age_days=30, requested_count=5,
+        budget_eur=0.125, query="imprese edili italiane", sectors=("edilizia",),
+        technical_filters={},
+    )
+    asyncio.run(_ted_provider(italy_only, 0, 20))
+    assert captured["location"] == "Italia"
 
 
 def test_ted_parser_requires_award_and_explicit_winner() -> None:
