@@ -1185,6 +1185,7 @@ export function isSignalLedAbstractQuery(query: string, requiredSignals: string[
 
 function isNegativeMarketingAuditQuery(query: string): boolean {
   return /\b(?:senza|no|manca\w*)\s+(?:google\s+ads|meta\s+(?:ads|pixel)|facebook\s+pixel)\b/i.test(query)
+    || /\b(?:assenza|senza|mancanza)\s+(?:di\s+)?(?:strumenti?\s+di\s+)?(?:tracciamento|tracking)\s+(?:pubblicitario|advertising)\b/i.test(query)
 }
 
 function signalLedAgenticSector(plan: MiraxQueryPlan, query: string): string {

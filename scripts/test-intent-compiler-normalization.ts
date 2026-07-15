@@ -242,6 +242,58 @@ try {
     lane.expected_evidence.includes(required) && lane.source_types.some((source) => sourceSupportsSignal(source, required)))),
   'every signal in a multi-signal ERP plan must have an executable compatible source lane')
   assert.equal(fetchCalls, 6)
+
+  const exactDigitalQuery = 'Trova imprese di pulizia a Milano con sito ufficiale, criticità SEO e assenza di strumenti di tracciamento pubblicitario.'
+  const digitalFixture = JSON.parse(
+    fs.readFileSync('contracts/fixtures/commercial-search-plan.valid.json', 'utf8'),
+  ) as Record<string, any>
+  digitalFixture.seller = {
+    offer_category: null,
+    offer_description: 'Audit tecnico del sito aziendale',
+    products_or_services: [],
+    problems_solved: [],
+    preferred_buyer_roles: [],
+    sales_motion: null,
+  }
+  digitalFixture.target.industries = ['Servizi generici']
+  digitalFixture.target.entity_types = ['company']
+  digitalFixture.target.geographies = []
+  digitalFixture.signal_policy.required_signals = []
+  digitalFixture.signal_policy.optional_signals = []
+  digitalFixture.signal_policy.maximum_age_days_by_signal = {}
+  digitalFixture.source_policy.allowed_source_classes = ['official_company_website']
+  digitalFixture.source_policy.preferred_source_classes = ['official_company_website']
+  digitalFixture.commercial_hypotheses = []
+  digitalFixture.audit_policy.detect_technologies = false
+  globalThis.fetch = async () => {
+    fetchCalls += 1
+    return new Response(JSON.stringify({
+      usage: { input_tokens: 70, output_tokens: 35 },
+      content: [{ type: 'tool_use', name: 'submit_commercial_search_plan', input: digitalFixture }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const digitalDiagnostics: unknown[] = []
+  const digital = await compileCommercialSearchPlan(exactDigitalQuery, {
+    searchId: '00000000-0000-0000-0000-000000000007', requestedLeadCount: 5,
+    costMeter: meter, allowRepair: false,
+    onDiagnostic: (diagnostic) => digitalDiagnostics.push(diagnostic),
+  })
+  assert.ok(digital, `exact digital audit query must compile: ${JSON.stringify(digitalDiagnostics)}`)
+  assert.deepEqual(digital.signal_policy.required_signals.sort(), [
+    'missing_advertising_pixel', 'missing_analytics', 'website_weakness',
+  ])
+  assert.deepEqual(digital.target.industries, ['imprese di pulizia'])
+  assert.deepEqual(digital.target.geographies, ['Milano'])
+  assert.equal(digital.audit_policy.detect_technologies, true)
+  assert.ok(digital.source_policy.allowed_source_classes.includes('technology_audit'))
+  assert.ok(digital.commercial_hypotheses.every((item) => item.signals.length > 0))
+  const digitalExecutable = canonicalPlanToLegacy(digital)
+  assert.equal(digitalExecutable.search_strategy, 'maps')
+  assert.equal(digitalExecutable.sector, 'imprese di pulizia')
+  assert.equal(digitalExecutable.location, 'Milano')
+  assert.equal(digitalExecutable.source_coverage?.status, 'supported')
+  assert.ok(digitalExecutable.source_coverage?.adapter_ids.includes('legacy_digital_audit_v1'))
+  assert.equal(fetchCalls, 7, 'exact-query regression must use one mocked compiler response and no repair')
   console.log('Intent compiler normalization: safe structural + ontology causal completion; no repair call')
 } finally {
   globalThis.fetch = priorFetch

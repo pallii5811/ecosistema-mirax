@@ -210,6 +210,7 @@ function normalizePayload(
     : []
 
   const deterministicSignalFloor = canonicalSignals(parseSignalIntentHeuristic(query).required_signals)
+  const deterministicIntent = parseSignalIntentHeuristic(query)
   const inferredSeller = inferSellerBuyerProfile(query)
   const explicitSellerOffer = query.match(
     /\b(?:vendo|offro|fornisco)\s+(.+?)(?::|,|;|\s+trov\w*|\s+cerc\w*|\s+a\s+chi|\.|$)/i,
@@ -343,17 +344,25 @@ function normalizePayload(
   for (const signal of requiredSignals) {
     if (causalHypotheses.some((hypothesis) => (hypothesis.signals as string[]).includes(signal))) continue
     const definition = getSignalDefinition(signal)
-    if (!definition || normalizedSellerProducts.length === 0 || normalizedSellerProblems.length === 0) continue
+    if (!definition) continue
+    if (
+      (normalizedSellerProducts.length === 0 || normalizedSellerProblems.length === 0)
+      && definition.family !== 'digital'
+    ) continue
     const buyerCondition = definition.applicableProblems[0]
-    const sellerProblem = normalizedSellerProblems[0]
+    const sellerProblem = normalizedSellerProblems[0] || buyerCondition
     const product = normalizedSellerProducts[0]
     causalHypotheses.push({
       id: `ontology-${signal}`,
-      buyer_problem: `Il buyer affronta ${buyerCondition}; il seller risolve ${sellerProblem}.`,
+      buyer_problem: `La verifica di ${definition.description} evidenzia ${buyerCondition}; il seller risolve ${sellerProblem}.`,
       triggering_events: definition.relatedEvents.slice(0, 3),
       signals: [signal],
-      implied_need: `Valutare ${product} per gestire ${buyerCondition} nel momento in cui il segnale viene verificato.`,
-      relevance_to_offer: `${definition.description} rende attuale ${sellerProblem} e giustifica la valutazione di ${product}.`,
+      implied_need: product
+        ? `Valutare ${product} per gestire ${buyerCondition} nel momento in cui il segnale viene verificato.`
+        : `Correggere ${buyerCondition} quando il segnale ${signal} viene verificato direttamente.`,
+      relevance_to_offer: product
+        ? `${definition.description} rende attuale ${sellerProblem} e giustifica la valutazione di ${product}.`
+        : `${definition.description} rende attuale il problema ${buyerCondition} esplicitamente richiesto nella ricerca.`,
       confidence: Math.max(0.7, definition.defaultStrength),
     })
   }
@@ -405,13 +414,20 @@ function normalizePayload(
   target.entity_types = stringArray(target.entity_types).length ? stringArray(target.entity_types) : ['company']
   target.industries = stringArray(target.industries)
   target.company_sizes = stringArray(target.company_sizes)
-  const targetGeographies = stringArray(target.geographies)
+  let targetGeographies = stringArray(target.geographies)
   const targetExcludedAttributes = stringArray(target.excluded_attributes)
   target.geographies = targetGeographies
   target.required_attributes = stringArray(target.required_attributes)
   target.excluded_attributes = targetExcludedAttributes
   target.excluded_entities = stringArray(target.excluded_entities)
   target.local_business_preference = target.local_business_preference === true
+  // Literal category and geography are hard query constraints. The model may
+  // enrich them, but it cannot replace or drop what deterministic parsing saw.
+  if (deterministicIntent.category) {
+    target.industries = [deterministicIntent.category]
+    target.entity_types = [deterministicIntent.category]
+  }
+  if (deterministicIntent.location) targetGeographies = [deterministicIntent.location]
   if (/\b(?:italia|italian[aei])\b/i.test(query) && !targetGeographies.some((value) => /italia/i.test(value))) {
     targetGeographies.push('Italia')
   }
@@ -442,7 +458,9 @@ function normalizePayload(
     maximum_pages: Math.max(1, Math.min(100, Math.trunc(Number(audit.maximum_pages) || 8))),
     collect_contacts: audit.collect_contacts !== false,
     collect_social_profiles: audit.collect_social_profiles !== false,
-    detect_technologies: audit.detect_technologies === true,
+    detect_technologies: audit.detect_technologies === true || inferredDefinitions.some(
+      (definition) => definition.family === 'digital',
+    ),
     detect_commercial_signals: audit.detect_commercial_signals !== false,
   }
 

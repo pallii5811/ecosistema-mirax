@@ -32,4 +32,16 @@ const categoryOnly = buildHeuristicMiraxQueryPlan('Trovami imprese di pulizia a 
 assert.equal(categoryOnly.search_strategy, 'maps')
 assert.ok(categoryOnly.source_plan?.some((lane) => lane.coverage_status === 'supported'))
 
+const exact = buildHeuristicMiraxQueryPlan(
+  'Trova imprese di pulizia a Milano con sito ufficiale, criticità SEO e assenza di strumenti di tracciamento pubblicitario.',
+)
+assert.equal(exact.sector, 'imprese di pulizia')
+assert.equal(exact.location, 'Milano')
+assert.equal(exact.search_strategy, 'maps')
+assert.ok(exact.required_signals.includes('site_stale'))
+assert.ok(exact.required_signals.includes('no_pixel'))
+assert.ok(exact.required_signals.includes('no_gtm'))
+assert.equal(exact.source_plan?.find((lane) => lane.lane === 'technology')?.coverage_status, 'supported')
+assert.ok(exact.source_plan?.find((lane) => lane.lane === 'technology')?.adapter_ids?.includes('legacy_digital_audit_v1'))
+
 console.log('digital audit adapter routing: OK')

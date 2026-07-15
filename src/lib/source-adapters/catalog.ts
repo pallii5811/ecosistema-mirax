@@ -153,6 +153,7 @@ export const DIGITAL_AUDIT_CAPABILITY: SourceCapability = {
   supported_intents: ['maps', 'hybrid', 'digital_audit', 'commercial_search'],
   supported_signals: [
     'company_identity', 'website_weakness', 'site_stale', 'missing_analytics',
+    'missing_advertising_pixel',
     'no_pixel', 'no_gtm', 'outdated_technology', 'cybersecurity_exposure',
     'no_dmarc', 'seo_errors', 'missing_instagram', 'missing_google_ads',
   ],
