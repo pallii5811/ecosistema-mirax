@@ -78,7 +78,7 @@ def test_source_adapter_shadow_worker_branch_cannot_publish_or_sync_graph():
     branch = source.split("# The v5 source-adapter path is an isolated evaluation lane.", 1)[1]
     branch = branch.split("if not _agentic_only:", 1)[0]
     assert "shadow_mode=True" in branch
-    assert '"results": []' in branch
+    assert '"results": lifecycle_accepted' in branch
     assert '"published": 0' in branch
     assert "_publish_job_results_safe" not in branch
     assert "_sync_neo4j" not in branch

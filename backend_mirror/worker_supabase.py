@@ -4932,8 +4932,9 @@ def main() -> None:
             _agentic_only = _is_agentic_only_job(intent)
 
             # The v5 source-adapter path is an isolated evaluation lane. It is
-            # default-off, never falls back to legacy acquisition, never writes
-            # customer results and never invokes graph/customer publication.
+            # default-off, never falls back to legacy acquisition and never
+            # invokes graph/customer publication. Qualified shadow payloads may
+            # be returned in the owning staging search row for live UI review.
             if _source_adapter_shadow_is_requested(intent):
                 from commercial_lifecycle import persist_and_publish_candidates
                 from source_adapters.shadow_runtime import (
@@ -5047,7 +5048,7 @@ def main() -> None:
                     }
                     supabase.table("searches").update({
                         "status": "completed",
-                        "results": [],
+                        "results": lifecycle_accepted,
                         "worker_id": None,
                         "heartbeat_at": None,
                         "lease_expires_at": None,

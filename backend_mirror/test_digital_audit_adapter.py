@@ -108,6 +108,18 @@ def test_any_mode_and_domain_dedup_are_deterministic() -> None:
     assert result.exhaustion.exhausted is True
 
 
+def test_canonical_missing_advertising_pixel_signal_is_supported() -> None:
+    async def fake_runner(**_kwargs):
+        return fixture_rows()[:1]
+
+    result = asyncio.run(DigitalAuditAdapter(fake_runner).discover(request(
+        signals=("missing_advertising_pixel",),
+        count=1,
+    )))
+    assert len(result.candidates) == 1
+    assert result.candidates[0].signal_id == "missing_advertising_pixel"
+
+
 def test_runtime_registry_and_source_bindings_are_truthful() -> None:
     capabilities = default_source_capability_registry().capabilities()
     assert {item.adapter_id for item in capabilities} == {

@@ -29,6 +29,7 @@ _TECHNICAL_SIGNALS = (
     "website_weakness",
     "site_stale",
     "missing_analytics",
+    "missing_advertising_pixel",
     "no_pixel",
     "no_gtm",
     "outdated_technology",
@@ -79,6 +80,7 @@ def _confirmed_signal_values(raw: Mapping[str, Any]) -> Dict[str, str]:
         return confirmed
     if raw.get("meta_pixel") is False and audit.get("has_facebook_pixel") is False:
         confirmed["no_pixel"] = "Meta/Facebook Pixel absent in direct HTML audit"
+        confirmed["missing_advertising_pixel"] = "Meta/Facebook Pixel absent in direct HTML audit"
     if raw.get("google_tag_manager") is False and audit.get("has_gtm") is False:
         confirmed["no_gtm"] = "Google Tag Manager absent in direct HTML audit"
     if technical.get("has_ga4") is False:

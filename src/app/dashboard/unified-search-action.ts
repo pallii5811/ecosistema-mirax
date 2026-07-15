@@ -329,6 +329,61 @@ async function unifiedSearchActionCore(
   const scrapeCategory = inferMapsCategoryFromPlan(plan, query, intent)
   const workerPayload = workerIntentPayload(intent, query, plan)
 
+  // The staging UI can opt into the already-existing v5 source-adapter lane.
+  // Production remains fail-closed unless this explicit server-side flag is set.
+  if (envFlag('MIRAX_UI_SOURCE_ADAPTER_SHADOW_ENABLED') && plan.canonical_plan) {
+    let sourceAdapterJob
+    try {
+      sourceAdapterJob = await requestAgenticWorkerJob(supabase, {
+        query,
+        maxLeads: desiredMax,
+        userId,
+        location,
+        sector: scrapeCategory,
+        intent: {
+          ...workerPayload,
+          lifecycle_stage: 'v5_shadow',
+          customer_visible: false,
+          prepare_only: false,
+          execution_authorized: true,
+          source_adapter_shadow: true,
+          canonical_plan_prevalidated: true,
+        },
+        plan: {
+          ...plan,
+          canonical_plan: plan.canonical_plan,
+        },
+        existingSearchId: planningSearchId,
+      })
+    } catch (error) {
+      if (planningSearchId) {
+        await cancelAgenticPlanningJob(supabase, planningSearchId, 'source_adapter_ui_activation_failed')
+      }
+      throw error
+    }
+
+    return {
+      results: [],
+      status: 'pending',
+      jobId: sourceAdapterJob.jobId,
+      searchId: sourceAdapterJob.searchId,
+      filters,
+      user_message: 'Ricerca live evidence-first avviata in staging.',
+      ai_debug: {
+        ...aiDebug,
+        source: 'source_adapter_shadow_ui',
+        billing_suppressed: true,
+        customer_visible: false,
+        max_leads: desiredMax,
+      },
+      cache_meta: {
+        source: 'source_adapter_shadow_ui',
+        canonical_job_id: sourceAdapterJob.jobId,
+        needs_more_scrape: true,
+      },
+    }
+  }
+
   if (plan.search_strategy === 'organic_web_search') {
     let agenticJob
     try {

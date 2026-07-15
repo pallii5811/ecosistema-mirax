@@ -72,6 +72,7 @@ export function useSearchJob(
   const activeFiltersRef = useRef(activeFilters)
   const applyInFlightRef = useRef(false)
   const chargedLeadCountRef = useRef(0)
+  const billingSuppressedRef = useRef(false)
 
   useEffect(() => {
     queryRef.current = query
@@ -128,7 +129,9 @@ export function useSearchJob(
       const cap = clampSearchMaxLeads(maxLeads, creditsRef.current)
       const display = filtered.slice(0, cap)
       const newCount = Math.max(0, display.length - chargedLeadCountRef.current)
-      if (newCount > 0) await deductCredits(newCount, activeJobIdRef.current)
+      if (newCount > 0 && !billingSuppressedRef.current) {
+        await deductCredits(newCount, activeJobIdRef.current)
+      }
       chargedLeadCountRef.current = Math.max(chargedLeadCountRef.current, display.length)
       commitDisplay(display)
 
@@ -176,7 +179,7 @@ export function useSearchJob(
         )
       }
 
-      const shouldCharge = completed || (!signalFocused && !finalized)
+      const shouldCharge = !billingSuppressedRef.current && (completed || (!signalFocused && !finalized))
       if (shouldCharge) {
         const newCount = Math.max(0, display.length - chargedLeadCountRef.current)
         if (newCount > 0) await deductCredits(newCount, activeJobIdRef.current)
@@ -344,6 +347,7 @@ export function useSearchJob(
       queryRef.current = q
       agenticSearchRef.current = false
       chargedLeadCountRef.current = 0
+      billingSuppressedRef.current = false
       completionMessageRef.current = null
 
       const parsedIntent = parseSignalIntentOffline(q)
@@ -363,6 +367,10 @@ export function useSearchJob(
         const sid = (response as Record<string, unknown>)?.searchId ?? jobId ?? null
         const filters = (response as Record<string, unknown>)?.filters
         const ai_debug = (response as Record<string, unknown>)?.ai_debug
+        billingSuppressedRef.current = Boolean(
+          ai_debug && typeof ai_debug === 'object' &&
+          (ai_debug as Record<string, unknown>).billing_suppressed === true,
+        )
         const userMessage =
           typeof (response as Record<string, unknown>)?.user_message === 'string'
             ? String((response as Record<string, unknown>).user_message)

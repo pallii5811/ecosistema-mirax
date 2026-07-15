@@ -172,6 +172,42 @@ def test_default_provider_reserves_before_every_query_and_never_exceeds_budget(m
     assert none.cost_eur == 0
 
 
+@pytest.mark.parametrize(
+    ("signal", "expected_term"),
+    [
+        ("hiring_sales", "business developer"),
+        ("hiring_marketing", "performance marketer"),
+    ],
+)
+def test_default_provider_uses_the_requested_specialized_role(monkeypatch, signal, expected_term) -> None:
+    calls: list[str] = []
+
+    def fake_search(query, _limit, *, cost_scope):
+        calls.append(query)
+        return []
+
+    class EmptyClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr("backend_mirror.agents.search_serp.search_urls_http", fake_search)
+    monkeypatch.setattr("httpx.AsyncClient", EmptyClient)
+    specialized = replace(
+        request(count=5, budget=0.015),
+        signal_ids=(signal,),
+        geographies=("Lombardia", "Italia"),
+    )
+    asyncio.run(_default_hiring_provider(specialized, 0, 20))
+    assert len(calls) == 3
+    assert all(expected_term in query for query in calls)
+
+
 def test_registry_binds_both_hiring_source_classes_to_real_runtime() -> None:
     from backend_mirror.source_adapters.catalog import default_source_capability_registry
 

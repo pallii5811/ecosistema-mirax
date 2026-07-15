@@ -193,12 +193,21 @@ async def _default_hiring_provider(
     from backend_mirror.agents.search_serp import search_urls_http
 
     location = next((item for item in request.geographies if item.casefold() not in {"italy", "italia"}), "Italia")
-    role = "personale operativo" if "hiring_operational" in request.signal_ids else "personale"
+    if "hiring_sales" in request.signal_ids:
+        role_clause = '(commerciale OR sales OR "sales manager" OR "business developer")'
+    elif "hiring_marketing" in request.signal_ids:
+        role_clause = '(marketing OR "marketing manager" OR "social media manager" OR "performance marketer")'
+    elif "hiring_technology" in request.signal_ids:
+        role_clause = '(developer OR software OR "data engineer" OR devops)'
+    elif "hiring_operational" in request.signal_ids:
+        role_clause = '(operaio OR tecnico OR magazziniere OR autista)'
+    else:
+        role_clause = '(personale OR posizione)'
     sector = " ".join(request.sectors)
     queries = (
-        f'"{role}" "{location}" ("posizione aperta" OR "candidati")',
-        f'"{role}" "{location}" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)',
-        f'"{role}" "lavora con noi" {sector} {location}'.strip(),
+        f'{role_clause} "{location}" ("posizione aperta" OR candidati)',
+        f'{role_clause} "{location}" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)',
+        f'{role_clause} "lavora con noi" {sector} {location}'.strip(),
     )
     max_queries = min(len(queries), math.floor((request.budget_eur + 1e-9) / _ESTIMATED_SEARCH_QUERY_EUR))
     if max_queries <= 0:
