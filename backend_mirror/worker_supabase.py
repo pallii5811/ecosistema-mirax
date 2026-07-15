@@ -4500,6 +4500,25 @@ def main() -> None:
             rows = []
             expected_pending_status = "pending"
             if search_id_filter:
+                # Recover a stale lease on the targeted search before claiming it.
+                try:
+                    targeted = (
+                        supabase.table("searches")
+                        .select("id,status,created_at,heartbeat_at,lease_expires_at")
+                        .eq("id", search_id_filter)
+                        .limit(1)
+                        .execute()
+                        .data
+                        or []
+                    )
+                    if targeted and targeted[0].get("status") == "processing" and is_processing_job_stale(targeted[0]):
+                        payload: Dict[str, Any] = {"status": "pending"}
+                        if _lease_supported:
+                            payload.update({"worker_id": None, "heartbeat_at": None, "lease_expires_at": None})
+                        supabase.table("searches").update(payload).eq("id", search_id_filter).eq("status", "processing").execute()
+                        print(f"[worker_supabase] Recovery: reset stale processing search_id={search_id_filter} -> pending", flush=True)
+                except Exception as recovery_error:
+                    print(f"[worker_supabase] Targeted recovery skipped: {recovery_error}", flush=True)
                 resp = (
                     supabase.table("searches")
                     .select("*")

@@ -29,8 +29,10 @@ class HiringDiscoveryState:
     domain_spent_eur: float = 0.0
     executed_query_keys: Tuple[str, ...] = ()
     seen_urls: Tuple[str, ...] = ()
+    url_meta: Tuple[Mapping[str, Any], ...] = ()
     zero_yield_sources: Tuple[str, ...] = ()
     query_stats: Tuple[Mapping[str, Any], ...] = ()
+    prefetch_traces: Tuple[Mapping[str, Any], ...] = ()
 
     @property
     def total_spent_eur(self) -> float:
@@ -45,6 +47,12 @@ class HiringDiscoveryState:
             return 0
         return min(QUERIES_PER_BATCH, int(math.floor(self.discovery_remaining_eur() / QUERY_COST_EUR)))
 
+    def discovery_locked(self) -> bool:
+        return self.discovery_remaining_eur() + 1e-9 < QUERY_COST_EUR
+
+    def queue_pending(self) -> int:
+        return max(0, len(self.seen_urls) - self.url_offset)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "query_index": self.query_index,
@@ -54,8 +62,10 @@ class HiringDiscoveryState:
             "domain_spent_eur": round(self.domain_spent_eur, 6),
             "executed_query_keys": list(self.executed_query_keys),
             "seen_urls": list(self.seen_urls),
+            "url_meta": [dict(item) for item in self.url_meta],
             "zero_yield_sources": list(self.zero_yield_sources),
             "query_stats": [dict(item) for item in self.query_stats],
+            "prefetch_traces": [dict(item) for item in self.prefetch_traces],
         }
 
     @classmethod
@@ -70,8 +80,14 @@ class HiringDiscoveryState:
             domain_spent_eur=float(payload.get("domain_spent_eur") or 0.0),
             executed_query_keys=tuple(str(item) for item in payload.get("executed_query_keys") or ()),
             seen_urls=tuple(str(item) for item in payload.get("seen_urls") or ()),
+            url_meta=tuple(
+                dict(item) for item in payload.get("url_meta") or () if isinstance(item, Mapping)
+            ),
             zero_yield_sources=tuple(str(item) for item in payload.get("zero_yield_sources") or ()),
             query_stats=tuple(dict(item) for item in payload.get("query_stats") or () if isinstance(item, Mapping)),
+            prefetch_traces=tuple(
+                dict(item) for item in payload.get("prefetch_traces") or () if isinstance(item, Mapping)
+            ),
         )
 
 

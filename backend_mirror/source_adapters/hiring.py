@@ -27,6 +27,7 @@ from .hiring_budget import (
     load_discovery_state,
 )
 from .hiring_recruiter import enrich_record_with_recruiter_fields
+from .hiring_url_queue import build_priority_queue
 
 from .contracts import (
     AdapterDiscoveryRequest,
@@ -104,6 +105,8 @@ class HiringProviderResult:
     warnings: Tuple[str, ...] = ()
     url_traces: Tuple[Mapping[str, Any], ...] = ()
     discovery_state: Optional[HiringDiscoveryState] = None
+    urls_processed: int = 0
+    urls_discovered_total: int = 0
 
 
 def _build_hiring_discovery_queries(request: AdapterDiscoveryRequest) -> List[Tuple[str, str, str]]:
@@ -147,7 +150,7 @@ def _trace_url(
         "url": url,
         "query": query,
         "query_source": query_source,
-        "rejection_code": rejection or "FETCH_OR_PARSE_EMPTY",
+        "rejection_code": _normalize_rejection_code(rejection or "FETCH_OR_PARSE_EMPTY"),
         "rejection_function": "_validate_record" if rejection else "parse_hiring_page",
     }
     if record:
@@ -162,7 +165,7 @@ def _trace_url(
             "ats_domain": _text(record.get("vacancy_source_domain")),
             "employer_official_domain": _text(record.get("employer_official_domain")),
             "source": _text(record.get("source_class")),
-            "rejection_code": rejection or "ACCEPTED",
+            "rejection_code": _normalize_rejection_code(rejection or "ACCEPTED"),
             "rejection_function": "_validate_record",
         })
     return trace
@@ -297,6 +300,56 @@ def _governor_committed_eur() -> float:
         return 0.0
 
 
+def _normalize_rejection_code(code: str) -> str:
+    mapping = {
+        "GENERIC_CAREERS_PAGE": "NOT_INDIVIDUAL_VACANCY",
+        "VACANCY_TITLE_MISSING": "NOT_INDIVIDUAL_VACANCY",
+        "HIRING_ROLE_MISMATCH": "ROLE_MISMATCH",
+        "OPERATIONAL_ROLE_UNPROVEN": "ROLE_MISMATCH",
+        "VACANCY_STALE": "STALE_VACANCY",
+        "VACANCY_EXPIRED": "STALE_VACANCY",
+        "OFFICIAL_DOMAIN_UNVERIFIED": "OFFICIAL_DOMAIN_UNRESOLVED",
+        "HIRING_COMPANY_MISSING": "EMPLOYER_UNRESOLVED",
+        "DIRECT_EMPLOYER_UNVERIFIED": "EMPLOYER_UNRESOLVED",
+        "RECRUITER_WITHOUT_EMPLOYER": "RECRUITER_FINAL_EMPLOYER_UNRESOLVED",
+        "FETCH_FAILED": "FETCH_TIMEOUT",
+        "FETCH_EXCEPTION": "FETCH_TIMEOUT",
+        "PARSE_EMPTY": "PARSE_FAILED",
+        "FETCH_OR_PARSE_EMPTY": "PARSE_FAILED",
+    }
+    return mapping.get(code, code or "PARSE_FAILED")
+
+
+def _url_query_meta_from_state(state: HiringDiscoveryState) -> Dict[str, Tuple[str, str]]:
+    meta: Dict[str, Tuple[str, str]] = {}
+    for item in state.url_meta:
+        if not isinstance(item, Mapping):
+            continue
+        url = str(item.get("url") or "").strip()
+        if not url:
+            continue
+        meta[url] = (
+            str(item.get("query") or ""),
+            str(item.get("query_source") or "unknown"),
+        )
+    return meta
+
+
+def _merge_url_meta(
+    existing: Sequence[Mapping[str, Any]],
+    urls: Sequence[str],
+    url_query_meta: Mapping[str, Tuple[str, str]],
+) -> Tuple[Mapping[str, Any], ...]:
+    by_url = {str(item.get("url") or ""): dict(item) for item in existing if isinstance(item, Mapping)}
+    merged: list[Mapping[str, Any]] = []
+    for url in urls:
+        query, query_source = url_query_meta.get(url, ("", "unknown"))
+        row = dict(by_url.get(url) or {})
+        row.update({"url": url, "query": query, "query_source": query_source})
+        merged.append(row)
+    return tuple(merged)
+
+
 async def _default_hiring_provider(
     request: AdapterDiscoveryRequest,
     state: HiringDiscoveryState,
@@ -315,90 +368,156 @@ async def _default_hiring_provider(
         item for item in query_pairs
         if item[0] not in executed and item[2] not in zero_yield
     ][state.query_index:]
+    discovery_locked = state.discovery_locked()
     discovery_budget = min(state.discovery_remaining_eur(), max(0.0, request.budget_eur))
-    max_queries = min(state.max_queries_this_batch(), int(math.floor(discovery_budget / QUERY_COST_EUR)))
-    if max_queries <= 0 or not pending_queries:
-        return HiringProviderResult((), state.url_offset >= len(state.seen_urls), 0.0, ("DISCOVERY_BUDGET_EXHAUSTED",), (), state)
+    max_queries = 0 if discovery_locked else min(
+        state.max_queries_this_batch(),
+        int(math.floor(discovery_budget / QUERY_COST_EUR)),
+    )
     urls: List[str] = list(state.seen_urls)
     seen = set(urls)
-    url_query_meta: Dict[str, Tuple[str, str]] = {}
+    url_query_meta = _url_query_meta_from_state(state)
     query_stats: List[Dict[str, Any]] = list(state.query_stats)
     scope = hashlib.sha256(f"{request.query}|{request.signal_ids}|{request.geographies}".encode()).hexdigest()[:20]
     queries_run = 0
-    for query_key, query, query_source in pending_queries[:max_queries]:
-        if state.discovery_remaining_eur() + 1e-9 < QUERY_COST_EUR:
-            break
-        urls_before = len(urls)
-        found = await asyncio.to_thread(
-            search_urls_http,
-            query,
-            min(30, max(10, limit)),
-            cost_scope=f"hiring-adapter:{scope}:{query_key}",
-        )
-        queries_run += 1
-        state.query_index += 1
-        executed.add(query_key)
-        new_urls = 0
-        for url in found:
-            key = url.lower().rstrip("/")
-            if key not in seen:
-                seen.add(key)
-                urls.append(key)
-                url_query_meta[key] = (query, query_source)
-                new_urls += 1
-        stat = {
-            "query_key": query_key,
-            "query": query,
-            "query_source": query_source,
-            "results_returned": len(found),
-            "urls_new": new_urls,
-            "cost_eur": QUERY_COST_EUR,
-        }
-        query_stats.append(stat)
-        if new_urls == 0:
-            zero_yield.add(query_source)
+    if max_queries > 0 and pending_queries:
+        for query_key, query, query_source in pending_queries[:max_queries]:
+            if state.discovery_remaining_eur() + 1e-9 < QUERY_COST_EUR:
+                break
+            found = await asyncio.to_thread(
+                search_urls_http,
+                query,
+                min(30, max(10, limit)),
+                cost_scope=f"hiring-adapter:{scope}:{query_key}",
+            )
+            queries_run += 1
+            state.query_index += 1
+            executed.add(query_key)
+            new_urls = 0
+            for url in found:
+                key = url.lower().rstrip("/")
+                if key not in seen:
+                    seen.add(key)
+                    urls.append(key)
+                    url_query_meta[key] = (query, query_source)
+                    new_urls += 1
+            query_stats.append({
+                "query_key": query_key,
+                "query": query,
+                "query_source": query_source,
+                "results_returned": len(found),
+                "urls_new": new_urls,
+                "cost_eur": QUERY_COST_EUR,
+            })
+            if new_urls == 0:
+                zero_yield.add(query_source)
     state.executed_query_keys = tuple(sorted(executed))
     state.seen_urls = tuple(urls)
+    state.url_meta = _merge_url_meta(state.url_meta, urls, url_query_meta)
     state.zero_yield_sources = tuple(sorted(zero_yield))
     state.query_stats = tuple(query_stats)
     state.discovery_spent_eur = round(state.discovery_spent_eur + queries_run * QUERY_COST_EUR, 6)
+
+    queue_pending = state.url_offset < len(urls)
+    if not queue_pending and queries_run == 0:
+        exhausted = discovery_locked and state.query_index >= len(query_pairs)
+        return HiringProviderResult(
+            (), exhausted, 0.0, ("DISCOVERY_BUDGET_EXHAUSTED",) if discovery_locked else (), (), state, 0, len(urls),
+        )
+
     records: List[Mapping[str, Any]] = []
     traces: List[Dict[str, Any]] = []
+    prefetch_traces = list(state.prefetch_traces)
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Hiring/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
-    fetch_batch = urls[state.url_offset:state.url_offset + min(limit, URLS_PER_BATCH)]
+    batch_cap = min(limit, URLS_PER_BATCH, queue_pending)
+    priority_queue = build_priority_queue(urls, url_query_meta, start_offset=state.url_offset)[:batch_cap]
+    domain_active: Dict[str, int] = {}
+    urls_processed = 0
+
     async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=headers) as client:
-        for url in fetch_batch:
-            query, query_source = url_query_meta.get(url, ("", "unknown"))
+        for item in priority_queue:
+            url = str(item.get("url") or "")
+            if not url:
+                continue
+            prefetch_traces.append(dict(item))
+            if not item.get("prefetch_accept"):
+                traces.append({
+                    "url": url,
+                    "query": item.get("query") or "",
+                    "query_source": item.get("query_source") or "unknown",
+                    "rejection_code": _normalize_rejection_code(str(item.get("rejection_code") or "NOT_INDIVIDUAL_VACANCY")),
+                    "rejection_function": "classify_url_prefetch",
+                    "source_class": item.get("source_class"),
+                    "priority": item.get("priority"),
+                    "canonical_url": item.get("canonical_url"),
+                    "source_domain": item.get("source_domain"),
+                    "prefetch_accept": False,
+                })
+                state.url_offset += 1
+                urls_processed += 1
+                continue
+            host = str(item.get("source_domain") or _host(url))
+            if domain_active.get(host, 0) >= 2:
+                traces.append({
+                    "url": url,
+                    "query": item.get("query") or "",
+                    "query_source": item.get("query_source") or "unknown",
+                    "rejection_code": "FETCH_TIMEOUT",
+                    "rejection_function": "domain_rate_limit",
+                })
+                state.url_offset += 1
+                urls_processed += 1
+                continue
+            domain_active[host] = domain_active.get(host, 0) + 1
+            query = str(item.get("query") or "")
+            query_source = str(item.get("query_source") or "unknown")
             try:
-                response = await client.get(url)
+                response = await asyncio.wait_for(client.get(url), timeout=12.0)
                 if response.status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
-                    traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="FETCH_FAILED"))
+                    traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="FETCH_TIMEOUT"))
+                    state.url_offset += 1
+                    urls_processed += 1
                     continue
-                parsed = [enrich_record_with_recruiter_fields(item) for item in parse_hiring_page(response.text[:2_000_000], str(response.url))]
+                parsed = [enrich_record_with_recruiter_fields(row) for row in parse_hiring_page(response.text[:2_000_000], str(response.url))]
                 if not parsed:
-                    traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="PARSE_EMPTY"))
+                    traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="PARSE_FAILED"))
+                    state.url_offset += 1
+                    urls_processed += 1
                     continue
                 for record in parsed:
                     valid, rejection = _validate_record(record, request, date.today())
+                    normalized = _normalize_rejection_code(rejection)
                     traces.append(_trace_url(
-                        url=url, query=query, query_source=query_source, record=record, rejection=rejection,
+                        url=url, query=query, query_source=query_source, record=record, rejection=normalized,
                     ))
                     if valid:
                         records.append(record)
+            except asyncio.TimeoutError:
+                traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="FETCH_TIMEOUT"))
             except Exception:
-                traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="FETCH_EXCEPTION"))
-                continue
-    state.url_offset += len(fetch_batch)
+                traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="FETCH_TIMEOUT"))
+            state.url_offset += 1
+            urls_processed += 1
+
+    state.prefetch_traces = tuple(prefetch_traces)
     after_cost = _governor_committed_eur()
     actual_cost = max(0.0, round(after_cost - before_cost, 6))
     if actual_cost <= 0 and queries_run:
         actual_cost = round(queries_run * QUERY_COST_EUR, 6)
     exhausted = (
-        state.discovery_remaining_eur() + 1e-9 < QUERY_COST_EUR
-        and state.url_offset >= len(urls)
-        and state.query_index >= len(query_pairs)
+        state.url_offset >= len(urls)
+        and (discovery_locked or state.query_index >= len(query_pairs))
     )
-    return HiringProviderResult(tuple(records), exhausted, actual_cost, (), tuple(traces), state)
+    return HiringProviderResult(
+        tuple(records),
+        exhausted,
+        actual_cost,
+        ("QUEUE_ONLY" if discovery_locked and queries_run == 0 else ()),
+        tuple(traces),
+        state,
+        urls_processed,
+        len(urls),
+    )
 
 
 def _requires_sme(request: AdapterDiscoveryRequest) -> bool:
@@ -551,6 +670,7 @@ class HiringAdapter:
         provider_results: List[HiringProviderResult] = []
         spent = 0.0
         url_traces: List[Mapping[str, Any]] = []
+        urls_processed_total = 0
         for provider in self._providers:
             remaining = max(0.0, request.budget_eur - spent)
             bounded_request = AdapterDiscoveryRequest(
@@ -576,6 +696,7 @@ class HiringAdapter:
                 raise RuntimeError("HIRING_PROVIDER_EXCEEDED_HARD_COST_CAP")
             provider_results.append(result)
             spent += result.cost_eur
+            urls_processed_total += int(result.urls_processed or 0)
             url_traces.extend(result.url_traces)
         observed = datetime.now(timezone.utc).isoformat()
         candidates: List[OpportunityCandidate] = []
@@ -690,7 +811,7 @@ class HiringAdapter:
                 authoritative=False,
                 next_cursor=next_cursor,
             ),
-            operations=len(discovery_state.seen_urls),
+            operations=urls_processed_total,
             cost_eur=spent,
             started_at=started,
             completed_at=observed,
@@ -701,5 +822,8 @@ class HiringAdapter:
                 "query_stats": list(discovery_state.query_stats),
                 "discovery_spent_eur": discovery_state.discovery_spent_eur,
                 "total_spent_eur": discovery_state.total_spent_eur,
+                "queue_total_urls": len(discovery_state.seen_urls),
+                "queue_pending_urls": discovery_state.queue_pending(),
+                "urls_processed_total": discovery_state.url_offset,
             },
         )
