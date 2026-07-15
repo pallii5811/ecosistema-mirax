@@ -51,7 +51,10 @@ TRACKING_ABSENCE_SIGNALS = frozenset({
 DEFAULT_MAPS_BATCH_SIZE = 15
 DEFAULT_MAPS_BATCH_GROWTH = 10
 DEFAULT_MAPS_MAX_FETCH = 200
-_CURSOR_PREFIX = "da:v1:"
+DEFAULT_RAW_CANDIDATE_BUDGET_MIN = 30
+DEFAULT_RAW_CANDIDATE_BUDGET_MAX = 50
+_CURSOR_PREFIX_V1 = "da:v1:"
+_CURSOR_PREFIX = "da:v2:"
 
 _CANONICAL_CATEGORY_ALIASES: Dict[str, frozenset[str]] = {
     "imprese di pulizia": frozenset({
@@ -152,6 +155,59 @@ def _tech_stack_labels(raw: Mapping[str, Any]) -> set[str]:
     return {str(item).strip().upper() for item in stack if str(item).strip()}
 
 
+def _optional_bool(raw: Mapping[str, Any], *keys: str) -> Optional[bool]:
+    for key in keys:
+        if key not in raw:
+            continue
+        value = raw.get(key)
+        if value is None:
+            continue
+        return bool(value)
+    return None
+
+
+def _ga4_present(raw: Mapping[str, Any], technical: Mapping[str, Any], labels: set[str]) -> bool:
+    if technical.get("has_ga4") is True or raw.get("has_ga4") is True or raw.get("has_google_analytics") is True:
+        return True
+    return "GA4" in labels or "GOOGLE ANALYTICS" in labels
+
+
+def _meta_pixel_present(raw: Mapping[str, Any], audit: Mapping[str, Any], labels: set[str]) -> bool:
+    if raw.get("meta_pixel") is True or raw.get("has_meta_pixel") is True:
+        return True
+    if audit.get("has_facebook_pixel") is True:
+        return True
+    return "Meta Pixel" in labels
+
+
+def _gtm_present(raw: Mapping[str, Any], audit: Mapping[str, Any], labels: set[str]) -> bool:
+    if raw.get("google_tag_manager") is True or raw.get("has_gtm") is True:
+        return True
+    if audit.get("has_gtm") is True:
+        return True
+    return "GTM" in labels
+
+
+def raw_candidate_budget_for(requested_qualified: int, technical_filters: Mapping[str, Any]) -> int:
+    explicit = technical_filters.get("raw_candidate_budget")
+    if explicit is not None:
+        try:
+            return min(DEFAULT_RAW_CANDIDATE_BUDGET_MAX, max(DEFAULT_RAW_CANDIDATE_BUDGET_MIN, int(explicit)))
+        except (TypeError, ValueError):
+            pass
+    return min(DEFAULT_RAW_CANDIDATE_BUDGET_MAX, max(DEFAULT_RAW_CANDIDATE_BUDGET_MIN, requested_qualified * 6))
+
+
+def maps_batch_size_for(technical_filters: Mapping[str, Any]) -> int:
+    explicit = technical_filters.get("maps_batch_size")
+    if explicit is not None:
+        try:
+            return max(1, int(explicit))
+        except (TypeError, ValueError):
+            pass
+    return DEFAULT_MAPS_BATCH_SIZE
+
+
 def _confirmed_signal_values(raw: Mapping[str, Any]) -> Dict[str, str]:
     technical = raw.get("technical_report") if isinstance(raw.get("technical_report"), Mapping) else {}
     audit = raw.get("audit") if isinstance(raw.get("audit"), Mapping) else {}
@@ -161,21 +217,33 @@ def _confirmed_signal_values(raw: Mapping[str, Any]) -> Dict[str, str]:
         confirmed["company_identity"] = "official website observed from the business record"
     if not _audit_succeeded(raw):
         return confirmed
+    pixel_present = _meta_pixel_present(raw, audit, labels)
     pixel_absent = (
-        raw.get("pixel_missing") is True
-        or raw.get("meta_pixel") is False
-        or "MISSING FB PIXEL" in labels
-    ) and audit.get("has_facebook_pixel") is not True and raw.get("meta_pixel") is not True
+        "MISSING FB PIXEL" in labels
+        or raw.get("pixel_missing") is True
+        or (
+            not pixel_present
+            and _optional_bool(raw, "meta_pixel", "has_meta_pixel") is False
+        )
+    )
     if pixel_absent:
         confirmed["no_pixel"] = "Meta/Facebook Pixel absent in direct HTML audit"
         confirmed["missing_advertising_pixel"] = "Meta/Facebook Pixel absent in direct HTML audit"
+    gtm_present = _gtm_present(raw, audit, labels)
     gtm_absent = (
-        raw.get("google_tag_manager") is False
+        _optional_bool(raw, "google_tag_manager", "has_gtm") is False
         or "MISSING GTM" in labels
-    ) and audit.get("has_gtm") is not True and raw.get("google_tag_manager") is not True
+    ) and not gtm_present
     if gtm_absent:
         confirmed["no_gtm"] = "Google Tag Manager absent in direct HTML audit"
-    if technical.get("has_ga4") is False or "MISSING GA4" in labels:
+    ga4_present = _ga4_present(raw, technical, labels)
+    if "MISSING GA4" in labels or (
+        not ga4_present and (
+            technical.get("has_ga4") is False
+            or raw.get("has_ga4") is False
+            or raw.get("has_google_analytics") is False
+        )
+    ):
         confirmed["missing_analytics"] = "GA4 absent in direct technical audit"
     if technical.get("has_google_ads") is False or "MISSING GOOGLE ADS" in labels:
         confirmed["missing_google_ads"] = "Google Ads conversion tag absent in direct technical audit"
@@ -201,6 +269,8 @@ def _confirmed_signal_values(raw: Mapping[str, Any]) -> Dict[str, str]:
         pass
     if "SITO LENTO" in labels and "website_weakness" not in confirmed:
         confirmed["website_weakness"] = "slow homepage observed in direct audit"
+    if raw.get("site_stale") is True or technical.get("site_stale") is True:
+        confirmed["site_stale"] = "site content appears stale in direct audit"
     if raw.get("instagram_missing") is True or audit.get("missing_instagram") is True:
         confirmed["missing_instagram"] = "Instagram profile absent from official website audit"
     return confirmed
@@ -212,10 +282,7 @@ def _tracking_fully_present(raw: Mapping[str, Any]) -> bool:
     technical = raw.get("technical_report") if isinstance(raw.get("technical_report"), Mapping) else {}
     audit = raw.get("audit") if isinstance(raw.get("audit"), Mapping) else {}
     labels = _tech_stack_labels(raw)
-    pixel_ok = raw.get("meta_pixel") is True or audit.get("has_facebook_pixel") is True or "Meta Pixel" in labels
-    ga4_ok = technical.get("has_ga4") is True or "GA4" in labels
-    gtm_ok = raw.get("google_tag_manager") is True or audit.get("has_gtm") is True or "GTM" in labels
-    return pixel_ok and ga4_ok and gtm_ok
+    return _meta_pixel_present(raw, audit, labels) and _ga4_present(raw, technical, labels) and _gtm_present(raw, audit, labels)
 
 
 def _seo_weakness_confirmed(confirmed: Mapping[str, str]) -> bool:
@@ -394,6 +461,58 @@ def project_candidate_from_raw(
     return CandidateProjectionDecision(True, candidate=candidate)
 
 
+def _signal_group_status(
+    request: AdapterDiscoveryRequest,
+    confirmed: Mapping[str, str],
+) -> Tuple[bool, bool, List[str], List[str]]:
+    groups = request.technical_filters.get("signal_groups")
+    seo_ok = _seo_weakness_confirmed(confirmed)
+    tracking_ok = _tracking_absence_confirmed(confirmed)
+    seo_hits = [signal for signal in confirmed if signal in SEO_GROUP_SIGNALS]
+    tracking_hits = [signal for signal in confirmed if signal in TRACKING_ABSENCE_SIGNALS]
+    if isinstance(groups, list) and groups:
+        for group in groups:
+            if not isinstance(group, (list, tuple)):
+                continue
+            group_ids = [str(item) for item in group]
+            if set(group_ids).intersection(SEO_GROUP_SIGNALS):
+                seo_ok = bool(set(group_ids).intersection(confirmed))
+                seo_hits = [signal for signal in group_ids if signal in confirmed]
+            if set(group_ids).intersection(TRACKING_ABSENCE_SIGNALS):
+                tracking_ok = bool(set(group_ids).intersection(confirmed))
+                tracking_hits = [signal for signal in group_ids if signal in confirmed]
+    return seo_ok, tracking_ok, seo_hits, tracking_hits
+
+
+def _audit_payload_summary(raw: Mapping[str, Any]) -> Dict[str, Any]:
+    technical = raw.get("technical_report") if isinstance(raw.get("technical_report"), Mapping) else {}
+    audit = raw.get("audit") if isinstance(raw.get("audit"), Mapping) else {}
+    labels = sorted(_tech_stack_labels(raw))
+    speed = technical.get("load_speed_seconds")
+    if speed is None:
+        speed = technical.get("load_speed_s")
+    if speed is None:
+        speed = raw.get("load_speed_s")
+    return {
+        "website_status": raw.get("website_status"),
+        "website_has_html": raw.get("website_has_html"),
+        "website_error": _text(raw.get("website_error")),
+        "html_errors": raw.get("html_errors"),
+        "seo_disaster": technical.get("seo_disaster"),
+        "load_time_seconds": speed,
+        "site_stale": raw.get("site_stale") if raw.get("site_stale") is not None else technical.get("site_stale"),
+        "has_ga4": technical.get("has_ga4") if technical.get("has_ga4") is not None else raw.get("has_ga4"),
+        "has_google_analytics": raw.get("has_google_analytics"),
+        "has_gtm": audit.get("has_gtm") if audit.get("has_gtm") is not None else raw.get("has_gtm"),
+        "has_meta_pixel": raw.get("has_meta_pixel") if raw.get("has_meta_pixel") is not None else audit.get("has_facebook_pixel"),
+        "meta_pixel": raw.get("meta_pixel"),
+        "google_tag_manager": raw.get("google_tag_manager"),
+        "pixel_missing": raw.get("pixel_missing"),
+        "tech_stack": list(raw.get("tech_stack") or ()),
+        "tech_stack_labels": labels,
+    }
+
+
 def trace_candidate_projection(
     raw: Mapping[str, Any],
     request: AdapterDiscoveryRequest,
@@ -411,27 +530,55 @@ def trace_candidate_projection(
     )
     decision = project_candidate_from_raw(raw, request, observed_at=observed)
     signal_ok, rejection_code, matched = _evaluate_signal_match(raw, request, confirmed)
+    seo_ok, tracking_ok, seo_hits, tracking_hits = _signal_group_status(request, confirmed)
+    audit_summary = _audit_payload_summary(raw)
+    website = _text(raw.get("website") or raw.get("sito"))
     return {
         "company_name": _text(raw.get("business_name") or raw.get("name")),
+        "place_id": _text(raw.get("place_id")),
+        "maps_url": _text(raw.get("maps_url")),
         "maps_category": discovery_category,
         "normalized_category": normalized_category,
+        "category_match": category_ok,
         "category_scoped": category_ok,
         "matched_category_alias": matched_alias,
-        "official_website": _text(raw.get("website") or raw.get("sito")),
+        "official_domain": _domain(website),
+        "official_website": website,
+        "audit_payload": audit_summary,
+        "tech_stack_original": audit_summary.get("tech_stack"),
+        "has_ga4": audit_summary.get("has_ga4"),
+        "has_google_analytics": audit_summary.get("has_google_analytics"),
+        "has_gtm": audit_summary.get("has_gtm"),
+        "has_meta_pixel": audit_summary.get("has_meta_pixel"),
+        "meta_pixel": audit_summary.get("meta_pixel"),
+        "seo_errors": audit_summary.get("html_errors") or audit_summary.get("seo_disaster"),
+        "load_time_seconds": audit_summary.get("load_time_seconds"),
+        "site_stale": audit_summary.get("site_stale"),
         "website_weakness": "website_weakness" in confirmed,
         "website_weakness_evidence": confirmed.get("website_weakness") or confirmed.get("seo_errors"),
         "missing_advertising_pixel": "missing_advertising_pixel" in confirmed,
         "missing_advertising_pixel_evidence": confirmed.get("missing_advertising_pixel") or confirmed.get("no_pixel"),
         "missing_analytics": "missing_analytics" in confirmed,
         "missing_analytics_evidence": confirmed.get("missing_analytics"),
+        "normalized_signals": {
+            "website_weakness": "website_weakness" in confirmed,
+            "missing_advertising_pixel": "missing_advertising_pixel" in confirmed,
+            "missing_analytics": "missing_analytics" in confirmed,
+            "no_gtm": "no_gtm" in confirmed,
+        },
+        "signal_group_seo": {"passed": seo_ok, "matched_signals": seo_hits},
+        "signal_group_tracking": {"passed": tracking_ok, "matched_signals": tracking_hits},
         "signal_match_mode": request.signal_match_mode,
         "signal_groups": request.technical_filters.get("signal_groups"),
         "signal_match_result": signal_ok,
         "matched_signals": matched,
+        "accepted": decision.accepted,
+        "rejected": not decision.accepted,
         "candidate_projection": "pass" if decision.accepted else "fail",
-        "rejection_code": decision.rejection_code or rejection_code,
+        "rejection_code": decision.rejection_code or rejection_code or ("ACCEPTED" if decision.accepted else "PROJECTION_REJECTED"),
         "rejection_function": "project_candidate_from_raw",
         "rejection_details": decision.rejection_details,
+        "observed_at": observed,
     }
 
 
@@ -445,25 +592,35 @@ def _candidate_from_raw(
     return decision.candidate if decision.accepted else None
 
 
-def _parse_cursor(cursor: Optional[DiscoveryCursor]) -> Tuple[int, int]:
-    if cursor is None or not cursor.value.startswith(_CURSOR_PREFIX):
-        return 0, 0
-    payload = cursor.value[len(_CURSOR_PREFIX):]
-    if ":" not in payload:
-        return 0, 0
-    start_text, _, cap_text = payload.partition(":")
-    try:
-        return int(start_text), int(cap_text)
-    except ValueError:
-        return 0, 0
+def _parse_cursor(cursor: Optional[DiscoveryCursor]) -> Tuple[int, int, int]:
+    if cursor is None:
+        return 0, 0, 0
+    if cursor.value.startswith(_CURSOR_PREFIX):
+        payload = cursor.value[len(_CURSOR_PREFIX):]
+        parts = payload.split(":")
+        if len(parts) == 3:
+            try:
+                return int(parts[0]), int(parts[1]), int(parts[2])
+            except ValueError:
+                return 0, 0, 0
+    if cursor.value.startswith(_CURSOR_PREFIX_V1):
+        payload = cursor.value[len(_CURSOR_PREFIX_V1):]
+        if ":" not in payload:
+            return 0, 0, 0
+        start_text, _, cap_text = payload.partition(":")
+        try:
+            return int(start_text), int(cap_text), 0
+        except ValueError:
+            return 0, 0, 0
+    return 0, 0, 0
 
 
-def _build_cursor(start_index: int, fetch_cap: int) -> DiscoveryCursor:
-    return DiscoveryCursor(f"{_CURSOR_PREFIX}{start_index}:{fetch_cap}", exhausted=False)
+def _build_cursor(start_index: int, batch_cap: int, raw_budget: int) -> DiscoveryCursor:
+    return DiscoveryCursor(f"{_CURSOR_PREFIX}{start_index}:{batch_cap}:{raw_budget}", exhausted=False)
 
 
-def _initial_fetch_cap(requested_count: int) -> int:
-    return min(DEFAULT_MAPS_MAX_FETCH, max(DEFAULT_MAPS_BATCH_SIZE, requested_count * 3))
+def _initial_batch_cap(batch_size: int) -> int:
+    return min(DEFAULT_MAPS_MAX_FETCH, max(batch_size, DEFAULT_MAPS_BATCH_SIZE))
 
 
 def _dedupe_key(raw: Mapping[str, Any], candidate: OpportunityCandidate) -> str:
@@ -534,10 +691,45 @@ class DigitalAuditAdapter:
             cursor=request.cursor,
         )
 
-        start_index, previous_fetch_cap = _parse_cursor(request.cursor)
-        fetch_cap = previous_fetch_cap or _initial_fetch_cap(request.requested_count)
+        start_index, previous_batch_cap, cursor_raw_budget = _parse_cursor(request.cursor)
+        batch_size = maps_batch_size_for(technical_filters)
+        raw_budget = cursor_raw_budget or raw_candidate_budget_for(request.requested_count, technical_filters)
+        batch_cap = previous_batch_cap or _initial_batch_cap(batch_size)
         if start_index > 0:
-            fetch_cap = min(DEFAULT_MAPS_MAX_FETCH, fetch_cap + DEFAULT_MAPS_BATCH_GROWTH)
+            batch_cap = min(DEFAULT_MAPS_MAX_FETCH, batch_cap + DEFAULT_MAPS_BATCH_GROWTH)
+
+        if start_index >= raw_budget:
+            observed_at = datetime.now(timezone.utc).isoformat()
+            return AdapterExecutionResult(
+                adapter_id=self.capability.adapter_id,
+                adapter_version=self.capability.adapter_version,
+                candidates=(),
+                exhaustion=SourceExhaustion(
+                    exhausted=True,
+                    scope="budget",
+                    reason="raw_budget_reached",
+                    authoritative=False,
+                    next_cursor=None,
+                ),
+                operations=0,
+                cost_eur=0.0,
+                started_at=observed_at,
+                completed_at=observed_at,
+                warnings=("raw_budget_reached",),
+                telemetry={
+                    "projection_traces": [],
+                    "acquisition": {
+                        "requested_qualified_count": request.requested_count,
+                        "raw_candidate_budget": raw_budget,
+                        "maps_batch_size": batch_size,
+                        "start_index": start_index,
+                        "termination_hint": "raw_budget_reached",
+                    },
+                },
+            )
+
+        remaining_budget = raw_budget - start_index
+        fetch_cap = min(batch_cap, raw_budget)
 
         started_at = datetime.now(timezone.utc).isoformat()
         raw = await self._legacy_runner(
@@ -550,6 +742,8 @@ class DigitalAuditAdapter:
                 "signal_match_mode": enriched_request.signal_match_mode,
                 "source_adapter": self.capability.adapter_id,
                 "maps_start_index": start_index,
+                "raw_candidate_budget": raw_budget,
+                "maps_batch_size": batch_size,
             },
         )
         raw = [
@@ -557,43 +751,57 @@ class DigitalAuditAdapter:
             for item in raw
         ]
         observed_at = datetime.now(timezone.utc).isoformat()
-        raw_slice = raw[start_index:] if start_index < len(raw) else []
+        raw_slice = raw[start_index:start_index + remaining_budget] if start_index < len(raw) else []
         candidates: List[OpportunityCandidate] = []
-        rejections: List[Dict[str, Any]] = []
+        projection_traces: List[Dict[str, Any]] = []
         seen: set[str] = set()
+        duplicate_skips = 0
         for item in raw_slice:
+            trace = trace_candidate_projection(item, enriched_request, observed_at=observed_at)
+            projection_traces.append(trace)
             decision = project_candidate_from_raw(item, enriched_request, observed_at=observed_at)
             if not decision.accepted or decision.candidate is None:
-                rejections.append({
-                    "company_name": _text(item.get("business_name") or item.get("name")),
-                    "rejection_code": decision.rejection_code,
-                    "details": decision.rejection_details,
-                })
                 continue
             key = _dedupe_key(item, decision.candidate)
             if key in seen:
+                duplicate_skips += 1
                 continue
             seen.add(key)
             candidates.append(decision.candidate)
 
-        maps_exhausted = len(raw) < fetch_cap
-        next_start = len(raw)
-        next_cursor = None if maps_exhausted else _build_cursor(next_start, fetch_cap)
+        next_start = start_index + len(raw_slice)
+        raw_budget_reached = next_start >= raw_budget
+        provider_exhausted = len(raw) < fetch_cap
+        if provider_exhausted:
+            exhausted = True
+            termination_hint = "provider_exhausted"
+            next_cursor = None
+        elif raw_budget_reached:
+            exhausted = True
+            termination_hint = "raw_budget_reached"
+            next_cursor = None
+        else:
+            exhausted = False
+            termination_hint = "batch_cap_reached"
+            next_cursor = _build_cursor(next_start, batch_cap, raw_budget)
+
         warnings: List[str] = []
-        if rejections:
-            warnings.append(f"projection_rejections:{len(rejections)}")
-        if maps_exhausted and not candidates:
-            warnings.append("maps_source_exhausted")
+        rejected_count = sum(1 for trace in projection_traces if trace.get("rejected"))
+        if rejected_count:
+            warnings.append(f"projection_rejections:{rejected_count}")
+        warnings.append(termination_hint)
+        if duplicate_skips:
+            warnings.append(f"duplicate_skips:{duplicate_skips}")
 
         return AdapterExecutionResult(
             adapter_id=self.capability.adapter_id,
             adapter_version=self.capability.adapter_version,
             candidates=tuple(candidates),
             exhaustion=SourceExhaustion(
-                exhausted=maps_exhausted,
-                scope="source" if maps_exhausted else "partition",
-                reason="maps_source_exhausted" if maps_exhausted else "batch_complete_continue_for_qualified",
-                authoritative=False,
+                exhausted=exhausted,
+                scope="source" if provider_exhausted else ("budget" if raw_budget_reached else "partition"),
+                reason=termination_hint,
+                authoritative=provider_exhausted,
                 next_cursor=next_cursor,
             ),
             operations=len(raw_slice),
@@ -601,4 +809,21 @@ class DigitalAuditAdapter:
             started_at=started_at,
             completed_at=observed_at,
             warnings=tuple(warnings),
+            telemetry={
+                "projection_traces": projection_traces,
+                "acquisition": {
+                    "requested_qualified_count": request.requested_count,
+                    "raw_candidate_budget": raw_budget,
+                    "maps_batch_size": batch_size,
+                    "batch_cap": fetch_cap,
+                    "start_index": start_index,
+                    "next_start_index": next_start,
+                    "maps_records_total": len(raw),
+                    "records_read": len(raw_slice),
+                    "unique_candidates": len(candidates),
+                    "duplicate_skips": duplicate_skips,
+                    "termination_hint": termination_hint,
+                    "provider_exhausted": provider_exhausted,
+                },
+            },
         )

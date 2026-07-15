@@ -86,6 +86,8 @@ class AdapterProgress:
     exhausted: bool = False
     next_cursor: Optional[DiscoveryCursor] = None
     warnings: List[str] = field(default_factory=list)
+    projection_traces: List[Dict[str, Any]] = field(default_factory=list)
+    acquisition_telemetry: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def qualified_per_operation(self) -> float:
@@ -425,7 +427,16 @@ class UniversalSourceOrchestrator:
                     budget_eur=allocation,
                     query=request.query,
                     sectors=request.sectors,
-                    technical_filters={**request.technical_filters, "discovery_round": round_index + 1},
+                    technical_filters={
+                        **request.technical_filters,
+                        "discovery_round": round_index + 1,
+                        "requested_qualified_count": request.requested_count,
+                        "raw_candidate_budget": min(
+                            50,
+                            max(30, int(request.technical_filters.get("raw_candidate_budget") or request.requested_count * 6)),
+                        ),
+                        "maps_batch_size": int(request.technical_filters.get("maps_batch_size") or 15),
+                    },
                     cursor=state.next_cursor,
                 )
                 result = await adapter.discover(adapter_request)
@@ -440,6 +451,13 @@ class UniversalSourceOrchestrator:
                 state.warnings.extend(result.warnings)
                 state.exhausted = result.exhaustion.exhausted
                 state.next_cursor = result.exhaustion.next_cursor
+                if isinstance(result.telemetry, Mapping):
+                    traces = result.telemetry.get("projection_traces")
+                    if isinstance(traces, list):
+                        state.projection_traces.extend(item for item in traces if isinstance(item, Mapping))
+                    acquisition = result.telemetry.get("acquisition")
+                    if isinstance(acquisition, Mapping):
+                        state.acquisition_telemetry.update(dict(acquisition))
                 discovered += result.operations
                 raw_count += len(result.candidates)
 

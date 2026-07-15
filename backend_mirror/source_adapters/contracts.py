@@ -212,6 +212,7 @@ class AdapterExecutionResult:
     started_at: str
     completed_at: str
     warnings: Tuple[str, ...] = ()
+    telemetry: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.operations < 0 or self.cost_eur < 0:

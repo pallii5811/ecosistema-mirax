@@ -4618,10 +4618,19 @@ def main() -> None:
                             break
                         except Exception:
                             continue
-                os.environ["DEMO_MAX_RESULTS"] = str(job_max)
-                print(f"[worker_supabase] Job max_results={job_max}", flush=True)
+                if _source_adapter_shadow_is_requested(intent):
+                    os.environ.pop("DEMO_MAX_RESULTS", None)
+                    print(
+                        f"[worker_supabase] Shadow job qualified_target={job_max} "
+                        "(DEMO_MAX_RESULTS not applied to Maps acquisition)",
+                        flush=True,
+                    )
+                else:
+                    os.environ["DEMO_MAX_RESULTS"] = str(job_max)
+                    print(f"[worker_supabase] Job max_results={job_max}", flush=True)
             except Exception:
-                os.environ["DEMO_MAX_RESULTS"] = "50"
+                if not _source_adapter_shadow_is_requested(intent):
+                    os.environ["DEMO_MAX_RESULTS"] = "50"
 
             # Atomic claim: only one worker should be able to update pending -> processing.
             claim_payload: Dict[str, Any] = {"status": "processing"}
@@ -5041,9 +5050,17 @@ def main() -> None:
                                 "cost_eur": item.cost_eur,
                                 "exhausted": item.exhausted,
                                 "warnings": list(item.warnings),
+                                "acquisition": dict(getattr(item, "acquisition_telemetry", {}) or {}),
                             }
                             for item in shadow_result.adapter_progress
                         ],
+                        "projection_traces": [
+                            dict(trace)
+                            for item in shadow_result.adapter_progress
+                            for trace in (getattr(item, "projection_traces", None) or [])
+                        ],
+                        "termination_reason": shadow_result.status,
+                        "provider_exhausted": shadow_result.status == "partial_sources_exhausted",
                         "published": 0,
                         "cost_eur": shadow_result.cost_eur,
                         "updated_at": _utc_now_iso(),

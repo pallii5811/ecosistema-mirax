@@ -12,7 +12,9 @@ from backend_mirror.source_adapters import AdapterDiscoveryRequest, DigitalAudit
 from backend_mirror.source_adapters.digital_audit import (
     CandidateProjectionDecision,
     category_matches_target,
+    maps_batch_size_for,
     project_candidate_from_raw,
+    raw_candidate_budget_for,
     signal_groups_from_required_signals,
     trace_candidate_projection,
 )
@@ -186,6 +188,7 @@ def test_zero_projected_candidates_do_not_exhaust_when_more_batches_exist() -> N
     first = asyncio.run(DigitalAuditAdapter(runner).discover(milano_request(count=5)))
     assert first.candidates == ()
     assert first.exhaustion.exhausted is False
+    assert first.exhaustion.reason == "batch_cap_reached"
     assert first.exhaustion.next_cursor is not None
     assert runner.calls[0]["zone"] == "15"
 
@@ -216,7 +219,111 @@ def test_orchestrator_continues_until_qualified() -> None:
     assert len(runner.calls) >= 2
 
 
-def test_deduplication_blocks_repeated_domains() -> None:
+def test_requested_count_does_not_set_raw_cap_to_five() -> None:
+    budget = raw_candidate_budget_for(5, {})
+    batch = maps_batch_size_for({})
+    assert budget >= 30
+    assert batch == 15
+
+
+def test_raw_budget_reached_is_not_provider_exhaustion() -> None:
+    rejected = {**milano_rows()[2], "place_id": "maps-reject"}
+    pool = [{**rejected, "result_index": index, "place_id": f"maps-reject-{index}"} for index in range(30)]
+    runner = _GrowingPoolRunner(pool)
+    request = milano_request(count=5)
+    request = AdapterDiscoveryRequest(**{
+        **request.__dict__,
+        "technical_filters": {**dict(request.technical_filters), "raw_candidate_budget": 30, "maps_batch_size": 15},
+    })
+    first = asyncio.run(DigitalAuditAdapter(runner).discover(request))
+    assert first.exhaustion.reason == "batch_cap_reached"
+    assert runner.calls[0]["zone"] == "15"
+
+
+def test_orchestrator_terminates_at_qualified_five() -> None:
+    accepted_rows = [
+        dict(milano_rows()[0], place_id="maps-pass-0", result_index=100),
+        dict(milano_rows()[1], place_id="maps-pass-1", result_index=101),
+        dict(milano_rows()[3], place_id="maps-pass-2", result_index=102),
+        dict(milano_rows()[4], place_id="maps-pass-3", result_index=103),
+        dict(milano_rows()[0], business_name="Bloom Cleaning North", place_id="maps-pass-4", website="https://www.bloomnorth.it", result_index=104),
+    ]
+    rejected = {**milano_rows()[2], "place_id": "maps-reject"}
+    pool = [{**rejected, "result_index": index, "place_id": f"maps-reject-{index}"} for index in range(20)]
+    pool.extend(accepted_rows)
+    runner = _GrowingPoolRunner(pool)
+
+    async def run_once():
+        adapter = DigitalAuditAdapter(runner)
+        registry = __import__("backend_mirror.source_adapters.catalog", fromlist=["SourceCapabilityRegistry"]).SourceCapabilityRegistry((adapter,))
+        return await UniversalSourceOrchestrator(registry).run(milano_request(count=5))
+
+    result = asyncio.run(run_once())
+    assert result.progress.qualified_count == 5
+    assert result.status == "completed_requested_count"
+
+
+@pytest.mark.parametrize(
+    ("raw_patch", "expected_signal"),
+    [
+        ({"meta_pixel": False, "audit": {"has_facebook_pixel": False}}, "missing_advertising_pixel"),
+        ({"has_meta_pixel": False}, "missing_advertising_pixel"),
+        ({"technical_report": {"has_ga4": False}, "audit": {"has_facebook_pixel": True, "has_gtm": True}, "meta_pixel": True}, "missing_analytics"),
+        ({"has_google_analytics": False, "technical_report": {"seo_disaster": True}, "meta_pixel": False, "audit": {"has_facebook_pixel": False}}, "missing_analytics"),
+        ({"meta_pixel": True, "audit": {"has_facebook_pixel": True, "has_gtm": True}, "tech_stack": ["Meta Pixel", "GA4", "GTM"], "technical_report": {"seo_disaster": True}}, None),
+    ],
+)
+def test_payload_field_variants(raw_patch: dict, expected_signal: str | None) -> None:
+    raw = {
+        **milano_rows()[0],
+        "website_status": "HAS_WEBSITE",
+        "website_has_html": True,
+        "website_error": None,
+        **raw_patch,
+    }
+    from backend_mirror.source_adapters.digital_audit import _confirmed_signal_values
+
+    confirmed = _confirmed_signal_values(raw)
+    if expected_signal is None:
+        assert "missing_advertising_pixel" not in confirmed
+        assert "missing_analytics" not in confirmed
+    else:
+        assert expected_signal in confirmed
+
+
+def test_trace_contains_original_and_normalized_values() -> None:
+    raw = {
+        **milano_rows()[0],
+        "tech_stack": ["MISSING GA4", "DISASTRO SEO (NO H1/TITLE)", "Meta Pixel"],
+        "meta_pixel": True,
+        "technical_report": {"has_ga4": True, "seo_disaster": False},
+    }
+    trace = trace_candidate_projection(raw, milano_request(count=1), observed_at="2026-07-15T00:00:00+00:00")
+    assert trace["tech_stack_original"]
+    assert "normalized_signals" in trace
+    assert "audit_payload" in trace
+    assert trace["rejection_code"]
+
+
+def test_rejected_records_always_have_rejection_code_in_trace() -> None:
+    for row in milano_rows():
+        trace = trace_candidate_projection(row, milano_request(count=1), observed_at="2026-07-15T00:00:00+00:00")
+        if trace["rejected"]:
+            assert trace["rejection_code"]
+        assert "signal_group_seo" in trace
+        assert "signal_group_tracking" in trace
+
+
+def test_adapter_returns_projection_traces_in_telemetry() -> None:
+    runner = _BatchRunner([milano_rows()[:2]])
+    result = asyncio.run(DigitalAuditAdapter(runner).discover(milano_request(count=5)))
+    traces = result.telemetry.get("projection_traces")
+    assert isinstance(traces, list)
+    assert len(traces) == 2
+    assert all(trace.get("rejection_code") for trace in traces)
+
+
+def test_deduplication_blocks_repeated_domains_across_batch_keys() -> None:
     duplicate = dict(milano_rows()[0], business_name="Bloom Cleaning duplicate", result_index=99)
     runner = _BatchRunner([milano_rows()[:1] + [duplicate]])
 
@@ -228,7 +335,7 @@ def test_exhaustion_is_explicit_when_maps_returns_less_than_fetch_cap() -> None:
     runner = _BatchRunner([milano_rows()[2:3]])
     result = asyncio.run(DigitalAuditAdapter(runner).discover(milano_request(count=5)))
     assert result.exhaustion.exhausted is True
-    assert result.exhaustion.reason == "maps_source_exhausted"
+    assert result.exhaustion.reason == "provider_exhausted"
 
 
 def test_worker_tech_stack_labels_confirm_signals() -> None:
