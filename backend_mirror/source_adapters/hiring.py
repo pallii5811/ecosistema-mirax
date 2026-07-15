@@ -37,7 +37,7 @@ from .hiring_qualification import (
     vacancy_role_matches_sales,
 )
 from .hiring_recruiter import enrich_record_with_recruiter_fields
-from .hiring_url_queue import build_processing_batch
+from .hiring_url_queue import build_processing_batch, PENDING_PROGRESS_BATCH_CAP, should_prefer_pending_over_retry
 from .hiring_ats_parsers import (
     bootstrap_legacy_retry_urls,
     build_greenhouse_api_url,
@@ -568,6 +568,11 @@ async def _default_hiring_provider(
 
     discovery_offset = state.discovery_url_offset or state.url_offset
     state.discovery_url_offset = discovery_offset
+    prefer_pending = should_prefer_pending_over_retry(
+        revalidation_urls=state.revalidation_queue,
+        discovery_offset=discovery_offset,
+        total_urls=len(urls),
+    )
     queue_pending = discovery_offset < len(urls) or bool(state.retry_urls) or bool(state.revalidation_queue)
     if not queue_pending and queries_run == 0:
         exhausted = discovery_locked and state.query_index >= len(query_pairs)
@@ -579,7 +584,11 @@ async def _default_hiring_provider(
     traces: List[Dict[str, Any]] = []
     prefetch_traces = list(state.prefetch_traces)
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Hiring/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
-    batch_cap = min(limit, URLS_PER_BATCH, max(queue_pending, len(state.retry_urls) + len(state.revalidation_queue)))
+    batch_cap = min(
+        limit,
+        PENDING_PROGRESS_BATCH_CAP if prefer_pending else URLS_PER_BATCH,
+        max(queue_pending, len(state.retry_urls) + len(state.revalidation_queue)),
+    )
     priority_queue = build_processing_batch(
         urls,
         url_query_meta,
@@ -587,6 +596,7 @@ async def _default_hiring_provider(
         revalidation_urls=state.revalidation_queue,
         start_offset=discovery_offset,
         batch_cap=batch_cap,
+        prefer_pending_over_retry=prefer_pending,
     )
     domain_active: Dict[str, int] = {}
     urls_processed = 0
@@ -626,6 +636,8 @@ async def _default_hiring_provider(
                 if record:
                     records.append(record)
                 urls_processed += 1
+                if len(records) >= request.requested_count:
+                    break
                 continue
             if not item.get("prefetch_accept"):
                 rejection = _normalize_rejection_code(str(item.get("rejection_code") or "NOT_INDIVIDUAL_VACANCY"))
@@ -715,6 +727,8 @@ async def _default_hiring_provider(
                     if valid:
                         records.append(record)
                         accepted = True
+                        if len(records) >= request.requested_count:
+                            break
                     elif not classify_failure_for_retry(normalized):
                         _update_retry_queue(state, url, normalized, is_retry=is_retry)
                 if not accepted:
@@ -735,6 +749,8 @@ async def _default_hiring_provider(
             elif traces and traces[-1].get("rejection_code") == "ACCEPTED":
                 _update_retry_queue(state, url, "ACCEPTED", is_retry=True)
             urls_processed += 1
+            if len(records) >= request.requested_count:
+                break
 
     state.prefetch_traces = tuple(prefetch_traces)
     after_cost = _governor_committed_eur()

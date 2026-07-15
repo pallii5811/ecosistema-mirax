@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, normalize_domain
 
 from .hiring_recruiter import STAFFING_BRAND_ALIASES
+
+PENDING_PROGRESS_BATCH_CAP = 12
 
 _ATS_HOSTS = (
     "boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co",
@@ -193,6 +195,26 @@ def classify_url_prefetch(
     }
 
 
+def should_prefer_pending_over_retry(
+    *,
+    revalidation_urls: Sequence[str],
+    discovery_offset: int,
+    total_urls: int,
+) -> bool:
+    """After revalidation, drain discovered pending URLs before Workday retries."""
+    if revalidation_urls:
+        return False
+    return discovery_offset < total_urls
+
+
+def _is_workday_url(url: str) -> bool:
+    return "myworkdayjobs.com" in _host(url)
+
+
+def _workday_retry_urls(retry_urls: Sequence[str]) -> Tuple[str, ...]:
+    return tuple(url for url in retry_urls if _is_workday_url(url))
+
+
 def build_processing_batch(
     urls: list[str],
     url_query_meta: Mapping[str, tuple[str, str]],
@@ -201,8 +223,9 @@ def build_processing_batch(
     revalidation_urls: Sequence[str] = (),
     start_offset: int = 0,
     batch_cap: int = 24,
+    prefer_pending_over_retry: bool = False,
 ) -> list[dict[str, Any]]:
-    """Merge revalidation (first), retry URLs, then pending queue slice."""
+    """Merge queue tiers: revalidation, then pending or retry depending on mode."""
     reval_items: list[dict[str, Any]] = []
     seen: set[str] = set()
     for url in revalidation_urls:
@@ -216,8 +239,10 @@ def build_processing_batch(
         item["is_revalidation"] = True
         item["prefetch_accept"] = True
         reval_items.append(item)
+
+    retry_source = _workday_retry_urls(retry_urls) if prefer_pending_over_retry else retry_urls
     retry_items: list[dict[str, Any]] = []
-    for url in retry_urls:
+    for url in retry_source:
         canonical = url.lower().rstrip("/")
         if not url or canonical in seen:
             continue
@@ -228,12 +253,29 @@ def build_processing_batch(
         item["is_retry"] = True
         retry_items.append(item)
     retry_items.sort(key=lambda row: (row["priority"], row["canonical_url"]))
-    pending = build_priority_queue(urls, url_query_meta, start_offset=start_offset)
-    for row in pending:
+
+    pending_all = build_priority_queue(urls, url_query_meta, start_offset=start_offset)
+    pending_p1: list[dict[str, Any]] = []
+    pending_p2: list[dict[str, Any]] = []
+    pending_hard: list[dict[str, Any]] = []
+    for row in pending_all:
         canonical = str(row.get("canonical_url") or "")
         if canonical:
             seen.add(canonical)
-    return (reval_items + retry_items + pending)[: max(0, batch_cap)]
+        item = dict(row)
+        item["is_pending"] = True
+        if item.get("prefetch_accept") and item.get("priority") == 1:
+            pending_p1.append(item)
+        elif item.get("prefetch_accept") and item.get("priority") == 2:
+            pending_p2.append(item)
+        else:
+            pending_hard.append(item)
+
+    if prefer_pending_over_retry:
+        ordered = reval_items + pending_p1 + pending_p2 + pending_hard + retry_items
+    else:
+        ordered = reval_items + retry_items + pending_all
+    return ordered[: max(0, batch_cap)]
 
 
 def build_priority_queue(
