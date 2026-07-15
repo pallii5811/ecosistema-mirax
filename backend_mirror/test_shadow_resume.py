@@ -87,15 +87,32 @@ def test_partial_time_limit_produces_resumable_state() -> None:
     assert resume["resume_cursors"]["legacy_digital_audit_v1"] == "da:v2:15:15:30"
 
 
-def test_merge_shadow_qualified_payloads_deduplicates_domains() -> None:
-    prior = [{"sito": "https://shinecleaning.it", "source_adapter_id": "legacy_digital_audit_v1"}]
-    new = [
-        {"sito": "https://shinecleaning.it", "source_adapter_id": "legacy_digital_audit_v1"},
-        {"sito": "https://sixlands.it", "source_adapter_id": "legacy_digital_audit_v1"},
-    ]
+def test_merge_shadow_qualified_payloads_preserves_primary_and_related() -> None:
+    prior = [{
+        "sito": "https://verisure.com",
+        "employer_official_domain": "verisure.com",
+        "azienda": "Verisure",
+        "citta": "Milano",
+        "vacancy_url": "https://careers.verisure.com/milano",
+        "source_adapter_id": "structured_hiring_v1",
+    }]
+    new = [{
+        "sito": "https://verisure.com",
+        "employer_official_domain": "verisure.com",
+        "azienda": "Verisure",
+        "citta": "Brescia",
+        "vacancy_url": "https://careers.verisure.com/brescia",
+        "source_adapter_id": "structured_hiring_v1",
+        "business_signals": [{"source_url": "https://careers.verisure.com/brescia", "evidence": "Sales Brescia"}],
+    }]
     merged = merge_shadow_qualified_payloads(prior, new)
-    assert len(merged) == 2
-    assert {item["sito"] for item in merged} == {"https://shinecleaning.it", "https://sixlands.it"}
+    assert len(merged) == 1
+    primary = merged[0]
+    assert primary["citta"] == "Milano"
+    assert primary["vacancy_url"] == "https://careers.verisure.com/milano"
+    related = primary.get("related_opportunities") or []
+    assert len(related) == 1
+    assert related[0]["vacancy_url"] == "https://careers.verisure.com/brescia"
 
 
 def test_resume_cursor_starts_at_next_batch() -> None:

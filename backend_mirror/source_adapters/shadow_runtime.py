@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Mapping, MutableMapping, Optional, Sequence, Tuple
 
-from .catalog import SourceCapabilityRegistry, default_source_capability_registry
-from .contracts import DiscoveryCursor, OpportunityCandidate
-from .orchestrator import OrchestrationResult, ProgressCallback, UniversalSourceOrchestrator, request_from_plan
+from .hiring_qualification import (
+    collect_processed_employer_keys,
+    count_unique_employer_keys,
+    employer_key_from_payload,
+    merge_related_opportunity,
+    related_opportunity_from_payload,
+)
 
 
 _MAX_SHADOW_CAP_EUR = 0.125
@@ -115,7 +119,26 @@ async def execute_source_adapter_shadow(
         raise ValueError("persistent_client and search_id must be provided together")
     resume = dict(resume_state or intent.get("shadow_resume") or {})
     prior_cost_eur = float(resume.get("prior_cost_eur") or 0.0)
-    request = request_from_plan(plan, requested_count=max(1, requested_count), budget_eur=cap)
+    prior_payloads = [
+        item for item in (resume.get("qualified_lead_payloads") or ())
+        if isinstance(item, Mapping)
+    ]
+    processed_employer_keys = collect_processed_employer_keys(
+        resume.get("processed_employer_keys") or (),
+        prior_payloads,
+    )
+    total_unique_target = int(resume.get("total_unique_employer_target") or 0)
+    if total_unique_target <= 0:
+        total_unique_target = max(1, int(requested_count) + len(processed_employer_keys))
+    request = request_from_plan(plan, requested_count=max(1, int(requested_count)), budget_eur=cap)
+    request = replace(
+        request,
+        technical_filters={
+            **request.technical_filters,
+            "processed_employer_keys": processed_employer_keys,
+            "total_unique_employer_target": total_unique_target,
+        },
+    )
     source_policy = plan.get("source_policy") or {}
     preferred = tuple(str(item) for item in source_policy.get("preferred_source_classes") or ())
     mandatory = _mandatory_adapter_ids(intent, plan)
@@ -182,18 +205,30 @@ def build_shadow_resume_state(
             if isinstance(payload, Mapping)
         ]
     ))
-    cumulative_orchestrator = len(qualified_lead_payloads)
+    processed_employer_keys = collect_processed_employer_keys(
+        prior.get("processed_employer_keys") or (),
+        qualified_lead_payloads,
+    )
+    cumulative_orchestrator = len(processed_employer_keys)
     resumable = (
-        result.status == "partial_time_limit"
-        and not provider_exhausted
-        and cumulative_orchestrator < requested_count
-        and bool(resume_cursors)
+        cumulative_orchestrator < requested_count
+        and (
+            result.status == "partial_time_limit"
+            or (
+                result.status == "completed_requested_count"
+                and cumulative_orchestrator < requested_count
+            )
+            or (not provider_exhausted and bool(resume_cursors))
+        )
     )
     return {
         "resumable": resumable,
         "resume_cursors": resume_cursors,
         "prior_cost_eur": round(float(prior.get("prior_cost_eur") or 0.0) + float(result.cost_eur or 0.0), 6),
         "cumulative_orchestrator_qualified": cumulative_orchestrator,
+        "unique_lifecycle_accepted_count": cumulative_orchestrator,
+        "processed_employer_keys": list(processed_employer_keys),
+        "total_unique_employer_target": int(prior.get("total_unique_employer_target") or requested_count),
         "qualified_lead_payloads": [dict(item) for item in qualified_lead_payloads if isinstance(item, Mapping)],
         "processed_domains": processed_domains,
         "acquisition": acquisition,
@@ -207,14 +242,29 @@ def merge_shadow_qualified_payloads(
     new_payloads: Sequence[Mapping[str, Any]],
 ) -> list[MutableMapping[str, Any]]:
     merged: dict[str, MutableMapping[str, Any]] = {}
-    for payload in (*prior_payloads, *new_payloads):
+    for payload in prior_payloads:
         if not isinstance(payload, Mapping):
             continue
-        domain = str(payload.get("sito") or payload.get("website") or "").lower().replace("https://", "").replace("http://", "").split("/")[0]
-        if domain.startswith("www."):
-            domain = domain[4:]
-        if domain:
-            merged[domain] = dict(payload)
+        key = employer_key_from_payload(payload)
+        if not key:
+            continue
+        frozen = dict(payload)
+        frozen.setdefault("related_opportunities", list(frozen.get("related_opportunities") or ()))
+        merged[key] = frozen
+    for payload in new_payloads:
+        if not isinstance(payload, Mapping):
+            continue
+        key = employer_key_from_payload(payload)
+        if not key:
+            continue
+        if key in merged:
+            related = related_opportunity_from_payload(payload)
+            existing = merged[key].get("related_opportunities") or []
+            merged[key]["related_opportunities"] = list(merge_related_opportunity(existing, related))
+            continue
+        fresh = dict(payload)
+        fresh.setdefault("related_opportunities", [])
+        merged[key] = fresh
     return list(merged.values())
 
 

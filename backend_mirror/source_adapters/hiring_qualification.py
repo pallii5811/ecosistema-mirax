@@ -208,6 +208,93 @@ def dedupe_key(record: Mapping[str, Any]) -> str:
     return f"{official or employer}|{vacancy_id}|{location}"
 
 
+def _normalize_employer_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", _text(name).casefold())
+
+
+def employer_key_from_domain(domain: str) -> str:
+    host = _host(domain)
+    if host:
+        return f"domain:{host}"
+    return ""
+
+
+def employer_key_from_record(record: Mapping[str, Any]) -> str:
+    domain_key = employer_key_from_domain(
+        _text(record.get("employer_official_domain") or record.get("official_domain") or record.get("website"))
+    )
+    if domain_key:
+        return domain_key
+    name = _normalize_employer_name(_text(record.get("company_name") or record.get("displayed_employer_name") or record.get("name")))
+    return f"name:{name}" if name else ""
+
+
+def employer_key_from_payload(payload: Mapping[str, Any]) -> str:
+    domain_key = employer_key_from_domain(
+        _text(payload.get("employer_official_domain") or payload.get("sito") or payload.get("website"))
+    )
+    if domain_key:
+        return domain_key
+    name = _normalize_employer_name(_text(payload.get("azienda") or payload.get("name") or payload.get("legal_name")))
+    return f"name:{name}" if name else ""
+
+
+def related_opportunity_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    signals = payload.get("business_signals") if isinstance(payload.get("business_signals"), list) else []
+    first = signals[0] if signals and isinstance(signals[0], Mapping) else {}
+    return {
+        "vacancy_url": _text(payload.get("vacancy_url") or first.get("source_url")),
+        "vacancy_title": _text(first.get("evidence") or payload.get("why_now")),
+        "location": _text(payload.get("citta")),
+        "published_at": _text(first.get("published_at")),
+        "source_url": _text(first.get("source_url") or payload.get("vacancy_url")),
+        "employer_key": employer_key_from_payload(payload),
+    }
+
+
+def merge_related_opportunity(existing: Sequence[Mapping[str, Any]], related: Mapping[str, Any]) -> Tuple[dict[str, Any], ...]:
+    rows = [dict(item) for item in existing if isinstance(item, Mapping)]
+    related_url = _text(related.get("vacancy_url") or related.get("source_url")).lower().rstrip("/")
+    if not related_url:
+        return tuple(rows)
+    for item in rows:
+        prior_url = _text(item.get("vacancy_url") or item.get("source_url")).lower().rstrip("/")
+        if prior_url == related_url:
+            return tuple(rows)
+    rows.append(dict(related))
+    return tuple(rows)
+
+
+def collect_processed_employer_keys(
+    prior_keys: Sequence[str],
+    payloads: Sequence[Mapping[str, Any]],
+) -> Tuple[str, ...]:
+    keys: list[str] = [str(item) for item in prior_keys if str(item or "").strip()]
+    seen = set(keys)
+    for payload in payloads:
+        if not isinstance(payload, Mapping):
+            continue
+        key = employer_key_from_payload(payload)
+        if key and key not in seen:
+            keys.append(key)
+            seen.add(key)
+    return tuple(keys)
+
+
+def count_unique_employer_keys(payloads: Sequence[Mapping[str, Any]]) -> int:
+    return len({employer_key_from_payload(item) for item in payloads if isinstance(item, Mapping) and employer_key_from_payload(item)})
+    rows = [dict(item) for item in existing if isinstance(item, Mapping)]
+    related_url = _text(related.get("vacancy_url") or related.get("source_url")).lower().rstrip("/")
+    if not related_url:
+        return tuple(rows)
+    for item in rows:
+        prior_url = _text(item.get("vacancy_url") or item.get("source_url")).lower().rstrip("/")
+        if prior_url == related_url:
+            return tuple(rows)
+    rows.append(dict(related))
+    return tuple(rows)
+
+
 def outcome_to_record(outcome: Mapping[str, Any]) -> dict[str, Any]:
     """Rebuild a validation record from persisted url_outcome without refetch."""
     url = _text(outcome.get("canonical_url") or outcome.get("url") or outcome.get("final_url"))

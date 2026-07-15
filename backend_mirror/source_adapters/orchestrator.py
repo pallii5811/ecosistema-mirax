@@ -206,6 +206,42 @@ def _candidate_key(candidate: OpportunityCandidate) -> str:
     return f"name:{candidate.canonical_company_name.strip().casefold()}"
 
 
+def _processed_employer_keys(request: AdapterDiscoveryRequest) -> set[str]:
+    return {
+        str(item).strip()
+        for item in (request.technical_filters.get("processed_employer_keys") or ())
+        if str(item or "").strip()
+    }
+
+
+def _total_unique_target(request: AdapterDiscoveryRequest) -> int:
+    return max(1, int(request.technical_filters.get("total_unique_employer_target") or request.requested_count))
+
+
+def _new_unique_qualified_keys(
+    qualified_by_entity: Mapping[str, QualifiedLead],
+    processed_employer_keys: set[str],
+) -> set[str]:
+    return {key for key in qualified_by_entity if key not in processed_employer_keys}
+
+
+def _cumulative_unique_qualified(
+    qualified_by_entity: Mapping[str, QualifiedLead],
+    processed_employer_keys: set[str],
+) -> int:
+    return len(processed_employer_keys) + len(_new_unique_qualified_keys(qualified_by_entity, processed_employer_keys))
+
+
+def _unique_target_reached(
+    qualified_by_entity: Mapping[str, QualifiedLead],
+    processed_employer_keys: set[str],
+    request: AdapterDiscoveryRequest,
+) -> bool:
+    new_unique = _new_unique_qualified_keys(qualified_by_entity, processed_employer_keys)
+    cumulative = len(processed_employer_keys) + len(new_unique)
+    return len(new_unique) >= request.requested_count or cumulative >= _total_unique_target(request)
+
+
 def _domain_verification_valid(candidate: OpportunityCandidate) -> bool:
     verification = candidate.provenance.get("domain_verification")
     if not isinstance(verification, Mapping):
@@ -374,6 +410,7 @@ class UniversalSourceOrchestrator:
         rejection_by_entity: Dict[str, str] = {}
         terminal: Optional[TerminalStatus] = None
         round_index = 0
+        processed_employer_keys = _processed_employer_keys(request)
 
         async def emit_progress() -> None:
             if progress_callback is None:
@@ -381,14 +418,14 @@ class UniversalSourceOrchestrator:
             audited_now = sum(1 for decision in decisions.values() if decision.audited)
             evidence_now = sum(1 for decision in decisions.values() if decision.evidence_verified)
             snapshot = SearchProgress(
-                requested_count=request.requested_count,
+                requested_count=_total_unique_target(request),
                 discovered_count=discovered,
                 raw_candidate_count=raw_count,
                 unique_entity_count=len(accumulated),
                 resolved_count=sum(1 for item in accumulated.values() if item.official_domain),
                 audited_count=audited_now,
                 evidence_verified_count=evidence_now,
-                qualified_count=len(qualified_by_entity),
+                qualified_count=_cumulative_unique_qualified(qualified_by_entity, processed_employer_keys),
                 rejected_count=len(accumulated) - len(qualified_by_entity),
             )
             outcome = progress_callback(snapshot)
@@ -402,7 +439,7 @@ class UniversalSourceOrchestrator:
                 break
             progressed = False
             for state in active:
-                if len(qualified_by_entity) >= request.requested_count:
+                if _unique_target_reached(qualified_by_entity, processed_employer_keys, request):
                     terminal = "completed_requested_count"
                     break
                 adapter = self.registry.adapter(state.adapter_id)
@@ -417,20 +454,28 @@ class UniversalSourceOrchestrator:
                     state.exhausted = True
                     state.warnings.append("NO_COMPATIBLE_SIGNALS")
                     continue
+                new_unique_so_far = len(_new_unique_qualified_keys(qualified_by_entity, processed_employer_keys))
+                remaining_new_unique = max(
+                    1,
+                    min(
+                        request.requested_count - new_unique_so_far,
+                        _total_unique_target(request) - len(processed_employer_keys) - new_unique_so_far,
+                    ),
+                )
                 adapter_request = AdapterDiscoveryRequest(
                     intent=request.intent,
                     signal_ids=signals,
                     signal_match_mode="all" if request.signal_match_mode == "all" else "any",
                     geographies=request.geographies,
                     freshness_max_age_days=request.freshness_max_age_days,
-                    requested_count=max(1, request.requested_count - len(qualified_by_entity)),
+                    requested_count=remaining_new_unique,
                     budget_eur=allocation,
                     query=request.query,
                     sectors=request.sectors,
                     technical_filters={
                         **request.technical_filters,
                         "discovery_round": round_index + 1,
-                        "requested_qualified_count": request.requested_count,
+                        "requested_qualified_count": _total_unique_target(request),
                         "raw_candidate_budget": min(
                             50,
                             max(30, int(request.technical_filters.get("raw_candidate_budget") or request.requested_count * 6)),
@@ -482,6 +527,9 @@ class UniversalSourceOrchestrator:
                     if not decision.qualified:
                         rejection_by_entity[key] = decision.rejection_code or "QUALIFICATION_FAILED"
                         continue
+                    if key in processed_employer_keys:
+                        rejection_by_entity[key] = "DUPLICATE_EMPLOYER_OPPORTUNITY"
+                        continue
                     qualified_by_entity[key] = QualifiedLead(
                         candidate=merged,
                         qualification_reasons=decision.reasons or ("qualified",),
@@ -491,7 +539,7 @@ class UniversalSourceOrchestrator:
                     rejection_by_entity.pop(key, None)
                     for adapter_id in source_by_entity[key]:
                         states[adapter_id].qualified += 1
-                    if len(qualified_by_entity) >= request.requested_count:
+                    if _unique_target_reached(qualified_by_entity, processed_employer_keys, request):
                         terminal = "completed_requested_count"
                         break
                 await emit_progress()
@@ -519,21 +567,22 @@ class UniversalSourceOrchestrator:
         audited = sum(1 for decision in decisions.values() if decision.audited)
         evidence_verified = sum(1 for decision in decisions.values() if decision.evidence_verified)
         progress = SearchProgress(
-            requested_count=request.requested_count,
+            requested_count=_total_unique_target(request),
             discovered_count=discovered,
             raw_candidate_count=raw_count,
             unique_entity_count=len(accumulated),
             resolved_count=resolved,
             audited_count=audited,
             evidence_verified_count=evidence_verified,
-            qualified_count=len(qualified_by_entity),
+            qualified_count=_cumulative_unique_qualified(qualified_by_entity, processed_employer_keys),
             rejected_count=len(accumulated) - len(qualified_by_entity),
         )
         limitations = ("generic_fallback_partial",) if coverage.status == "generic_fallback_partial" else ()
+        new_unique_keys = _new_unique_qualified_keys(qualified_by_entity, processed_employer_keys)
         return OrchestrationResult(
             status=terminal,
             coverage=coverage,
-            qualified_leads=tuple(qualified_by_entity.values())[:request.requested_count],
+            qualified_leads=tuple(qualified_by_entity[key] for key in sorted(new_unique_keys)),
             progress=progress,
             rejection_codes=rejection_codes,
             adapter_progress=tuple(states.values()),

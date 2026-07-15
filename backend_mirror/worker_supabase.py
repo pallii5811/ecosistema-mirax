@@ -5092,11 +5092,23 @@ def main() -> None:
                     serialize_shadow_qualified_leads,
                     source_adapter_shadow_decision,
                 )
+                from source_adapters.hiring_qualification import collect_processed_employer_keys, count_unique_employer_keys, employer_key_from_payload
 
                 shadow_decision = source_adapter_shadow_decision(intent)
                 prior_shadow_resume = _shadow_resume_state_from_progress(job.get("progress"))
                 prior_qualified_payloads = _load_prior_shadow_qualified_payloads(job, supabase=supabase)
-                remaining_qualified_target = max(1, int(job_max) - len(prior_qualified_payloads))
+                processed_employer_keys = collect_processed_employer_keys(
+                    prior_shadow_resume.get("processed_employer_keys") or (),
+                    prior_qualified_payloads,
+                )
+                unique_prior_count = len(processed_employer_keys)
+                remaining_qualified_target = max(0, int(job_max) - unique_prior_count)
+                prior_shadow_resume = {
+                    **prior_shadow_resume,
+                    "processed_employer_keys": list(processed_employer_keys),
+                    "total_unique_employer_target": int(job_max),
+                    "qualified_lead_payloads": prior_qualified_payloads or list(prior_shadow_resume.get("qualified_lead_payloads") or ()),
+                }
                 if not shadow_decision.enabled:
                     _heartbeat_stop.set()
                     supabase.table("searches").update({
@@ -5142,6 +5154,8 @@ def main() -> None:
                     }).eq("id", job_id).eq("status", "processing").execute()
 
                 try:
+                    if remaining_qualified_target <= 0:
+                        raise RuntimeError("UNIQUE_EMPLOYER_TARGET_ALREADY_REACHED")
                     shadow_result = _run_coro_blocking(execute_source_adapter_shadow(
                         intent,
                         requested_count=remaining_qualified_target,
@@ -5172,24 +5186,33 @@ def main() -> None:
                         prior_state={
                             **prior_shadow_resume,
                             "prior_cost_eur": float(prior_shadow_resume.get("prior_cost_eur") or 0.0),
+                            "total_unique_employer_target": int(job_max),
                         },
                         requested_count=int(job_max),
                     )
-                    resumable = bool(shadow_resume.get("resumable"))
-                    final_status = "pending" if resumable else "completed"
+                    unique_shadow_count = count_unique_employer_keys(shadow_leads)
+                    unique_lifecycle_keys = {
+                        employer_key_from_payload(item)
+                        for item in lifecycle_accepted
+                        if isinstance(item, dict) and employer_key_from_payload(item)
+                    }
+                    resumable = bool(shadow_resume.get("resumable")) or len(unique_lifecycle_keys) < int(job_max)
+                    final_status = "completed" if len(unique_lifecycle_keys) >= int(job_max) else "pending"
                     final_shadow_progress = {
                         "stage": "source_adapter_shadow_resumable" if resumable else "source_adapter_shadow_completed",
-                        "stop_reason": shadow_result.status,
+                        "stop_reason": shadow_result.status if len(unique_lifecycle_keys) >= int(job_max) else "UNIQUE_EMPLOYER_TARGET_NOT_REACHED",
                         "target": int(job_max),
-                        "found": len(lifecycle_accepted),
+                        "found": len(unique_lifecycle_keys),
                         "discovered": shadow_result.progress.discovered_count + int(prior_shadow_resume.get("discovered") or 0),
                         "raw": shadow_result.progress.raw_candidate_count + int(prior_shadow_resume.get("raw") or 0),
-                        "unique_entities": len(shadow_leads),
+                        "unique_entities": unique_shadow_count,
+                        "unique_lifecycle_accepted_count": len(unique_lifecycle_keys),
+                        "processed_employer_keys": list(collect_processed_employer_keys(processed_employer_keys, shadow_leads)),
                         "resolved": shadow_result.progress.resolved_count,
                         "audited": shadow_result.progress.audited_count,
                         "evidence_verified": shadow_result.progress.evidence_verified_count,
-                        "qualified": len(shadow_leads),
-                        "lifecycle_qualified": len(lifecycle_accepted),
+                        "qualified": unique_shadow_count,
+                        "lifecycle_qualified": len(unique_lifecycle_keys),
                         "rejected": shadow_result.progress.rejected_count,
                         "rejection_codes": dict(shadow_result.rejection_codes),
                         "coverage_status": shadow_result.coverage.status,

@@ -31,6 +31,7 @@ from .hiring_qualification import (
     QUALIFICATION_VALIDATOR_EPOCH,
     bootstrap_parsed_and_revalidation_queues,
     dedupe_key,
+    employer_key_from_record,
     outcome_to_record,
     resolve_employer_identity,
     vacancy_geography_matches,
@@ -476,6 +477,32 @@ def _merge_url_meta(
     return tuple(merged)
 
 
+def _processed_employer_keys(request: AdapterDiscoveryRequest) -> set[str]:
+    return {
+        str(item).strip()
+        for item in (request.technical_filters.get("processed_employer_keys") or ())
+        if str(item or "").strip()
+    }
+
+
+def _new_unique_target_reached(new_unique_employer_keys: set[str], request: AdapterDiscoveryRequest) -> bool:
+    return len(new_unique_employer_keys) >= request.requested_count
+
+
+def _register_unique_employer_record(
+    record: Mapping[str, Any],
+    *,
+    processed_employer_keys: set[str],
+    new_unique_employer_keys: set[str],
+) -> Tuple[bool, str]:
+    employer_key = employer_key_from_record(record)
+    if employer_key and (employer_key in processed_employer_keys or employer_key in new_unique_employer_keys):
+        return False, "DUPLICATE_EMPLOYER_OPPORTUNITY"
+    if employer_key:
+        new_unique_employer_keys.add(employer_key)
+    return True, ""
+
+
 async def _default_hiring_provider(
     request: AdapterDiscoveryRequest,
     state: HiringDiscoveryState,
@@ -584,6 +611,8 @@ async def _default_hiring_provider(
     traces: List[Dict[str, Any]] = []
     prefetch_traces = list(state.prefetch_traces)
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Hiring/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
+    processed_employer_keys = _processed_employer_keys(request)
+    new_unique_employer_keys: set[str] = set()
     batch_cap = min(
         limit,
         PENDING_PROGRESS_BATCH_CAP if prefer_pending else URLS_PER_BATCH,
@@ -634,9 +663,22 @@ async def _default_hiring_provider(
                     "url_state": "accepted" if record else "rejected_final",
                 })
                 if record:
-                    records.append(record)
+                    accepted, duplicate_reason = _register_unique_employer_record(
+                        record,
+                        processed_employer_keys=processed_employer_keys,
+                        new_unique_employer_keys=new_unique_employer_keys,
+                    )
+                    if accepted:
+                        records.append(record)
+                    else:
+                        traces.append({
+                            **base_outcome,
+                            "revalidation": True,
+                            "rejection_code": duplicate_reason,
+                            "url_state": "duplicate_employer",
+                        })
                 urls_processed += 1
-                if len(records) >= request.requested_count:
+                if _new_unique_target_reached(new_unique_employer_keys, request):
                     break
                 continue
             if not item.get("prefetch_accept"):
@@ -706,7 +748,7 @@ async def _default_hiring_provider(
                         _advance_discovery_offset(state)
                     urls_processed += 1
                     continue
-                accepted = False
+                url_accepted = False
                 for record in parsed:
                     valid, rejection = _validate_record(record, request, date.today())
                     normalized = _normalize_rejection_code(rejection)
@@ -725,13 +767,33 @@ async def _default_hiring_provider(
                         "parser_result": "success",
                     })
                     if valid:
-                        records.append(record)
-                        accepted = True
-                        if len(records) >= request.requested_count:
+                        unique_ok, duplicate_reason = _register_unique_employer_record(
+                            record,
+                            processed_employer_keys=processed_employer_keys,
+                            new_unique_employer_keys=new_unique_employer_keys,
+                        )
+                        if unique_ok:
+                            records.append(record)
+                            url_accepted = True
+                        else:
+                            traces.append(_trace_url(
+                                url=url, query=query, query_source=query_source, record=record, rejection=duplicate_reason,
+                            ))
+                            _append_url_outcome(state, {
+                                **base_outcome,
+                                "vacancy_title": record.get("vacancy_title") or record.get("hiring_title"),
+                                "employer": record.get("company_name") or record.get("name"),
+                                "location": record.get("location"),
+                                "validation_result": duplicate_reason,
+                                "rejection_code": duplicate_reason,
+                                "url_state": "duplicate_employer",
+                                "parser_result": "success",
+                            })
+                        if _new_unique_target_reached(new_unique_employer_keys, request):
                             break
                     elif not classify_failure_for_retry(normalized):
                         _update_retry_queue(state, url, normalized, is_retry=is_retry)
-                if not accepted:
+                if not url_accepted:
                     last_code = str(traces[-1].get("rejection_code") or "PARSE_FAILED") if traces else "PARSE_FAILED"
                     _update_retry_queue(state, url, last_code, is_retry=is_retry)
             except asyncio.TimeoutError:
@@ -749,7 +811,7 @@ async def _default_hiring_provider(
             elif traces and traces[-1].get("rejection_code") == "ACCEPTED":
                 _update_retry_queue(state, url, "ACCEPTED", is_retry=True)
             urls_processed += 1
-            if len(records) >= request.requested_count:
+            if _new_unique_target_reached(new_unique_employer_keys, request):
                 break
 
     state.prefetch_traces = tuple(prefetch_traces)
@@ -975,6 +1037,8 @@ class HiringAdapter:
         observed = datetime.now(timezone.utc).isoformat()
         candidates: List[OpportunityCandidate] = []
         seen_dedupe: set[str] = set()
+        processed_employer_keys = _processed_employer_keys(request)
+        new_unique_employer_keys: set[str] = set()
         warnings: List[str] = [item for result in provider_results for item in result.warnings]
         for provider_result in provider_results:
             for record in provider_result.records:
@@ -990,6 +1054,14 @@ class HiringAdapter:
                     warnings.append("DUPLICATE_VACANCY")
                     continue
                 seen_dedupe.add(dedupe)
+                accepted, duplicate_reason = _register_unique_employer_record(
+                    record,
+                    processed_employer_keys=processed_employer_keys,
+                    new_unique_employer_keys=new_unique_employer_keys,
+                )
+                if not accepted:
+                    warnings.append(duplicate_reason)
+                    continue
                 title = _text(record.get("vacancy_title") or record.get("hiring_title")) or ""
                 published = _iso_date(record.get("published_at") or record.get("evidence_date") or record.get("date_posted")) or ""
                 source_url = _text(record.get("source_url") or record.get("vacancy_url")) or ""
@@ -1068,11 +1140,11 @@ class HiringAdapter:
                     official_domain_verified=record.get("official_domain_verified") is True,
                     official_domain_confidence=0.96 if source_class == "company_careers" else 0.86,
                 ))
-                if len(candidates) >= request.requested_count:
+                if _new_unique_target_reached(new_unique_employer_keys, request):
                     break
-            if len(candidates) >= request.requested_count:
+            if _new_unique_target_reached(new_unique_employer_keys, request):
                 break
-        target_reached = len(candidates) >= request.requested_count
+        target_reached = _new_unique_target_reached(new_unique_employer_keys, request)
         all_exhausted = all(result.exhausted for result in provider_results)
         next_cursor = None if all_exhausted else encode_discovery_cursor(discovery_state)
         return AdapterExecutionResult(
