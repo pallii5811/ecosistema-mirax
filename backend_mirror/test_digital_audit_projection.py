@@ -231,6 +231,24 @@ def test_exhaustion_is_explicit_when_maps_returns_less_than_fetch_cap() -> None:
     assert result.exhaustion.reason == "maps_source_exhausted"
 
 
+def test_worker_tech_stack_labels_confirm_signals() -> None:
+    raw = {
+        **milano_rows()[0],
+        "meta_pixel": True,
+        "google_tag_manager": True,
+        "technical_report": {"has_ga4": True, "seo_disaster": False},
+        "audit": {"has_facebook_pixel": True, "has_gtm": True},
+        "tech_stack": ["MISSING GA4", "DISASTRO SEO (NO H1/TITLE)", "Meta Pixel", "GTM"],
+        "html_errors": 0,
+    }
+    from backend_mirror.source_adapters.digital_audit import _confirmed_signal_values
+
+    confirmed = _confirmed_signal_values(raw)
+    assert "missing_analytics" in confirmed
+    assert "website_weakness" in confirmed
+    assert "missing_advertising_pixel" not in confirmed
+
+
 def test_requested_count_remains_qualified_target_in_orchestrator() -> None:
     pool = milano_rows()[:3]
     runner = _GrowingPoolRunner(pool)

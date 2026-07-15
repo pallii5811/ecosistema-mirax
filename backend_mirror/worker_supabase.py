@@ -3555,7 +3555,9 @@ async def _run_core_scraper(category: str, location: str, zone: Optional[str] = 
         job_max = int(z)
     cap_new = job_max if job_max > 0 else 500
     cap_new = min(cap_new, LEAD_HARD_CAP)
-    if len(raw or []) < cap_new:
+    if len(raw or []) < cap_new and not (
+        isinstance(intent, dict) and str(intent.get("source_adapter") or "").strip() == "legacy_digital_audit_v1"
+    ):
         try:
             needed = cap_new - len(raw or [])
             backfill = await _organic_backfill_leads(category, location, needed, raw or [])

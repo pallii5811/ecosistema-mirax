@@ -145,35 +145,62 @@ def category_matches_target(
     return False, discovery_norm or "", discovery_norm or ""
 
 
+def _tech_stack_labels(raw: Mapping[str, Any]) -> set[str]:
+    stack = raw.get("tech_stack") or ()
+    if isinstance(stack, str):
+        stack = (stack,)
+    return {str(item).strip().upper() for item in stack if str(item).strip()}
+
+
 def _confirmed_signal_values(raw: Mapping[str, Any]) -> Dict[str, str]:
     technical = raw.get("technical_report") if isinstance(raw.get("technical_report"), Mapping) else {}
     audit = raw.get("audit") if isinstance(raw.get("audit"), Mapping) else {}
+    labels = _tech_stack_labels(raw)
     confirmed: Dict[str, str] = {}
     if _text(raw.get("website")):
         confirmed["company_identity"] = "official website observed from the business record"
     if not _audit_succeeded(raw):
         return confirmed
-    if raw.get("meta_pixel") is False and audit.get("has_facebook_pixel") is False:
+    pixel_absent = (
+        raw.get("pixel_missing") is True
+        or raw.get("meta_pixel") is False
+        or "MISSING FB PIXEL" in labels
+    ) and audit.get("has_facebook_pixel") is not True and raw.get("meta_pixel") is not True
+    if pixel_absent:
         confirmed["no_pixel"] = "Meta/Facebook Pixel absent in direct HTML audit"
         confirmed["missing_advertising_pixel"] = "Meta/Facebook Pixel absent in direct HTML audit"
-    if raw.get("google_tag_manager") is False and audit.get("has_gtm") is False:
+    gtm_absent = (
+        raw.get("google_tag_manager") is False
+        or "MISSING GTM" in labels
+    ) and audit.get("has_gtm") is not True and raw.get("google_tag_manager") is not True
+    if gtm_absent:
         confirmed["no_gtm"] = "Google Tag Manager absent in direct HTML audit"
-    if technical.get("has_ga4") is False:
+    if technical.get("has_ga4") is False or "MISSING GA4" in labels:
         confirmed["missing_analytics"] = "GA4 absent in direct technical audit"
-    if technical.get("has_google_ads") is False:
+    if technical.get("has_google_ads") is False or "MISSING GOOGLE ADS" in labels:
         confirmed["missing_google_ads"] = "Google Ads conversion tag absent in direct technical audit"
     if technical.get("has_dmarc") is False:
         confirmed["no_dmarc"] = "DMARC record absent in direct DNS audit"
         confirmed["cybersecurity_exposure"] = "DMARC record absent in direct DNS audit"
-    if technical.get("seo_disaster") is True or int(raw.get("html_errors") or 0) > 0:
+    if (
+        technical.get("seo_disaster") is True
+        or int(raw.get("html_errors") or 0) > 0
+        or "DISASTRO SEO (NO H1/TITLE)" in labels
+    ):
         confirmed["seo_errors"] = "critical SEO/HTML issues observed in direct audit"
         confirmed["website_weakness"] = "critical SEO/HTML issues observed in direct audit"
     speed = technical.get("load_speed_seconds")
+    if speed is None:
+        speed = technical.get("load_speed_s")
+    if speed is None:
+        speed = raw.get("load_speed_s")
     try:
         if speed is not None and float(speed) > 4:
             confirmed["website_weakness"] = f"homepage load time {float(speed):.2f}s"
     except (TypeError, ValueError):
         pass
+    if "SITO LENTO" in labels and "website_weakness" not in confirmed:
+        confirmed["website_weakness"] = "slow homepage observed in direct audit"
     if raw.get("instagram_missing") is True or audit.get("missing_instagram") is True:
         confirmed["missing_instagram"] = "Instagram profile absent from official website audit"
     return confirmed
@@ -184,9 +211,10 @@ def _tracking_fully_present(raw: Mapping[str, Any]) -> bool:
         return False
     technical = raw.get("technical_report") if isinstance(raw.get("technical_report"), Mapping) else {}
     audit = raw.get("audit") if isinstance(raw.get("audit"), Mapping) else {}
-    pixel_ok = raw.get("meta_pixel") is True or audit.get("has_facebook_pixel") is True
-    ga4_ok = technical.get("has_ga4") is True
-    gtm_ok = raw.get("google_tag_manager") is True or audit.get("has_gtm") is True
+    labels = _tech_stack_labels(raw)
+    pixel_ok = raw.get("meta_pixel") is True or audit.get("has_facebook_pixel") is True or "Meta Pixel" in labels
+    ga4_ok = technical.get("has_ga4") is True or "GA4" in labels
+    gtm_ok = raw.get("google_tag_manager") is True or audit.get("has_gtm") is True or "GTM" in labels
     return pixel_ok and ga4_ok and gtm_ok
 
 
