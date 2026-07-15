@@ -220,6 +220,18 @@ def test_ted_provider_keeps_country_in_discovery_query(monkeypatch) -> None:
     assert captured["location"] == "Italia"
 
 
+def test_one_provider_failure_does_not_discard_other_source_results() -> None:
+    async def failing_ted(_request, _offset, _limit):
+        raise RuntimeError("TED unavailable")
+
+    subject = adapter((provider("anac_opendata"), failing_ted))
+    result = asyncio.run(subject.discover(request(count=5)))
+
+    assert len(result.candidates) == 5
+    assert result.exhaustion.reason == "requested_count_reached"
+    assert "PROVIDER_FAILED:FAILING_TED:RUNTIMEERROR" in result.warnings
+
+
 def test_ted_parser_requires_award_and_explicit_winner() -> None:
     parsed = parse_ted_award_notice({
         "noticeType": "CAN",

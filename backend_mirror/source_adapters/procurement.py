@@ -278,6 +278,7 @@ class ProcurementAdapter:
         per_provider = min(100, max(request.requested_count * 2, 20))
         started = datetime.now(timezone.utc).isoformat()
         provider_results: List[ProcurementProviderResult] = []
+        provider_warnings: List[str] = []
         spent = 0.0
         for provider in self._providers:
             remaining = max(0.0, request.budget_eur - spent)
@@ -287,7 +288,12 @@ class ProcurementAdapter:
                 requested_count=request.requested_count, budget_eur=remaining, query=request.query,
                 sectors=request.sectors, technical_filters=request.technical_filters, cursor=request.cursor,
             )
-            result = await provider(bounded_request, offset, per_provider)
+            try:
+                result = await provider(bounded_request, offset, per_provider)
+            except Exception as exc:
+                provider_name = str(getattr(provider, "__name__", provider.__class__.__name__)).upper()
+                provider_warnings.append(f"PROVIDER_FAILED:{provider_name}:{exc.__class__.__name__.upper()}")
+                continue
             if result.cost_eur > remaining + 1e-9:
                 raise RuntimeError("PROCUREMENT_PROVIDER_EXCEEDED_HARD_COST_CAP")
             provider_results.append(result)
@@ -296,7 +302,7 @@ class ProcurementAdapter:
         candidates: List[OpportunityCandidate] = []
         seen_entities: set[str] = set()
         seen_awards: set[str] = set()
-        rejection_codes: List[str] = []
+        rejection_codes: List[str] = list(provider_warnings)
         for provider_result in provider_results:
             for record in provider_result.records:
                 valid, rejection = _record_is_valid(record, request, date.today())
@@ -397,7 +403,7 @@ class ProcurementAdapter:
             if len(candidates) >= request.requested_count:
                 break
         target_reached = len(candidates) >= request.requested_count
-        all_exhausted = all(result.exhausted for result in provider_results)
+        all_exhausted = bool(provider_results) and not provider_warnings and all(result.exhausted for result in provider_results)
         next_cursor = None if all_exhausted else DiscoveryCursor(f"procurement:v1:{offset + per_provider}", partition="anac_ted")
         return AdapterExecutionResult(
             adapter_id=self.capability.adapter_id,
