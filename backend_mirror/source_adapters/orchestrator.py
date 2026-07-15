@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
-from .catalog import CapabilityCoverage, SourceCapabilityRegistry
+from .catalog import CapabilityCoverage, SourceAdapterRegistryMismatchError, SourceCapabilityRegistry
 from .contracts import (
     AdapterDiscoveryRequest,
     DiscoveryCursor,
@@ -292,17 +292,29 @@ class UniversalSourceOrchestrator:
         request: AdapterDiscoveryRequest,
         *,
         required_source_classes: Sequence[str] = (),
+        mandatory_adapter_ids: Sequence[str] = (),
         resume_cursors: Optional[Mapping[str, DiscoveryCursor]] = None,
         progress_callback: Optional[ProgressCallback] = None,
     ) -> OrchestrationResult:
         started_dt = datetime.now(timezone.utc)
         started = started_dt.isoformat()
         start_clock = time.monotonic()
+        mandatory = tuple(dict.fromkeys(str(item).strip() for item in mandatory_adapter_ids if str(item).strip()))
+        allow_generic_fallback = not mandatory
         coverage = self.registry.resolve(
             request,
             required_source_classes=required_source_classes,
-            allow_generic_fallback=True,
+            allow_generic_fallback=allow_generic_fallback,
         )
+        if mandatory:
+            selected = set(coverage.adapter_ids)
+            missing = [adapter_id for adapter_id in mandatory if adapter_id not in selected]
+            if coverage.status != "supported" or missing:
+                raise SourceAdapterRegistryMismatchError(
+                    "canonical plan requires "
+                    f"{list(mandatory)} but runtime selected {list(coverage.adapter_ids)} "
+                    f"with status={coverage.status}; reasons={list(coverage.reasons)}"
+                )
         states = {adapter_id: AdapterProgress(adapter_id) for adapter_id in coverage.adapter_ids}
         if not states:
             return self._empty_result("failed_terminal", coverage, request, started, states, ("no_executable_adapter",))

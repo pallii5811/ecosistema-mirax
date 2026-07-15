@@ -196,7 +196,7 @@ class DigitalAuditAdapter:
         supported_intents=("maps", "hybrid", "digital_audit", "commercial_search"),
         supported_signals=_TECHNICAL_SIGNALS,
         source_classes=("google_business_maps", "technology_audit", "official_company_website"),
-        geographic_coverage=("italy",),
+        geographic_coverage=("country", "region", "province", "city", "locality", "italy"),
         freshness_max_age_days=1,
         discovery_mode="discovery_first",
         supports_pagination=False,

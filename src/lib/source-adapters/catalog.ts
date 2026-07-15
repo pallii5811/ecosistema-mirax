@@ -14,6 +14,33 @@ export interface CapabilityCoverage {
 
 const normalize = (values: string[]) => new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))
 
+const COUNTRY_COVERAGE = new Set(['italy', 'eu'])
+const COUNTRY_ALIASES = new Set(['italy', 'italia', 'it', 'ita', 'eu'])
+const LOCALITY_GRANULARITIES = new Set(['country', 'region', 'province', 'city', 'locality'])
+
+const normalizeGeographies = (values: string[]) => {
+  const aliases: Record<string, string> = {
+    italia: 'italy',
+    italiano: 'italy',
+    italiana: 'italy',
+    it: 'italy',
+    ita: 'italy',
+  }
+  return new Set([...normalize(values)].map((value) => aliases[value] ?? value))
+}
+
+function geographySupported(requestGeographies: Set<string>, capability: SourceCapability): boolean {
+  if (!requestGeographies.size) return true
+  const supported = normalizeGeographies([...capability.geographic_coverage])
+  if (supported.has('global')) return true
+  if ([...requestGeographies].some((value) => supported.has(value))) return true
+  const localityLevels = [...supported].filter((value) => LOCALITY_GRANULARITIES.has(value))
+  if (localityLevels.length && [...supported].some((value) => COUNTRY_COVERAGE.has(value))) {
+    return ![...requestGeographies].some((value) => COUNTRY_ALIASES.has(value))
+  }
+  return false
+}
+
 export class SourceCapabilityRegistry {
   private readonly capabilitiesById = new Map<string, SourceCapability>()
 
@@ -42,7 +69,7 @@ export class SourceCapabilityRegistry {
   ): CapabilityCoverage {
     const signals = normalize(request.signal_ids)
     const requestedSources = normalize(requiredSourceClasses)
-    const geographies = normalize(request.geographies)
+    const geographies = normalizeGeographies(request.geographies)
     const eligible: SourceCapability[] = []
     const generic: SourceCapability[] = []
     const reasons: string[] = []
@@ -57,8 +84,7 @@ export class SourceCapabilityRegistry {
       if (!intents.has('*') && !intents.has(request.intent.toLowerCase())) continue
       const sourceClasses = normalize(capability.source_classes)
       if (requestedSources.size && ![...requestedSources].some((value) => sourceClasses.has(value))) continue
-      const geographicCoverage = normalize(capability.geographic_coverage)
-      if (geographies.size && !geographicCoverage.has('global') && ![...geographies].some((value) => geographicCoverage.has(value))) {
+      if (geographies.size && !geographySupported(geographies, capability)) {
         reasons.push(`${capability.adapter_id}:geography`)
         continue
       }
@@ -158,7 +184,7 @@ export const DIGITAL_AUDIT_CAPABILITY: SourceCapability = {
     'no_dmarc', 'seo_errors', 'missing_instagram', 'missing_google_ads',
   ],
   source_classes: ['google_business_maps', 'technology_audit', 'official_company_website'],
-  geographic_coverage: ['italy'],
+  geographic_coverage: ['country', 'region', 'province', 'city', 'locality', 'italy'],
   freshness_max_age_days: 1,
   discovery_mode: 'discovery_first',
   supports_pagination: false,

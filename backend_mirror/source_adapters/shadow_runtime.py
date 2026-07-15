@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping, MutableMapping, Optional
+from typing import Any, Mapping, MutableMapping, Optional, Tuple
 
 from .catalog import SourceCapabilityRegistry, default_source_capability_registry
 from .contracts import OpportunityCandidate
@@ -66,6 +66,26 @@ def _hard_cap(plan: Mapping[str, Any], environ: Mapping[str, str]) -> float:
     return max(0.0, min(_MAX_SHADOW_CAP_EUR, plan_cap, configured))
 
 
+def _mandatory_adapter_ids(intent: Mapping[str, Any], plan: Mapping[str, Any]) -> Tuple[str, ...]:
+    uqe = intent.get("uqe_plan") if isinstance(intent.get("uqe_plan"), Mapping) else {}
+    source_coverage = uqe.get("source_coverage") if isinstance(uqe.get("source_coverage"), Mapping) else {}
+    adapter_ids = source_coverage.get("adapter_ids")
+    if isinstance(adapter_ids, list) and adapter_ids:
+        return tuple(dict.fromkeys(str(item).strip() for item in adapter_ids if str(item).strip()))
+    source_plan = uqe.get("source_plan") if isinstance(uqe.get("source_plan"), list) else []
+    collected: list[str] = []
+    for lane in source_plan:
+        if not isinstance(lane, Mapping) or lane.get("execution_mode") != "adapter":
+            continue
+        for adapter_id in lane.get("adapter_ids") or ():
+            text = str(adapter_id).strip()
+            if text:
+                collected.append(text)
+    if collected:
+        return tuple(dict.fromkeys(collected))
+    return ()
+
+
 async def execute_source_adapter_shadow(
     intent: Mapping[str, Any],
     *,
@@ -95,6 +115,7 @@ async def execute_source_adapter_shadow(
     request = request_from_plan(plan, requested_count=requested_count, budget_eur=cap)
     source_policy = plan.get("source_policy") or {}
     preferred = tuple(str(item) for item in source_policy.get("preferred_source_classes") or ())
+    mandatory = _mandatory_adapter_ids(intent, plan)
     # worker_supabase exposes backend_mirror on sys.path and paid providers
     # import these modules by their runtime names. Reusing that exact namespace
     # avoids creating a second ContextVar that provider threads cannot see.
@@ -113,6 +134,7 @@ async def execute_source_adapter_shadow(
         result = await orchestrator.run(
             request,
             required_source_classes=preferred,
+            mandatory_adapter_ids=mandatory,
             progress_callback=progress_callback,
         )
     finally:

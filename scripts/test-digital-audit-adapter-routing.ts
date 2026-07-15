@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
-import { buildHeuristicMiraxQueryPlan } from '../src/lib/uqe/mirax-query-planner'
+import {
+  DIGITAL_AUDIT_CAPABILITY,
+  SOURCE_CAPABILITY_REGISTRY,
+} from '../src/lib/source-adapters/catalog'
 import { sourceRuntimeCoverage } from '../src/lib/source-intelligence/registry'
+import { buildHeuristicMiraxQueryPlan } from '../src/lib/uqe/mirax-query-planner'
 
 const plan = buildHeuristicMiraxQueryPlan(
   'Trovami concessionari auto a Torino senza DMARC e senza Instagram.',
@@ -16,6 +20,25 @@ assert.equal(technology?.execution_mode, 'adapter')
 assert.deepEqual(technology?.adapter_ids, ['legacy_digital_audit_v1'])
 assert.equal(sourceRuntimeCoverage('technology_audit'), 'supported')
 assert.equal(sourceRuntimeCoverage('google_business_maps'), 'supported')
+
+const milanoCoverage = SOURCE_CAPABILITY_REGISTRY.resolve({
+  intent: 'maps',
+  signal_ids: ['website_weakness', 'missing_advertising_pixel', 'missing_analytics'],
+  signal_match_mode: 'any',
+  geographies: ['Milano'],
+  freshness_max_age_days: 14,
+  requested_count: 5,
+  budget_eur: 0.125,
+  query: 'Trova imprese di pulizia a Milano con sito ufficiale, criticità SEO e assenza di strumenti di tracciamento pubblicitario.',
+  sectors: ['imprese di pulizia'],
+  technical_filters: {},
+}, ['technology_audit'], false)
+assert.equal(milanoCoverage.status, 'supported')
+assert.deepEqual(milanoCoverage.adapter_ids, ['legacy_digital_audit_v1'])
+assert.ok(!milanoCoverage.reasons.includes('legacy_digital_audit_v1:geography'))
+assert.deepEqual(DIGITAL_AUDIT_CAPABILITY.geographic_coverage, [
+  'country', 'region', 'province', 'city', 'locality', 'italy',
+])
 
 const replayCases = [
   ['Trovami imprese di pulizia a Genova senza GTM e Pixel.', ['no_gtm', 'no_pixel']],

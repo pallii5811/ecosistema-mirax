@@ -12,6 +12,11 @@ def _normalized(values: Iterable[str]) -> set[str]:
     return {str(value).strip().lower() for value in values if str(value).strip()}
 
 
+_COUNTRY_COVERAGE = frozenset({"italy", "eu"})
+_COUNTRY_ALIASES = frozenset({"italy", "italia", "it", "ita", "eu"})
+_LOCALITY_GRANULARITIES = frozenset({"country", "region", "province", "city", "locality"})
+
+
 def _normalized_geographies(values: Iterable[str]) -> set[str]:
     aliases = {
         "italia": "italy",
@@ -24,6 +29,23 @@ def _normalized_geographies(values: Iterable[str]) -> set[str]:
         aliases.get(value, value)
         for value in _normalized(values)
     }
+
+
+def _geography_supported(request_geographies: set[str], capability: SourceCapability) -> bool:
+    if not request_geographies:
+        return True
+    supported = _normalized_geographies(capability.geographic_coverage)
+    if "global" in supported:
+        return True
+    if request_geographies.intersection(supported):
+        return True
+    if supported.intersection(_LOCALITY_GRANULARITIES) and supported.intersection(_COUNTRY_COVERAGE):
+        return not request_geographies.intersection(_COUNTRY_ALIASES)
+    return False
+
+
+class SourceAdapterRegistryMismatchError(ValueError):
+    """Canonical plan selected adapters that runtime coverage did not honor."""
 
 
 @dataclass(frozen=True)
@@ -84,8 +106,7 @@ class SourceCapabilityRegistry:
             source_classes = _normalized(capability.source_classes)
             if requested_sources and not requested_sources.intersection(source_classes):
                 continue
-            supported_geo = _normalized_geographies(capability.geographic_coverage)
-            if geography and "global" not in supported_geo and not geography.intersection(supported_geo):
+            if geography and not _geography_supported(geography, capability):
                 rejection_reasons.append(f"{capability.adapter_id}:geography")
                 continue
             if (
