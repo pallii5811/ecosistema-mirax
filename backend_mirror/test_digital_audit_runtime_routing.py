@@ -145,7 +145,8 @@ def test_category_and_location_reach_maps_discovery() -> None:
     assert len(calls) == 1
     assert calls[0]["category"] == "imprese di pulizia"
     assert calls[0]["location"] == "Milano"
-    assert calls[0]["zone"] == "5"
+    assert calls[0]["zone"] == "15"
+    assert calls[0]["intent"]["maps_start_index"] == 0
     assert set(calls[0]["intent"]["required_signals"]) == {
         "website_weakness",
         "missing_advertising_pixel",

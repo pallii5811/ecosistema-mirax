@@ -20,6 +20,34 @@ from .contracts import (
 from .opportunity_scoring import score_opportunity
 
 
+_SEO_GROUP_SIGNALS = frozenset({"website_weakness", "seo_errors", "site_stale"})
+_TRACKING_ABSENCE_SIGNALS = frozenset({
+    "missing_advertising_pixel", "missing_analytics", "no_pixel", "no_gtm",
+})
+
+
+def _signal_groups_from_required_signals(signals: Sequence[str]) -> Optional[List[List[str]]]:
+    seo = [signal for signal in signals if signal in _SEO_GROUP_SIGNALS]
+    tracking = [signal for signal in signals if signal in _TRACKING_ABSENCE_SIGNALS]
+    if seo and tracking:
+        return [seo, tracking]
+    return None
+
+
+def _evidence_satisfies_request(evidence_signals: set[str], request: AdapterDiscoveryRequest) -> bool:
+    groups = request.technical_filters.get("signal_groups")
+    if isinstance(groups, list) and groups:
+        for group in groups:
+            if not isinstance(group, (list, tuple)):
+                continue
+            if not any(str(signal) in evidence_signals for signal in group):
+                return False
+        return True
+    if request.signal_match_mode == "all":
+        return set(request.signal_ids).issubset(evidence_signals)
+    return bool(evidence_signals.intersection(request.signal_ids))
+
+
 TerminalStatus = Literal[
     "completed_requested_count",
     "partial_market_exhausted",
@@ -145,6 +173,9 @@ def request_from_plan(
         "excluded_source_classes": tuple(str(item) for item in source_policy.get("excluded_source_classes") or ()),
         "minimum_evidence_confidence": evidence_policy.get("minimum_evidence_confidence"),
     })
+    signal_groups = _signal_groups_from_required_signals(signals)
+    if signal_groups:
+        technical["signal_groups"] = signal_groups
     industries = tuple(str(item).strip() for item in target.get("industries") or () if str(item).strip())
     sector = str(plan.get("sector") or "").strip()
     hard_budget = budget_policy.get("hard_cost_eur")
@@ -421,8 +452,12 @@ class UniversalSourceOrchestrator:
                         state.unique_candidates += 1
                     merged = accumulated[key]
                     evidence_signals = {item.signal_id for item in merged.evidence}
-                    if request.signal_match_mode == "all" and not set(request.signal_ids).issubset(evidence_signals):
-                        rejection_by_entity[key] = "SIGNAL_SET_INCOMPLETE"
+                    if not _evidence_satisfies_request(evidence_signals, request):
+                        rejection_by_entity[key] = (
+                            "SIGNAL_GROUP_MISMATCH"
+                            if request.technical_filters.get("signal_groups")
+                            else "SIGNAL_SET_INCOMPLETE"
+                        )
                         continue
                     decision = await self.qualifier(merged)
                     decisions[key] = decision
