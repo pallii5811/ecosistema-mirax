@@ -5113,7 +5113,7 @@ def main() -> None:
                     _heartbeat_stop.set()
                     supabase.table("searches").update({
                         "status": "error",
-                        "results": [],
+                        "results": prior_qualified_payloads,
                         "worker_id": None,
                         "heartbeat_at": None,
                         "lease_expires_at": None,
@@ -5121,7 +5121,10 @@ def main() -> None:
                             "stage": "source_adapter_shadow_blocked",
                             "stop_reason": shadow_decision.reason,
                             "target": job_max,
-                            "found": 0,
+                            "found": len(prior_qualified_payloads),
+                            "unique_lifecycle_accepted_count": unique_prior_count,
+                            "processed_employer_keys": list(processed_employer_keys),
+                            "shadow_resume": prior_shadow_resume,
                             "updated_at": _utc_now_iso(),
                         },
                         "updated_at": _utc_now_iso(),
@@ -5261,12 +5264,14 @@ def main() -> None:
                     _heartbeat_stop.set()
                     print(
                         f"[worker_supabase] source-adapter shadow failed job={job_id}: "
-                        f"{shadow_error.__class__.__name__}",
+                        f"{shadow_error.__class__.__name__}: {shadow_error}",
                         flush=True,
                     )
+                    import traceback as _tb
+                    print(_tb.format_exc(), flush=True)
                     supabase.table("searches").update({
                         "status": "error",
-                        "results": [],
+                        "results": prior_qualified_payloads,
                         "worker_id": None,
                         "heartbeat_at": None,
                         "lease_expires_at": None,
@@ -5274,8 +5279,12 @@ def main() -> None:
                             "stage": "source_adapter_shadow_failed",
                             "stop_reason": "SOURCE_ADAPTER_SHADOW_FAILED",
                             "error_type": shadow_error.__class__.__name__,
+                            "error_message": str(shadow_error)[:500],
                             "target": job_max,
-                            "found": 0,
+                            "found": len(prior_qualified_payloads),
+                            "unique_lifecycle_accepted_count": unique_prior_count,
+                            "processed_employer_keys": list(processed_employer_keys),
+                            "shadow_resume": prior_shadow_resume,
                             "published": 0,
                             "updated_at": _utc_now_iso(),
                         },

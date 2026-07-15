@@ -282,17 +282,11 @@ def collect_processed_employer_keys(
 
 
 def count_unique_employer_keys(payloads: Sequence[Mapping[str, Any]]) -> int:
-    return len({employer_key_from_payload(item) for item in payloads if isinstance(item, Mapping) and employer_key_from_payload(item)})
-    rows = [dict(item) for item in existing if isinstance(item, Mapping)]
-    related_url = _text(related.get("vacancy_url") or related.get("source_url")).lower().rstrip("/")
-    if not related_url:
-        return tuple(rows)
-    for item in rows:
-        prior_url = _text(item.get("vacancy_url") or item.get("source_url")).lower().rstrip("/")
-        if prior_url == related_url:
-            return tuple(rows)
-    rows.append(dict(related))
-    return tuple(rows)
+    return len({
+        employer_key_from_payload(item)
+        for item in payloads
+        if isinstance(item, Mapping) and employer_key_from_payload(item)
+    })
 
 
 def outcome_to_record(outcome: Mapping[str, Any]) -> dict[str, Any]:

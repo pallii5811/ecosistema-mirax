@@ -7,6 +7,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Mapping, MutableMapping, Optional, Sequence, Tuple
 
+from .catalog import SourceCapabilityRegistry, default_source_capability_registry
+from .contracts import DiscoveryCursor, OpportunityCandidate
 from .hiring_qualification import (
     collect_processed_employer_keys,
     count_unique_employer_keys,
@@ -14,6 +16,7 @@ from .hiring_qualification import (
     merge_related_opportunity,
     related_opportunity_from_payload,
 )
+from .orchestrator import OrchestrationResult, ProgressCallback, UniversalSourceOrchestrator, request_from_plan
 
 
 _MAX_SHADOW_CAP_EUR = 0.125
