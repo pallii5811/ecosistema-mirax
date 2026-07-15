@@ -173,13 +173,13 @@ def test_default_provider_reserves_before_every_query_and_never_exceeds_budget(m
 
 
 @pytest.mark.parametrize(
-    ("signal", "expected_term"),
+    ("signal", "expected_terms"),
     [
-        ("hiring_sales", "business developer"),
-        ("hiring_marketing", "performance marketer"),
+        ("hiring_sales", ("commerciale", "Lombardia")),
+        ("hiring_marketing", ("marketing manager", "Lombardia")),
     ],
 )
-def test_default_provider_uses_the_requested_specialized_role(monkeypatch, signal, expected_term) -> None:
+def test_default_provider_uses_the_requested_specialized_role(monkeypatch, signal, expected_terms) -> None:
     calls: list[str] = []
 
     def fake_search(query, _limit, *, cost_scope):
@@ -204,8 +204,8 @@ def test_default_provider_uses_the_requested_specialized_role(monkeypatch, signa
         geographies=("Lombardia", "Italia"),
     )
     asyncio.run(_default_hiring_provider(specialized, 0, 20))
-    assert len(calls) == 3
-    assert all(expected_term in query for query in calls)
+    assert len(calls) >= 3
+    assert any(all(term in query for term in expected_terms) for query in calls)
 
 
 def test_registry_binds_both_hiring_source_classes_to_real_runtime() -> None:

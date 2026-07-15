@@ -60,6 +60,7 @@ const SPECS = {
     buyerProblem: 'La crescita commerciale richiede nuove figure di vendita con onboarding e pipeline attivi.',
     event: 'vacancy sales attiva su careers ufficiale o ATS pubblico',
     impliedNeed: 'Servizi per accelerare pipeline, onboarding commerciale e prioritizzazione outbound.',
+    localBusinessPreference: false,
   },
   'hiring-marketing': {
     query: 'Trovami aziende in Lombardia che stanno assumendo figure marketing, social media manager o performance marketer.',
@@ -74,6 +75,7 @@ const SPECS = {
     buyerProblem: 'Una vacancy marketing attiva segnala budget e pressione sui risultati commerciali.',
     event: 'vacancy marketing attiva su careers ufficiale o ATS pubblico',
     impliedNeed: 'Servizi per aumentare il ritorno del budget marketing e della crescita digitale.',
+    localBusinessPreference: false,
   },
   'digital-audit': {
     query: 'Trovami concessionari auto a Torino senza DMARC e senza Instagram.',
@@ -160,7 +162,7 @@ function buildPlan(spec, searchId) {
       employee_range: { min: 1, max: 249 },
       revenue_range: { max: 50000000, currency: 'EUR' },
       geographies: spec.geographies,
-      local_business_preference: true,
+      local_business_preference: spec.localBusinessPreference ?? true,
       required_attributes: spec.requiredAttributes,
       excluded_attributes: ['grande gruppo globale', 'publisher', 'directory', 'ente pubblico'],
       excluded_entities: [],

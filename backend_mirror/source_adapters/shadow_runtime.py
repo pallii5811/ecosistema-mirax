@@ -263,6 +263,11 @@ def candidate_to_lifecycle_shadow_payload(
                 break
     if not size:
         size = "unknown"
+    employer_domain = str(
+        candidate.provenance.get("employer_official_domain")
+        or candidate.official_domain
+        or ""
+    ).strip()
     payload: MutableMapping[str, Any] = {
         "azienda": candidate.canonical_company_name,
         "name": candidate.canonical_company_name,
@@ -273,6 +278,10 @@ def candidate_to_lifecycle_shadow_payload(
         "citta": geography,
         "company_size_class": size,
         **({"employee_count": employee_count} if employee_count is not None else {}),
+        "employer_is_direct": candidate.provenance.get("employer_is_direct") is True,
+        "vacancy_url": candidate.provenance.get("vacancy_url"),
+        "vacancy_source_domain": candidate.provenance.get("vacancy_source_domain"),
+        "employer_official_domain": employer_domain or None,
         "operating_company_probability": 0.95 if candidate.entity_class == "operating_company" else 0.0,
         "source_adapter_id": candidate.adapter_id,
         "domain_verification": dict(verification),

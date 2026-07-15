@@ -50,10 +50,40 @@ _LOCATION_RE = re.compile(
 )
 _DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/20\d{2})\b")
 _ROLE_SIGNAL_PATTERNS = {
-    "hiring_sales": re.compile(r"\b(?:sales|commercial[ei]|account|business developer|venditor[ei])\b", re.I),
-    "hiring_marketing": re.compile(r"\b(?:marketing|seo|content|social media|advertising|brand)\b", re.I),
+    "hiring_sales": re.compile(
+        r"\b(?:sales|commercial[ei]|account(?:\s+executive|\s+manager)?|business developer|"
+        r"venditor[ei]|area manager|\bsdr\b|\bbdr\b)\b",
+        re.I,
+    ),
+    "hiring_marketing": re.compile(r"\b(?:marketing|seo|content|social media|advertising|brand|performance marketer)\b", re.I),
     "hiring_technology": re.compile(r"\b(?:developer|software|data engineer|programmat|sistemist|devops|cyber|it technician)\b", re.I),
 }
+_HIRING_SALES_ROLE_TERMS = (
+    "commerciale", "sales manager", "business developer", "account executive",
+    "account manager", "area manager", "SDR", "BDR",
+)
+_HIRING_MARKETING_ROLE_TERMS = (
+    "marketing manager", "social media manager", "performance marketer", "digital marketing",
+)
+_LOMBARDIA_GEO_TERMS = (
+    "Lombardia", "Milano", "Bergamo", "Brescia", "Monza", "Brianza", "Varese", "Como",
+    "Lecco", "Pavia", "Cremona", "Mantova", "Lodi", "Sondrio",
+)
+_LOMBARDIA_LOCATION_ALIASES = frozenset({
+    "lombardia", "lombardy", "milano", "milan", "bergamo", "brescia", "monza", "brianza",
+    "varese", "como", "lecco", "pavia", "cremona", "mantova", "lodi", "sondrio",
+    "sesto san giovanni", "rho", "legnano", "desio", "vimercate", "lissone",
+})
+_REGION_LOCATION_ALIASES = {
+    "lombardia": _LOMBARDIA_LOCATION_ALIASES,
+    "lombardy": _LOMBARDIA_LOCATION_ALIASES,
+}
+_RECRUITER_NAME_RE = re.compile(
+    r"\b(?:agenzia di selezione|headhunter|recruiter|staffing|consulting group|human resources agency)\b",
+    re.I,
+)
+_ANONYMOUS_EMPLOYER_RE = re.compile(r"\b(?:confidential|anonim[oa]|azienda riservata|employer hidden)\b", re.I)
+_CAREERS_SUBDOMAIN_PREFIXES = frozenset({"careers", "jobs", "job", "lavora", "work", "join", "recruiting"})
 _ESTIMATED_SEARCH_QUERY_EUR = 0.005
 
 
@@ -63,6 +93,79 @@ class HiringProviderResult:
     exhausted: bool
     cost_eur: float = 0.0
     warnings: Tuple[str, ...] = ()
+    url_traces: Tuple[Mapping[str, Any], ...] = ()
+
+
+def _build_hiring_discovery_queries(request: AdapterDiscoveryRequest, *, offset: int) -> List[Tuple[str, str]]:
+    """Return (query, source_label) pairs rotated by cursor offset."""
+    geos = [
+        item for item in request.geographies
+        if item.casefold() not in {"italy", "italia", "global"}
+    ]
+    if not geos:
+        geos = ["Italia"]
+    expanded_geos: List[str] = []
+    for geo in geos:
+        expanded_geos.append(geo)
+        if geo.casefold() in {"lombardia", "lombardy"}:
+            expanded_geos.extend(list(_LOMBARDIA_GEO_TERMS[1:]))
+    if "hiring_sales" in request.signal_ids:
+        roles = _HIRING_SALES_ROLE_TERMS
+    elif "hiring_marketing" in request.signal_ids:
+        roles = _HIRING_MARKETING_ROLE_TERMS
+    elif "hiring_technology" in request.signal_ids:
+        roles = ("developer", "software engineer", "data engineer", "devops")
+    elif "hiring_operational" in request.signal_ids:
+        roles = ("operaio", "tecnico", "magazziniere", "autista")
+    else:
+        roles = ("personale", "posizione")
+    sector = " ".join(request.sectors)
+    pairs: List[Tuple[str, str]] = []
+    for role in roles:
+        for geo in expanded_geos:
+            pairs.extend([
+                (f'"{role}" "{geo}" ("posizione aperta" OR candidati OR apply)', "serp:local_vacancy"),
+                (f'"{role}" "{geo}" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)', "serp:ats"),
+                (f'"{role}" "lavora con noi" {sector} {geo}'.strip(), "serp:careers"),
+            ])
+    if not pairs:
+        return []
+    start = offset % len(pairs)
+    rotated = pairs[start:] + pairs[:start]
+    return rotated
+
+
+def _trace_url(
+    *,
+    url: str,
+    query: str,
+    query_source: str,
+    record: Optional[Mapping[str, Any]] = None,
+    rejection: str = "",
+) -> Dict[str, Any]:
+    trace: Dict[str, Any] = {
+        "url": url,
+        "query": query,
+        "query_source": query_source,
+        "rejection_code": rejection or "FETCH_OR_PARSE_EMPTY",
+        "rejection_function": "_validate_record" if rejection else "parse_hiring_page",
+    }
+    if record:
+        trace.update({
+            "title": _text(record.get("vacancy_title") or record.get("hiring_title")),
+            "employer": _text(record.get("company_name") or record.get("name")),
+            "role": _text(record.get("vacancy_title") or record.get("hiring_title")),
+            "location": _text(record.get("location")),
+            "publication_date": _iso_date(record.get("published_at") or record.get("evidence_date") or record.get("date_posted")),
+            "vacancy_active": record.get("active") is True,
+            "employer_direct": record.get("employer_is_direct") is True,
+            "ats_domain": _text(record.get("vacancy_source_domain")),
+            "employer_official_domain": _text(record.get("employer_official_domain")),
+            "source": _text(record.get("source_class")),
+            "rejection_code": rejection or "ACCEPTED",
+            "rejection_function": "_validate_record",
+        })
+    return trace
 
 
 HiringProvider = Callable[[AdapterDiscoveryRequest, int, int], Awaitable[HiringProviderResult]]
@@ -192,39 +295,24 @@ async def _default_hiring_provider(
     import httpx
     from backend_mirror.agents.search_serp import search_urls_http
 
-    location = next((item for item in request.geographies if item.casefold() not in {"italy", "italia"}), "Italia")
-    if "hiring_sales" in request.signal_ids:
-        role_clause = '(commerciale OR sales OR "sales manager" OR "business developer")'
-    elif "hiring_marketing" in request.signal_ids:
-        role_clause = '(marketing OR "marketing manager" OR "social media manager" OR "performance marketer")'
-    elif "hiring_technology" in request.signal_ids:
-        role_clause = '(developer OR software OR "data engineer" OR devops)'
-    elif "hiring_operational" in request.signal_ids:
-        role_clause = '(operaio OR tecnico OR magazziniere OR autista)'
-    else:
-        role_clause = '(personale OR posizione)'
-    sector = " ".join(request.sectors)
-    queries = (
-        f'{role_clause} "{location}" ("posizione aperta" OR candidati)',
-        f'{role_clause} "{location}" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)',
-        f'{role_clause} "lavora con noi" {sector} {location}'.strip(),
-    )
-    max_queries = min(len(queries), math.floor((request.budget_eur + 1e-9) / _ESTIMATED_SEARCH_QUERY_EUR))
+    query_pairs = _build_hiring_discovery_queries(request, offset=offset)
+    max_queries = min(len(query_pairs), math.floor((request.budget_eur + 1e-9) / _ESTIMATED_SEARCH_QUERY_EUR))
     if max_queries <= 0:
         return HiringProviderResult((), False, 0.0, ("BUDGET_TOO_LOW_FOR_SEARCH",))
     target_urls = min(100, offset + max(limit * 2, 30))
     urls: List[str] = []
+    url_query_meta: Dict[str, Tuple[str, str]] = {}
     seen: set[str] = set()
     reserved_cost = 0.0
     scope = hashlib.sha256(f"{request.query}|{request.signal_ids}|{request.geographies}".encode()).hexdigest()[:20]
-    for index, query in enumerate(queries[:max_queries]):
+    for index, (query, query_source) in enumerate(query_pairs[:max_queries]):
         if reserved_cost + _ESTIMATED_SEARCH_QUERY_EUR > request.budget_eur + 1e-9:
             break
         found = await asyncio.to_thread(
             search_urls_http,
             query,
             target_urls,
-            cost_scope=f"hiring-adapter:{scope}:{index}",
+            cost_scope=f"hiring-adapter:{scope}:{offset + index}",
         )
         reserved_cost += _ESTIMATED_SEARCH_QUERY_EUR
         for url in found:
@@ -232,19 +320,34 @@ async def _default_hiring_provider(
             if key not in seen:
                 seen.add(key)
                 urls.append(url)
+                url_query_meta[key] = (query, query_source)
     records: List[Mapping[str, Any]] = []
+    traces: List[Dict[str, Any]] = []
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Hiring/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
     async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=headers) as client:
         for url in urls[offset:offset + limit]:
+            query, query_source = url_query_meta.get(url.lower().rstrip("/"), ("", "unknown"))
             try:
                 response = await client.get(url)
                 if response.status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
+                    traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="FETCH_FAILED"))
                     continue
-                records.extend(parse_hiring_page(response.text[:2_000_000], str(response.url)))
+                parsed = parse_hiring_page(response.text[:2_000_000], str(response.url))
+                if not parsed:
+                    traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="PARSE_EMPTY"))
+                    continue
+                for record in parsed:
+                    valid, rejection = _validate_record(record, request, date.today())
+                    traces.append(_trace_url(
+                        url=url, query=query, query_source=query_source, record=record, rejection=rejection,
+                    ))
+                    if valid:
+                        records.append(record)
             except Exception:
+                traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection="FETCH_EXCEPTION"))
                 continue
     exhausted = offset + limit >= len(urls)
-    return HiringProviderResult(tuple(records), exhausted, reserved_cost)
+    return HiringProviderResult(tuple(records), exhausted, reserved_cost, url_traces=tuple(traces))
 
 
 def _requires_sme(request: AdapterDiscoveryRequest) -> bool:
@@ -256,7 +359,21 @@ def _location_matches(record_location: str, geographies: Sequence[str]) -> bool:
     if not requested:
         return bool(record_location)
     location = record_location.casefold()
-    return any(item in location or location in item for item in requested)
+    for item in requested:
+        if item in location or location in item:
+            return True
+        aliases = _REGION_LOCATION_ALIASES.get(item)
+        if aliases and any(alias in location for alias in aliases):
+            return True
+    return False
+
+
+def _employer_official_domain(record: Mapping[str, Any]) -> str:
+    return _host(
+        record.get("employer_official_domain")
+        or record.get("official_domain")
+        or record.get("website")
+    )
 
 
 def _validate_record(
@@ -266,8 +383,10 @@ def _validate_record(
 ) -> Tuple[bool, str]:
     company = _text(record.get("company_name") or record.get("name"))
     title = _text(record.get("vacancy_title") or record.get("hiring_title"))
-    if not company:
+    if not company or _ANONYMOUS_EMPLOYER_RE.search(company):
         return False, "HIRING_COMPANY_MISSING"
+    if _RECRUITER_NAME_RE.search(company) and record.get("employer_is_direct") is not True:
+        return False, "RECRUITER_WITHOUT_EMPLOYER"
     if not title or _GENERIC_TITLE_RE.fullmatch(title):
         return False, "VACANCY_TITLE_MISSING"
     source_url = _text(record.get("source_url"))
@@ -305,9 +424,14 @@ def _validate_record(
         role_ok = any(role_matches.values()) if request.signal_match_mode == "any" else all(role_matches.values())
         if not role_ok:
             return False, "OPERATIONAL_ROLE_UNPROVEN" if specialized == ["hiring_operational"] else "HIRING_ROLE_MISMATCH"
-    official_domain = _host(record.get("official_domain") or record.get("website"))
+    official_domain = _employer_official_domain(record)
+    vacancy_source_domain = _host(record.get("vacancy_source_domain") or record.get("source_url"))
     if not official_domain or is_blacklisted_domain(official_domain):
         return False, "OFFICIAL_DOMAIN_UNRESOLVED"
+    if vacancy_source_domain and official_domain == vacancy_source_domain:
+        host_parts = vacancy_source_domain.split(".")
+        if len(host_parts) >= 3 and host_parts[0] in _CAREERS_SUBDOMAIN_PREFIXES:
+            return False, "OFFICIAL_DOMAIN_UNRESOLVED"
     if record.get("official_domain_verified") is not True:
         return False, "OFFICIAL_DOMAIN_UNVERIFIED"
     source_class = _text(record.get("source_class")) or ""
@@ -401,19 +525,25 @@ class HiringAdapter:
                     warnings.append(rejection)
                     continue
                 company = _text(record.get("company_name") or record.get("name")) or ""
-                domain = _host(record.get("official_domain") or record.get("website"))
+                domain = _employer_official_domain(record)
                 if domain in seen_domains:
                     warnings.append("DUPLICATE_COMPANY")
                     continue
                 seen_domains.add(domain)
                 title = _text(record.get("vacancy_title") or record.get("hiring_title")) or ""
                 published = _iso_date(record.get("published_at") or record.get("evidence_date") or record.get("date_posted")) or ""
-                source_url = _text(record.get("source_url")) or ""
+                source_url = _text(record.get("source_url") or record.get("vacancy_url")) or ""
                 publisher = _text(record.get("source_publisher")) or _host(source_url)
+                vacancy_source_domain = _text(record.get("vacancy_source_domain")) or _host(source_url)
                 source_class = _text(record.get("source_class")) or "company_careers"
                 signal_id = next((item for item in request.signal_ids if item.startswith("hiring")), "hiring")
                 excerpt = _text(record.get("evidence") or record.get("evidence_excerpt")) or f"{company} cerca {title}"
                 confidence = 0.96 if source_class == "company_careers" else 0.86
+                verification_evidence = tuple(record.get("domain_verification_evidence") or (
+                    ("schema_org_identity_match", "official_page_host_match")
+                    if "schema_org" in (_text(record.get("extraction_method")) or "")
+                    else ("company_careers_host_match", "legal_name_in_page", "vacancy_source_verified")
+                ))
                 evidence = EvidenceRecord(
                     signal_id=signal_id,
                     source_url=source_url,
@@ -432,6 +562,9 @@ class HiringAdapter:
                         "employer_is_direct": True,
                         "company_size": record.get("company_size"),
                         "employee_count": record.get("employee_count"),
+                        "vacancy_url": source_url,
+                        "vacancy_source_domain": vacancy_source_domain,
+                        "employer_official_domain": domain,
                     },
                 )
                 candidates.append(OpportunityCandidate(
@@ -451,15 +584,14 @@ class HiringAdapter:
                     provenance={
                         "adapter_id": self.capability.adapter_id,
                         "vacancy_url": source_url,
+                        "vacancy_source_domain": vacancy_source_domain,
+                        "employer_official_domain": domain,
+                        "employer_is_direct": record.get("employer_is_direct") is True,
                         "publisher": publisher,
                         "domain_verification": {
                             "status": "verified", "confidence": 0.96 if source_class == "company_careers" else 0.86,
                             "score": 96 if source_class == "company_careers" else 86,
-                            "evidence": (
-                                ("schema_org_identity_match", "official_page_host_match")
-                                if "schema_org" in (_text(record.get("extraction_method")) or "")
-                                else ("company_careers_host_match", "legal_name_in_page")
-                            ),
+                            "evidence": verification_evidence,
                             "resolution_source": "source_adapter",
                             "resolution_method": "verified_source_adapter",
                             "adapter_id": self.capability.adapter_id,

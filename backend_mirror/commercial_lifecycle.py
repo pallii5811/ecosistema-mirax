@@ -11,6 +11,23 @@ from urllib.parse import urlparse
 from contracts.signal_ontology import canonical_signal_id
 from contracts.source_registry import load_source_registry
 
+_EXPLICIT_SIZE_CONSTRAINT_RE = re.compile(
+    r"\b(?:pmi|sme|piccol[ae]|medi[ae]|micro(?:impresa|imprese)?|multinazional[ei]|grande\s+gruppo)\b",
+    re.I,
+)
+
+
+def plan_requires_explicit_size_constraint(canonical_plan: Dict[str, Any]) -> bool:
+    """Size policy applies only when the user query or attributes ask for it."""
+    raw_query = str(canonical_plan.get("raw_query") or "")
+    if _EXPLICIT_SIZE_CONSTRAINT_RE.search(raw_query):
+        return True
+    target = canonical_plan.get("target") if isinstance(canonical_plan.get("target"), dict) else {}
+    for item in target.get("required_attributes") or []:
+        if _EXPLICIT_SIZE_CONSTRAINT_RE.search(str(item or "")):
+            return True
+    return False
+
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -316,6 +333,10 @@ def positive_entity_classification(
         str(lead.get(key) or "")
         for key in ("entity_type", "organization_type", "categoria", "category", "source_class")
     ).lower()
+    recruiter_blob = " ".join(
+        str(lead.get(key) or "")
+        for key in ("legal_name", "azienda", "name", "source_publisher", "entity_type")
+    ).lower()
     flags = {
         "is_media": bool(lead.get("is_media")) or bool(re.search(r"\b(media|giornale|quotidiano|rivista|news)\b", blob)),
         "is_directory": bool(lead.get("is_directory")) or bool(re.search(r"\b(directory|portale|elenco aziende)\b", blob)),
@@ -323,6 +344,10 @@ def positive_entity_classification(
         "is_public_body": bool(lead.get("is_public_body")) or bool(re.search(r"\b(comune|ministero|regione|ente pubblico|asl|universit)\b", blob)),
         "is_global_brand": bool(lead.get("is_global_brand") or lead.get("enterprise_excluded")),
         "is_source_publisher": bool(lead.get("is_source_publisher")),
+        "is_recruiter": bool(lead.get("is_recruiter")) or bool(
+            re.search(r"\b(?:agenzia di selezione|headhunter|recruiter|staffing agency|consulting group)\b", recruiter_blob)
+            and lead.get("employer_is_direct") is False
+        ),
     }
     raw_size = str(
         lead.get("company_size_class") or lead.get("company_size") or lead.get("dimensione_azienda") or ""
@@ -338,10 +363,16 @@ def positive_entity_classification(
         size_class = "micro" if employee_count < 10 else "small" if employee_count < 50 else "medium" if employee_count < 250 else "large"
     else:
         size_class = "unknown"
-    target = canonical_plan.get("target") if isinstance(canonical_plan.get("target"), dict) else {}
-    local_sme_required = bool(target.get("local_business_preference"))
-    allowed_sme = {"micro", "small", "medium", "microimpresa", "piccola", "media", "pmi"}
-    size_ok = not local_sme_required or size_class in allowed_sme
+    size_constraint_required = plan_requires_explicit_size_constraint(canonical_plan)
+    allowed_sme = {"micro", "small", "medium", "microimpresa", "piccola", "media", "pmi", "sme"}
+    if not size_constraint_required:
+        size_ok = True
+    elif size_class in {"enterprise", "large"}:
+        size_ok = False
+    elif size_class == "unknown":
+        size_ok = False
+    else:
+        size_ok = size_class in allowed_sme
     disqualifying = any(flags.values())
     operating_probability = float(lead.get("operating_company_probability") or (0.9 if identity_positive and not disqualifying else 0.0))
     is_operating_buyer = bool(identity_positive and operating_probability >= 0.75 and not disqualifying and entity_type not in {"person", "publisher"})
@@ -371,6 +402,8 @@ _TRUSTED_SOURCE_ADAPTER_DOMAIN_PROOFS = {
     "structured_hiring_v1": (
         {"schema_org_identity_match"},
         {"company_careers_host_match", "legal_name_in_page"},
+        {"employer_corporate_domain_resolved", "vacancy_source_verified"},
+        {"careers_subdomain_corporate_link", "vacancy_source_verified"},
     ),
     "official_growth_signals_v1": (
         {"schema_org_identity_match", "official_page_host_match"},
