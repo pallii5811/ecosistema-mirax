@@ -36,6 +36,10 @@ class HiringDiscoveryState:
     url_outcomes: Tuple[Mapping[str, Any], ...] = ()
     retry_urls: Tuple[str, ...] = ()
     parser_epoch: int = 1
+    discovery_url_offset: int = 0
+    parsed_candidate_queue: Tuple[str, ...] = ()
+    revalidation_queue: Tuple[str, ...] = ()
+    qualification_validator_epoch: int = 1
 
     @property
     def total_spent_eur(self) -> float:
@@ -54,7 +58,12 @@ class HiringDiscoveryState:
         return self.discovery_remaining_eur() + 1e-9 < QUERY_COST_EUR
 
     def queue_pending(self) -> int:
-        return max(0, len(self.seen_urls) - self.url_offset)
+        offset = self.discovery_url_offset or self.url_offset
+        return max(0, len(self.seen_urls) - offset)
+
+    @property
+    def retry_fetch_queue(self) -> Tuple[str, ...]:
+        return self.retry_urls
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +81,10 @@ class HiringDiscoveryState:
             "url_outcomes": [dict(item) for item in self.url_outcomes],
             "retry_urls": list(self.retry_urls),
             "parser_epoch": int(self.parser_epoch),
+            "discovery_url_offset": int(self.discovery_url_offset or self.url_offset),
+            "parsed_candidate_queue": list(self.parsed_candidate_queue),
+            "revalidation_queue": list(self.revalidation_queue),
+            "qualification_validator_epoch": int(self.qualification_validator_epoch),
         }
 
     @classmethod
@@ -99,6 +112,10 @@ class HiringDiscoveryState:
             ),
             retry_urls=tuple(str(item) for item in payload.get("retry_urls") or ()),
             parser_epoch=int(payload.get("parser_epoch") or 1),
+            discovery_url_offset=int(payload.get("discovery_url_offset") or payload.get("url_offset") or 0),
+            parsed_candidate_queue=tuple(str(item) for item in payload.get("parsed_candidate_queue") or ()),
+            revalidation_queue=tuple(str(item) for item in payload.get("revalidation_queue") or ()),
+            qualification_validator_epoch=int(payload.get("qualification_validator_epoch") or 1),
         )
 
 

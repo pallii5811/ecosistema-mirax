@@ -27,6 +27,15 @@ from .hiring_budget import (
     load_discovery_state,
     url_outcomes_map,
 )
+from .hiring_qualification import (
+    QUALIFICATION_VALIDATOR_EPOCH,
+    bootstrap_parsed_and_revalidation_queues,
+    dedupe_key,
+    outcome_to_record,
+    resolve_employer_identity,
+    vacancy_geography_matches,
+    vacancy_role_matches_sales,
+)
 from .hiring_recruiter import enrich_record_with_recruiter_fields
 from .hiring_url_queue import build_processing_batch
 from .hiring_ats_parsers import (
@@ -389,6 +398,44 @@ def _append_url_outcome(state: HiringDiscoveryState, outcome: Mapping[str, Any])
     state.url_outcomes = tuple(rows)
 
 
+def _update_revalidation_queue(state: HiringDiscoveryState, url: str) -> None:
+    canonical = url.lower().rstrip("/")
+    state.revalidation_queue = tuple(
+        item for item in state.revalidation_queue if item.lower().rstrip("/") != canonical
+    )
+
+
+def _revalidate_from_outcome(
+    state: HiringDiscoveryState,
+    *,
+    url: str,
+    base_outcome: Mapping[str, Any],
+    request: AdapterDiscoveryRequest,
+    outcomes_by_url: Mapping[str, Mapping[str, Any]],
+) -> Tuple[Optional[Mapping[str, Any]], str, str]:
+    canonical = url.lower().rstrip("/")
+    prior = outcomes_by_url.get(canonical) or {}
+    merged = {**dict(prior), **dict(base_outcome)}
+    record = resolve_employer_identity(enrich_record_with_recruiter_fields(outcome_to_record(merged)))
+    valid, rejection = _validate_record(record, request, date.today())
+    normalized = _normalize_rejection_code(rejection)
+    _append_url_outcome(state, {
+        **merged,
+        "vacancy_title": record.get("vacancy_title") or record.get("hiring_title"),
+        "employer": record.get("company_name") or record.get("name"),
+        "location": record.get("location"),
+        "publication_date": record.get("published_at") or record.get("evidence_date"),
+        "employer_official_domain": record.get("employer_official_domain"),
+        "validation_result": "accepted" if valid else normalized,
+        "rejection_code": "ACCEPTED" if valid else normalized,
+        "url_state": "accepted" if valid else "rejected_final",
+        "parser_result": "success",
+        "revalidation": True,
+    })
+    _update_revalidation_queue(state, url)
+    return (record if valid else None, normalized, "accepted" if valid else normalized)
+
+
 def _update_retry_queue(state: HiringDiscoveryState, url: str, rejection_code: str, *, is_retry: bool) -> None:
     canonical = url.lower().rstrip("/")
     retry = [item for item in state.retry_urls if item.lower().rstrip("/") != canonical]
@@ -508,7 +555,20 @@ async def _default_hiring_provider(
             state.retry_urls = tuple(dict.fromkeys([*state.retry_urls, *boot]))
         state.parser_epoch = 2
 
-    queue_pending = state.url_offset < len(urls) or bool(state.retry_urls)
+    if state.qualification_validator_epoch < QUALIFICATION_VALIDATOR_EPOCH:
+        parsed_queue, reval_queue = bootstrap_parsed_and_revalidation_queues(
+            state.url_outcomes,
+            qualification_validator_epoch=state.qualification_validator_epoch,
+        )
+        if parsed_queue:
+            state.parsed_candidate_queue = tuple(dict.fromkeys([*state.parsed_candidate_queue, *parsed_queue]))
+        if reval_queue:
+            state.revalidation_queue = tuple(dict.fromkeys([*state.revalidation_queue, *reval_queue]))
+        state.qualification_validator_epoch = QUALIFICATION_VALIDATOR_EPOCH
+
+    discovery_offset = state.discovery_url_offset or state.url_offset
+    state.discovery_url_offset = discovery_offset
+    queue_pending = discovery_offset < len(urls) or bool(state.retry_urls) or bool(state.revalidation_queue)
     if not queue_pending and queries_run == 0:
         exhausted = discovery_locked and state.query_index >= len(query_pairs)
         return HiringProviderResult(
@@ -519,16 +579,18 @@ async def _default_hiring_provider(
     traces: List[Dict[str, Any]] = []
     prefetch_traces = list(state.prefetch_traces)
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Hiring/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
-    batch_cap = min(limit, URLS_PER_BATCH, max(queue_pending, len(state.retry_urls)))
+    batch_cap = min(limit, URLS_PER_BATCH, max(queue_pending, len(state.retry_urls) + len(state.revalidation_queue)))
     priority_queue = build_processing_batch(
         urls,
         url_query_meta,
         retry_urls=state.retry_urls,
-        start_offset=state.url_offset,
+        revalidation_urls=state.revalidation_queue,
+        start_offset=discovery_offset,
         batch_cap=batch_cap,
     )
     domain_active: Dict[str, int] = {}
     urls_processed = 0
+    outcomes_by_url = url_outcomes_map(state)
 
     async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=headers) as client:
         for item in priority_queue:
@@ -536,6 +598,7 @@ async def _default_hiring_provider(
             if not url:
                 continue
             is_retry = bool(item.get("is_retry"))
+            is_revalidation = bool(item.get("is_revalidation"))
             prefetch_traces.append(dict(item))
             canonical = url.lower().rstrip("/")
             base_outcome: Dict[str, Any] = {
@@ -546,6 +609,24 @@ async def _default_hiring_provider(
                 "priority": item.get("priority"),
                 "ats_vendor": detect_ats_vendor(url),
             }
+            if is_revalidation:
+                record, rejection, _ = _revalidate_from_outcome(
+                    state,
+                    url=url,
+                    base_outcome=base_outcome,
+                    request=request,
+                    outcomes_by_url=outcomes_by_url,
+                )
+                traces.append({
+                    **base_outcome,
+                    "revalidation": True,
+                    "rejection_code": rejection,
+                    "url_state": "accepted" if record else "rejected_final",
+                })
+                if record:
+                    records.append(record)
+                urls_processed += 1
+                continue
             if not item.get("prefetch_accept"):
                 rejection = _normalize_rejection_code(str(item.get("rejection_code") or "NOT_INDIVIDUAL_VACANCY"))
                 traces.append({
@@ -559,7 +640,7 @@ async def _default_hiring_provider(
                 })
                 _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "rejected_final"})
                 if not is_retry:
-                    state.url_offset += 1
+                    _advance_discovery_offset(state)
                 else:
                     _update_retry_queue(state, url, rejection, is_retry=True)
                 urls_processed += 1
@@ -571,7 +652,7 @@ async def _default_hiring_provider(
                 _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure"})
                 _update_retry_queue(state, url, rejection, is_retry=is_retry)
                 if not is_retry:
-                    state.url_offset += 1
+                    _advance_discovery_offset(state)
                 urls_processed += 1
                 continue
             domain_active[host] = domain_active.get(host, 0) + 1
@@ -591,7 +672,7 @@ async def _default_hiring_provider(
                     _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure", "fetch_success": False})
                     _update_retry_queue(state, url, rejection, is_retry=is_retry)
                     if not is_retry:
-                        state.url_offset += 1
+                        _advance_discovery_offset(state)
                     urls_processed += 1
                     continue
                 html = response.text[:2_000_000]
@@ -603,14 +684,14 @@ async def _default_hiring_provider(
                     "jsonld_jobposting_count": parsed_result.jsonld_count,
                     "parser_selected": parsed_result.parser_id,
                 })
-                parsed = [enrich_record_with_recruiter_fields(row) for row in parsed_result.records]
+                parsed = [resolve_employer_identity(enrich_record_with_recruiter_fields(row)) for row in parsed_result.records]
                 if not parsed:
                     rejection = _normalize_rejection_code(parsed_result.failure_code or "PARSE_FAILED")
                     traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
                     _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure" if classify_failure_for_retry(rejection) else "rejected_final", "parser_result": "empty"})
                     _update_retry_queue(state, url, rejection, is_retry=is_retry)
                     if not is_retry:
-                        state.url_offset += 1
+                        _advance_discovery_offset(state)
                     urls_processed += 1
                     continue
                 accepted = False
@@ -650,7 +731,7 @@ async def _default_hiring_provider(
                 _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure", "fetch_success": False})
                 _update_retry_queue(state, url, rejection, is_retry=is_retry)
             if not is_retry:
-                state.url_offset += 1
+                _advance_discovery_offset(state)
             elif traces and traces[-1].get("rejection_code") == "ACCEPTED":
                 _update_retry_queue(state, url, "ACCEPTED", is_retry=True)
             urls_processed += 1
@@ -661,8 +742,9 @@ async def _default_hiring_provider(
     if actual_cost <= 0 and queries_run:
         actual_cost = round(queries_run * QUERY_COST_EUR, 6)
     exhausted = (
-        state.url_offset >= len(urls)
+        (state.discovery_url_offset or state.url_offset) >= len(urls)
         and not state.retry_urls
+        and not state.revalidation_queue
         and (discovery_locked or state.query_index >= len(query_pairs))
     )
     return HiringProviderResult(
@@ -679,6 +761,11 @@ async def _default_hiring_provider(
 
 def _requires_sme(request: AdapterDiscoveryRequest) -> bool:
     return bool(re.search(r"\b(?:pmi|piccol[ae]|medi[ae]|microimprese?|sme)\b", request.query, re.I))
+
+
+def _advance_discovery_offset(state: HiringDiscoveryState) -> None:
+    state.url_offset += 1
+    state.discovery_url_offset = state.url_offset
 
 
 def _location_matches(record_location: str, geographies: Sequence[str]) -> bool:
@@ -725,9 +812,15 @@ def _validate_record(
     if not _specific_vacancy_url(source_url):
         return False, "GENERIC_CAREERS_PAGE"
     location = _text(record.get("location")) or ""
-    if not location:
+    if not location and not title:
         return False, "VACANCY_LOCATION_MISSING"
-    if not _location_matches(location, request.geographies):
+    if not vacancy_geography_matches(
+        location=location,
+        title=title,
+        address_locality=_text(record.get("address_locality")),
+        address_region=_text(record.get("address_region")),
+        geographies=request.geographies,
+    ):
         return False, "GEOGRAPHY_MISMATCH"
     published = _iso_date(record.get("published_at") or record.get("evidence_date") or record.get("date_posted"))
     if not published:
@@ -744,18 +837,26 @@ def _validate_record(
         title, _text(record.get("evidence") or record.get("evidence_excerpt")), _text(record.get("description")),
     )))
     specialized = [signal for signal in request.signal_ids if signal != "hiring" and signal.startswith("hiring_")]
-    role_matches = {
-        signal: (
-            has_concrete_operational_hiring_evidence(evidence)
-            if signal == "hiring_operational"
-            else bool(_ROLE_SIGNAL_PATTERNS.get(signal) and _ROLE_SIGNAL_PATTERNS[signal].search(evidence))
-        )
-        for signal in specialized
-    }
     if specialized:
-        role_ok = any(role_matches.values()) if request.signal_match_mode == "any" else all(role_matches.values())
-        if not role_ok:
-            return False, "OPERATIONAL_ROLE_UNPROVEN" if specialized == ["hiring_operational"] else "HIRING_ROLE_MISMATCH"
+        if "hiring_sales" in specialized:
+            role_ok, role_code = vacancy_role_matches_sales(
+                title=title,
+                description=_text(record.get("description") or record.get("evidence")),
+            )
+            if not role_ok:
+                return False, role_code or "HIRING_ROLE_MISMATCH"
+        else:
+            role_matches = {
+                signal: (
+                    has_concrete_operational_hiring_evidence(evidence)
+                    if signal == "hiring_operational"
+                    else bool(_ROLE_SIGNAL_PATTERNS.get(signal) and _ROLE_SIGNAL_PATTERNS[signal].search(evidence))
+                )
+                for signal in specialized
+            }
+            role_ok = any(role_matches.values()) if request.signal_match_mode == "any" else all(role_matches.values())
+            if not role_ok:
+                return False, "OPERATIONAL_ROLE_UNPROVEN" if specialized == ["hiring_operational"] else "HIRING_ROLE_MISMATCH"
     official_domain = _employer_official_domain(record)
     vacancy_source_domain = _host(record.get("vacancy_source_domain") or record.get("source_url"))
     if not official_domain or is_blacklisted_domain(official_domain):
@@ -857,21 +958,22 @@ class HiringAdapter:
             url_traces.extend(result.url_traces)
         observed = datetime.now(timezone.utc).isoformat()
         candidates: List[OpportunityCandidate] = []
-        seen_domains: set[str] = set()
+        seen_dedupe: set[str] = set()
         warnings: List[str] = [item for result in provider_results for item in result.warnings]
         for provider_result in provider_results:
             for record in provider_result.records:
-                record = enrich_record_with_recruiter_fields(record)
+                record = resolve_employer_identity(enrich_record_with_recruiter_fields(record))
                 valid, rejection = _validate_record(record, request, date.today())
                 if not valid:
                     warnings.append(rejection)
                     continue
                 company = _text(record.get("company_name") or record.get("name")) or ""
                 domain = _employer_official_domain(record)
-                if domain in seen_domains:
-                    warnings.append("DUPLICATE_COMPANY")
+                dedupe = dedupe_key(record)
+                if dedupe in seen_dedupe:
+                    warnings.append("DUPLICATE_VACANCY")
                     continue
-                seen_domains.add(domain)
+                seen_dedupe.add(dedupe)
                 title = _text(record.get("vacancy_title") or record.get("hiring_title")) or ""
                 published = _iso_date(record.get("published_at") or record.get("evidence_date") or record.get("date_posted")) or ""
                 source_url = _text(record.get("source_url") or record.get("vacancy_url")) or ""

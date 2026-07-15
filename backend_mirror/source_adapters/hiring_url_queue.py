@@ -198,12 +198,25 @@ def build_processing_batch(
     url_query_meta: Mapping[str, tuple[str, str]],
     *,
     retry_urls: Sequence[str] = (),
+    revalidation_urls: Sequence[str] = (),
     start_offset: int = 0,
     batch_cap: int = 24,
 ) -> list[dict[str, Any]]:
-    """Merge selective retry URLs (first) with pending queue slice."""
-    retry_items: list[dict[str, Any]] = []
+    """Merge revalidation (first), retry URLs, then pending queue slice."""
+    reval_items: list[dict[str, Any]] = []
     seen: set[str] = set()
+    for url in revalidation_urls:
+        canonical = url.lower().rstrip("/")
+        if not url or canonical in seen:
+            continue
+        seen.add(canonical)
+        query, query_source = url_query_meta.get(url, url_query_meta.get(canonical, ("", "revalidation")))
+        item = classify_url_prefetch(url, query_source=query_source, seen_canonical=None)
+        item["query"] = query
+        item["is_revalidation"] = True
+        item["prefetch_accept"] = True
+        reval_items.append(item)
+    retry_items: list[dict[str, Any]] = []
     for url in retry_urls:
         canonical = url.lower().rstrip("/")
         if not url or canonical in seen:
@@ -216,7 +229,11 @@ def build_processing_batch(
         retry_items.append(item)
     retry_items.sort(key=lambda row: (row["priority"], row["canonical_url"]))
     pending = build_priority_queue(urls, url_query_meta, start_offset=start_offset)
-    return (retry_items + pending)[: max(0, batch_cap)]
+    for row in pending:
+        canonical = str(row.get("canonical_url") or "")
+        if canonical:
+            seen.add(canonical)
+    return (reval_items + retry_items + pending)[: max(0, batch_cap)]
 
 
 def build_priority_queue(
