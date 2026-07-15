@@ -73,6 +73,8 @@ async def execute_source_adapter_shadow(
     registry: Optional[SourceCapabilityRegistry] = None,
     progress_callback: Optional[ProgressCallback] = None,
     environ: Optional[Mapping[str, str]] = None,
+    persistent_client: Any = None,
+    search_id: Optional[str] = None,
 ) -> OrchestrationResult:
     env = environ or os.environ
     decision = source_adapter_shadow_decision(intent, environ=env)
@@ -88,17 +90,37 @@ async def execute_source_adapter_shadow(
     cap = _hard_cap(plan, env)
     if cap <= 0:
         raise PermissionError("SOURCE_ADAPTER_SHADOW_ZERO_BUDGET")
+    if (persistent_client is None) != (search_id is None):
+        raise ValueError("persistent_client and search_id must be provided together")
     request = request_from_plan(plan, requested_count=requested_count, budget_eur=cap)
     source_policy = plan.get("source_policy") or {}
     preferred = tuple(str(item) for item in source_policy.get("preferred_source_classes") or ())
-    orchestrator = UniversalSourceOrchestrator(registry or default_source_capability_registry())
-    result = await orchestrator.run(
-        request,
-        required_source_classes=preferred,
-        progress_callback=progress_callback,
+    # worker_supabase exposes backend_mirror on sys.path and paid providers
+    # import these modules by their runtime names. Reusing that exact namespace
+    # avoids creating a second ContextVar that provider threads cannot see.
+    from cost_context import reset_current_cost_governor, set_current_cost_governor
+    from cost_governor import ResearchCostGovernor
+
+    governor = ResearchCostGovernor.from_plan(
+        {"canonical_plan": plan},
+        requested_count,
+        persistent_client=persistent_client,
+        search_id=search_id,
     )
+    token = set_current_cost_governor(governor)
+    try:
+        orchestrator = UniversalSourceOrchestrator(registry or default_source_capability_registry())
+        result = await orchestrator.run(
+            request,
+            required_source_classes=preferred,
+            progress_callback=progress_callback,
+        )
+    finally:
+        reset_current_cost_governor(token)
     if result.cost_eur > cap + 1e-9:
         raise RuntimeError("SOURCE_ADAPTER_SHADOW_HARD_CAP_EXCEEDED")
+    if governor.committed_micro_eur > governor.hard_micro_eur:
+        raise RuntimeError("SOURCE_ADAPTER_SHADOW_PERSISTENT_CAP_EXCEEDED")
     if result.progress.published_count != 0:
         raise RuntimeError("SOURCE_ADAPTER_SHADOW_PUBLICATION_FORBIDDEN")
     return result

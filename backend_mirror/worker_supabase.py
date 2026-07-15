@@ -4955,6 +4955,8 @@ def main() -> None:
                         intent,
                         requested_count=job_max,
                         progress_callback=_on_source_adapter_progress,
+                        persistent_client=supabase,
+                        search_id=str(job_id),
                     ))
                     shadow_leads = serialize_shadow_qualified_leads(shadow_result)
                     canonical_shadow_plan = _canonical_plan_from_intent(intent)

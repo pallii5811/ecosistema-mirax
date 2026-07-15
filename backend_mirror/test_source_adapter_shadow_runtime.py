@@ -20,6 +20,7 @@ from source_adapters.shadow_runtime import (
     serialize_shadow_qualified_leads,
     source_adapter_shadow_decision,
 )
+from cost_context import current_cost_governor
 
 
 HERE = Path(__file__).resolve().parent
@@ -119,6 +120,7 @@ class _FakeHiringAdapter:
         self.budgets = []
 
     async def discover(self, request):
+        assert current_cost_governor() is not None
         self.budgets.append(request.budget_eur)
         now = datetime.now(timezone.utc).isoformat()
         return AdapterExecutionResult(
@@ -131,6 +133,36 @@ class _FakeHiringAdapter:
             started_at=now,
             completed_at=now,
         )
+
+
+class _FakeRpcResponse:
+    def __init__(self, data):
+        self.data = data
+
+    def execute(self):
+        return self
+
+
+class _FakePersistentClient:
+    def __init__(self):
+        self.calls = []
+
+    def rpc(self, name, payload):
+        self.calls.append((name, payload))
+        if name == "reserve_search_cost":
+            return _FakeRpcResponse({
+                "status": "reserved",
+                "estimated_cost_eur": payload["p_estimated_cost_eur"],
+            })
+        return _FakeRpcResponse({"ok": True})
+
+
+class _PaidFixtureAdapter(_FakeHiringAdapter):
+    async def discover(self, request):
+        governor = current_cost_governor()
+        governor.reserve("fixture:paid:1", "web_search", 0.005, provider="fixture")
+        governor.settle("fixture:paid:1", 0.005)
+        return await super().discover(request)
 
 
 def test_shadow_runtime_is_default_off_and_fail_closed():
@@ -176,3 +208,41 @@ def test_shadow_hard_cap_is_clamped_to_absolute_maximum():
         )
     )
     assert adapter.budgets == [pytest.approx(0.125)]
+
+
+def test_shadow_runtime_restores_cost_context_after_execution():
+    adapter = _FakeHiringAdapter()
+    assert current_cost_governor() is None
+    asyncio.run(
+        execute_source_adapter_shadow(
+            _intent(), requested_count=1, registry=SourceCapabilityRegistry((adapter,)),
+            environ=AUTHORIZED_ENV,
+        )
+    )
+    assert current_cost_governor() is None
+
+
+def test_shadow_runtime_requires_persistent_client_and_search_id_together():
+    with pytest.raises(ValueError, match="provided together"):
+        asyncio.run(
+            execute_source_adapter_shadow(
+                _intent(), requested_count=1,
+                registry=SourceCapabilityRegistry((_FakeHiringAdapter(),)),
+                environ=AUTHORIZED_ENV, search_id="00000000-0000-0000-0000-000000000001",
+            )
+        )
+
+
+def test_shadow_runtime_persists_reservation_before_paid_adapter_operation():
+    client = _FakePersistentClient()
+    adapter = _PaidFixtureAdapter()
+    asyncio.run(
+        execute_source_adapter_shadow(
+            _intent(), requested_count=1, registry=SourceCapabilityRegistry((adapter,)),
+            environ=AUTHORIZED_ENV, persistent_client=client,
+            search_id="00000000-0000-0000-0000-000000000001",
+        )
+    )
+    names = [name for name, _payload in client.calls]
+    assert names.index("initialize_search_budget") < names.index("reserve_search_cost")
+    assert names.index("reserve_search_cost") < names.index("settle_search_cost")

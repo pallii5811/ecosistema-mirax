@@ -77,6 +77,10 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - Preflight locale: flag shadow assente dall'ambiente, default runtime off e configurazione staging esplicitamente `0`.
 - Preflight canary zero-cost completo: app `200`, release marker coerente, search Vercel disabilitata, 7 worker server `disabled/inactive`, Anthropic off.
 - Coorti rilevate dal preflight: legacy `7/25`, output v5 `0/160`, avversariali `0/15`; qualità live v5 non ancora certificabile.
+- Deploy staging immutabile `20260715_015958` verificato; API healthy, worker inactive/disabled e rollback failure-injection passato.
+- Pre-canary fix: Source Adapter shadow ora collega il governor persistente al ContextVar runtime usato dai provider e ripristina il contesto a fine run.
+- Reservation persistente obbligatoria prima delle query paid; mismatch client/search_id fallisce chiuso.
+- Suite Source Adapter `91 passed`; lifecycle/costi/lease `63 passed`; nessun canary o costo live ancora eseguito.
 
 ## Prossimo passo sicuro
-- Attendere autorizzazione esplicita prima di deploy staging immutabile o singolo canary v5; produzione e worker restano spenti.
+- Commit/push e redeploy staging del governor fix; poi un solo canary Procurement one-shot entro `EUR 0,125`.
