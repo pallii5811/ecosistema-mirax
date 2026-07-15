@@ -16,6 +16,7 @@ from source_adapters.contracts import (
     SourceExhaustion,
 )
 from source_adapters.shadow_runtime import (
+    candidate_to_lifecycle_shadow_payload,
     execute_source_adapter_shadow,
     serialize_shadow_qualified_leads,
     source_adapter_shadow_decision,
@@ -246,3 +247,69 @@ def test_shadow_runtime_persists_reservation_before_paid_adapter_operation():
     names = [name for name, _payload in client.calls]
     assert names.index("initialize_search_budget") < names.index("reserve_search_cost")
     assert names.index("reserve_search_cost") < names.index("settle_search_cost")
+
+
+def test_shadow_payload_lifts_company_size_from_evidence_provenance():
+    published = datetime.now(timezone.utc).date().isoformat()
+    domain_verification = {
+        "status": "verified",
+        "confidence": 0.96,
+        "score": 96,
+        "evidence": ("schema_org_identity_match", "official_page_host_match"),
+        "resolution_source": "source_adapter",
+        "resolution_method": "verified_source_adapter",
+        "adapter_id": "structured_hiring_v1",
+        "url": "https://acme-lombardia.test/",
+    }
+    candidate = OpportunityCandidate(
+        canonical_company_name="Acme Lombardia Srl",
+        company_identifiers={},
+        official_domain="acme-lombardia.test",
+        official_domain_verified=True,
+        official_domain_confidence=0.96,
+        entity_class="operating_company",
+        geographies=("Milano, Lombardia, Italia",),
+        buyer_fit=1.0,
+        signal_id="hiring_sales",
+        signal_date=published,
+        evidence=(EvidenceRecord(
+            signal_id="hiring_sales",
+            source_url="https://acme-lombardia.test/jobs/sales-manager",
+            source_publisher="Acme Lombardia Srl",
+            source_class="company_careers",
+            excerpt="Acme Lombardia ricerca un sales manager per Milano.",
+            observed_at=published,
+            published_at=published,
+            extraction_method="schema_org_jobposting",
+            confidence=0.96,
+            provenance={"company_size": "small", "employee_count": 45, "vacancy_title": "Sales manager"},
+        ),),
+        why_now="Vacancy attiva per sales manager.",
+        contacts=(ContactRecord("email", "hr@acme-lombardia.test", verified=True),),
+        confidence=0.96,
+        contradiction_flags=(),
+        provenance={"domain_verification": domain_verification},
+        adapter_id="structured_hiring_v1",
+        adapter_version="1.0.0",
+    )
+    lead = candidate_to_lifecycle_shadow_payload(candidate, opportunity_value_score=0.85)
+    plan = {
+        **PLAN,
+        "raw_query": "Trovami aziende in Lombardia che stanno assumendo commerciali, sales manager o business developer.",
+        "target": {**PLAN["target"], "geographies": ["Lombardia"], "local_business_preference": True},
+        "signal_policy": {
+            **PLAN["signal_policy"],
+            "required_signals": ["hiring_sales"],
+            "maximum_age_days_by_signal": {"hiring_sales": 60},
+        },
+        "source_policy": {
+            **PLAN["source_policy"],
+            "allowed_source_classes": ["company_careers", "job_board"],
+            "primary_source_required_for": [],
+        },
+    }
+    gate = evaluate_publication_gate(lead, plan, cost_within_budget=True)
+    assert lead["company_size_class"] == "small"
+    assert lead["employee_count"] == 45
+    assert "ENTITY_NOT_OPERATING" not in gate["rejection_codes"]
+    assert gate["entity_classification"]["size_policy_passed"] is True

@@ -246,8 +246,24 @@ def candidate_to_lifecycle_shadow_payload(
             "contradiction_status": "none",
         })
     geography = next((item for item in candidate.geographies if item), "")
-    size = str(candidate.provenance.get("company_size") or candidate.provenance.get("company_size_class") or "unknown")
-    return {
+    size = str(
+        candidate.provenance.get("company_size")
+        or candidate.provenance.get("company_size_class")
+        or ""
+    ).strip()
+    employee_count = candidate.provenance.get("employee_count")
+    if not size or employee_count is None:
+        for evidence in candidate.evidence:
+            ev_prov = evidence.provenance if isinstance(evidence.provenance, dict) else {}
+            if not size and ev_prov.get("company_size"):
+                size = str(ev_prov["company_size"]).strip()
+            if employee_count is None and ev_prov.get("employee_count") is not None:
+                employee_count = ev_prov["employee_count"]
+            if size and employee_count is not None:
+                break
+    if not size:
+        size = "unknown"
+    payload: MutableMapping[str, Any] = {
         "azienda": candidate.canonical_company_name,
         "name": candidate.canonical_company_name,
         "legal_name": candidate.canonical_company_name,
@@ -256,6 +272,7 @@ def candidate_to_lifecycle_shadow_payload(
         "entity_type": "company",
         "citta": geography,
         "company_size_class": size,
+        **({"employee_count": employee_count} if employee_count is not None else {}),
         "operating_company_probability": 0.95 if candidate.entity_class == "operating_company" else 0.0,
         "source_adapter_id": candidate.adapter_id,
         "domain_verification": dict(verification),
@@ -283,6 +300,7 @@ def candidate_to_lifecycle_shadow_payload(
         "source": "v5_source_adapter_shadow",
         "customer_visible": False,
     }
+    return payload
 
 
 def serialize_shadow_qualified_leads(result: OrchestrationResult) -> list[MutableMapping[str, Any]]:
