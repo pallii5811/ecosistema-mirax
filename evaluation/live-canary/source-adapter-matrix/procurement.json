@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0.0",
+  "vertical": "procurement",
+  "status": "quarantined",
+  "search_id": "307a06b0-e5c2-426f-ad53-308647a237da",
+  "canary_id": "784ffebe-349e-40f8-9a3e-0cb6ff2d44b5",
+  "evaluation_run_id": "17352078-ec0b-4c71-8335-5949c8dc0317",
+  "query": "Trovami imprese edili italiane che hanno vinto gare pubbliche negli ultimi 30 giorni.",
+  "requested_count": 5,
+  "funnel": {
+    "discovered": 0,
+    "raw": 0,
+    "unique_entities": 0,
+    "resolved": 0,
+    "audited": 0,
+    "evidence_verified": 0,
+    "qualified": 0,
+    "rejected": 0
+  },
+  "cost": {
+    "hard_cap_eur": 0.125,
+    "actual_eur": 0,
+    "compiler_calls": 0,
+    "open_reservations": 0,
+    "customer_charges": 0
+  },
+  "safety": {
+    "customer_visible": false,
+    "publications": 0,
+    "active_jobs_after_quarantine": 0,
+    "active_canaries_after_quarantine": 0,
+    "stale_reservations_after_quarantine": 0
+  },
+  "execution": {
+    "search_status": "completed",
+    "canary_status": "quarantined",
+    "coverage_status": "supported",
+    "selected_adapters": [
+      "public_procurement_v1"
+    ],
+    "adapter_calls": 20,
+    "adapter_operations": 0,
+    "stop_reason": "partial_time_limit"
+  },
+  "errors": [
+    {
+      "code": "PROVIDER_FAILED:_TED_PROVIDER:HTTPSTATUSERROR",
+      "occurrences": 20
+    },
+    {
+      "code": "ANAC_ZERO_YIELD",
+      "occurrences": 1
+    }
+  ],
+  "root_cause": "The structured procurement adapter was selected correctly, but ANAC returned no candidates for the literal construction keywords and the unavailable TED provider was retried for all 20 orchestration rounds. The run produced no candidates and was quarantined without cost or customer impact.",
+  "results": []
+}
