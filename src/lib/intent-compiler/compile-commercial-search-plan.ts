@@ -425,9 +425,7 @@ function normalizePayload(
   // enrich them, but it cannot replace or drop what deterministic parsing saw.
   if (deterministicIntent.category) {
     target.industries = [deterministicIntent.category]
-    if (!target.entity_types.length || target.entity_types.every((value) => value === deterministicIntent.category)) {
-      target.entity_types = ['company']
-    }
+    target.entity_types = ['company']
   }
   if (deterministicIntent.location) targetGeographies = [deterministicIntent.location]
   if (/\b(?:italia|italian[aei])\b/i.test(query) && !targetGeographies.some((value) => /italia/i.test(value))) {
