@@ -96,8 +96,8 @@ def _hiring_adapter() -> HiringAdapter:
         row["published_at"] = (date.today() - timedelta(days=int(days))).isoformat() if days is not None else ""
         row["valid_through"] = (date.today() + timedelta(days=int(row.pop("valid_days")))).isoformat()
 
-    async def provider(_request, _offset, _limit):
-        return HiringProviderResult(tuple(rows), True, 0.0)
+    async def provider(_request, _state, _limit):
+        return HiringProviderResult(tuple(rows), True, 0.0, (), (), _state)
 
     return HiringAdapter((provider,))
 

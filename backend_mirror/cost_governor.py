@@ -48,8 +48,6 @@ class ResearchCostGovernor:
         hard = float(policy.get("hard_cost_eur") or max(1, requested_leads) * 0.025)
         governor = cls(_micro(target), _micro(hard))
         prior_cost = float(plan.get("_prior_cost_eur") or 0.0)
-        if prior_cost > 0:
-            governor.reserve("prior-resume-cost", "prior_job_operations", prior_cost)
         governor.persistent_client = persistent_client
         governor.search_id = str(search_id) if search_id else None
         if persistent_client is not None and search_id:
@@ -68,6 +66,19 @@ class ResearchCostGovernor:
             except Exception:
                 # Stale cleanup is recovery hygiene; reservation itself remains fail-closed.
                 pass
+            if prior_cost > 0:
+                # ponytail: ledger already holds settled spend; seed local governor only.
+                amount = _micro(prior_cost)
+                governor.reservations["prior-resume-cost"] = CostReservation(
+                    "prior-resume-cost",
+                    "prior_job_operations",
+                    amount,
+                    actual_micro_eur=amount,
+                    status="settled",
+                )
+        else:
+            if prior_cost > 0:
+                governor.reserve("prior-resume-cost", "prior_job_operations", prior_cost)
         return governor
 
     @property

@@ -30,6 +30,34 @@ def test_governor_carries_prior_resume_cost():
         governor.reserve("next", "search_web", 0.006)
 
 
+def test_governor_persistent_resume_seeds_settled_prior_cost_without_rpc_reserve():
+    class _RpcResult:
+        data = {"id": "ledger-row"}
+
+        def execute(self):
+            return self
+
+    class _PersistentClient:
+        def __init__(self):
+            self.calls = []
+
+        def rpc(self, name, payload):
+            self.calls.append(name)
+            return _RpcResult()
+
+    client = _PersistentClient()
+    governor = ResearchCostGovernor.from_plan(
+        {"_prior_cost_eur": 0.125},
+        5,
+        persistent_client=client,
+        search_id="00000000-0000-0000-0000-000000000001",
+    )
+    assert governor.snapshot()["committed_cost_eur"] == pytest.approx(0.125)
+    assert "reserve_search_cost" not in client.calls
+    with pytest.raises(ResearchBudgetExceeded):
+        governor.reserve("search:next", "web_search", 0.005)
+
+
 class _RpcResult:
     data = {"id": "ledger-row"}
 

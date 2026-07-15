@@ -17,6 +17,7 @@ from backend_mirror.source_adapters.hiring import (
     _validate_record,
     parse_hiring_page,
 )
+from backend_mirror.source_adapters.hiring_budget import HiringDiscoveryState
 
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "hiring_adapter_replay_v1.json"
@@ -48,9 +49,9 @@ def request(*, count: int = 20, budget: float = 0.125, cursor: DiscoveryCursor |
 
 
 def fixture_provider(*, exhausted: bool = True, cost: float = 0.0):
-    async def _provider(_request, _offset, _limit):
+    async def _provider(_request, _state, _limit):
         positive, negative = fixture_rows()
-        return HiringProviderResult(tuple([*negative, *positive]), exhausted, cost)
+        return HiringProviderResult(tuple([*negative, *positive]), exhausted, cost, (), (), _state)
     return _provider
 
 
@@ -136,9 +137,13 @@ def test_schema_org_and_individual_vacancy_parsers_are_fail_closed() -> None:
 def test_cursor_and_hard_cost_cap_are_enforced_before_promotion() -> None:
     result = asyncio.run(HiringAdapter((fixture_provider(exhausted=False),)).discover(request(count=5)))
     assert result.exhaustion.next_cursor
-    assert result.exhaustion.next_cursor.value == "hiring:v1:20"
-    with pytest.raises(ValueError, match="invalid hiring cursor"):
-        asyncio.run(HiringAdapter((fixture_provider(),)).discover(request(cursor=DiscoveryCursor("bad"))))
+    assert str(result.exhaustion.next_cursor.value).startswith("hiring:v2:")
+    stale = asyncio.run(
+        HiringAdapter((fixture_provider(),)).discover(
+            request(cursor=DiscoveryCursor("bad")),
+        ),
+    )
+    assert stale.exhaustion.reason == "requested_count_reached"
     with pytest.raises(RuntimeError, match="HARD_COST_CAP"):
         asyncio.run(HiringAdapter((fixture_provider(cost=0.126),)).discover(request(budget=0.125)))
 
@@ -163,11 +168,11 @@ def test_default_provider_reserves_before_every_query_and_never_exceeds_budget(m
 
     monkeypatch.setattr("backend_mirror.agents.search_serp.search_urls_http", fake_search)
     monkeypatch.setattr("httpx.AsyncClient", EmptyClient)
-    one = asyncio.run(_default_hiring_provider(request(budget=0.009), 0, 20))
+    one = asyncio.run(_default_hiring_provider(request(budget=0.009), HiringDiscoveryState(), 20))
     assert len(calls) == 1
     assert one.cost_eur == 0.005
     calls.clear()
-    none = asyncio.run(_default_hiring_provider(request(budget=0.004), 0, 20))
+    none = asyncio.run(_default_hiring_provider(request(budget=0.004), HiringDiscoveryState(), 20))
     assert calls == []
     assert none.cost_eur == 0
 
@@ -203,7 +208,7 @@ def test_default_provider_uses_the_requested_specialized_role(monkeypatch, signa
         signal_ids=(signal,),
         geographies=("Lombardia", "Italia"),
     )
-    asyncio.run(_default_hiring_provider(specialized, 0, 20))
+    asyncio.run(_default_hiring_provider(specialized, HiringDiscoveryState(), 20))
     assert len(calls) >= 3
     assert any(all(term in query for term in expected_terms) for query in calls)
 
