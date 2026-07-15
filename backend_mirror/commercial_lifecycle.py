@@ -243,7 +243,7 @@ def _evaluate_category_scoped_digital_audit_buyer_fit(
         "geography_matches_target": _geography_matches_target(lead, canonical_plan),
         "official_domain_verified": identity_positive,
         "signal_groups_verified": bool(groups) and _signal_groups_satisfied(groups, matched),
-        "evidence_verifiable": bool(publishable_evidence) and evidence_signals.intersection(matched),
+        "evidence_verifiable": bool(publishable_evidence) and bool(evidence_signals.intersection(matched)),
         "no_critical_contradictions": not unresolved_contradictions,
     }
     passed = all(checks.values())
@@ -626,6 +626,15 @@ def _execute_data(response: Any) -> List[Dict[str, Any]]:
     return data if isinstance(data, list) else []
 
 
+def _candidate_stage(gate: Dict[str, Any], *, shadow_mode: bool) -> str:
+    if not gate["publishable"]:
+        return "rejected"
+    method = str(gate["entity_resolution"].get("resolution_method") or "")
+    if shadow_mode and method == "verified_source_adapter":
+        return "evidence_verified"
+    return "qualified"
+
+
 def persist_and_publish_candidates(
     supabase: Any,
     *,
@@ -681,7 +690,7 @@ def persist_and_publish_candidates(
             "canonical_domain": domain,
             "entity_name": str(lead.get("azienda") or lead.get("name") or lead.get("nome") or domain)[:300],
             "entity_type": gate["entity_classification"]["entity_type"],
-            "stage": "qualified" if gate["publishable"] else "rejected",
+            "stage": _candidate_stage(gate, shadow_mode=shadow_mode),
             "official_domain_verified": gate["official_domain_verified"],
             "legal_name": gate["entity_resolution"]["legal_name"][:300] or None,
             "entity_resolution_method": gate["entity_resolution"]["resolution_method"],
