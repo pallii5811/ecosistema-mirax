@@ -30,6 +30,15 @@ fixture.target.company_sizes = ['enterprise']
 const priorKey = process.env.ANTHROPIC_API_KEY
 const priorModel = process.env.UQE_ANTHROPIC_MODEL
 const priorFetch = globalThis.fetch
+
+const digitalAuditIntent = parseSignalIntentHeuristic(
+  'Trova imprese di pulizia a Milano con sito ufficiale, criticità SEO e assenza di strumenti di tracciamento pubblicitario.',
+)
+assert.equal(digitalAuditIntent.category, 'imprese di pulizia')
+assert.equal(digitalAuditIntent.location, 'Milano')
+assert.ok(digitalAuditIntent.required_signals.includes('site_stale'))
+assert.ok(digitalAuditIntent.required_signals.includes('no_pixel'))
+assert.ok(digitalAuditIntent.required_signals.includes('no_gtm'))
 process.env.ANTHROPIC_API_KEY = 'test-only'
 process.env.UQE_ANTHROPIC_MODEL = 'claude-sonnet-5\\r\\n'
 

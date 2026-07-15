@@ -31,6 +31,8 @@ export const SIGNAL_REQUIREMENT_LABELS: Record<MiraxSignalRequirement, string> =
   crm_installed: 'CRM installato',
   crm_change: 'Cambio CRM',
   site_stale: 'Sito non aggiornato',
+  no_pixel: 'Pixel pubblicitario assente',
+  no_gtm: 'Tag manager assente',
   meta_ads_started: 'Meta Ads attivi',
   google_ads_started: 'Google Ads attivi',
   investing_marketing: 'Investe in marketing',

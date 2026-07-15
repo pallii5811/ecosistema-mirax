@@ -56,6 +56,14 @@ export const SIGNAL_REQUIREMENT_META: Record<
     label: 'Sito datato',
     description: 'Sito lento o non aggiornato',
   },
+  no_pixel: {
+    label: 'Pixel pubblicitario assente',
+    description: 'Pixel di conversione pubblicitario non rilevato',
+  },
+  no_gtm: {
+    label: 'Tag manager assente',
+    description: 'Google Tag Manager non rilevato',
+  },
   meta_ads_started: {
     label: 'Ads Meta',
     description: 'Inserzioni Meta attive',

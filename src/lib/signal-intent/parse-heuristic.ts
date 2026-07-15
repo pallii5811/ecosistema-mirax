@@ -44,6 +44,11 @@ function extractTechnicalFilters(q: string): IntentTechnicalFilters {
   if (/\bgoogle\s+analytics\b|\bga4\b/i.test(q)) f.has_google_analytics = !clause('google analytics') && !clause('ga4')
   if (/\b(tag\s+manager|gtm|google\s+tag\s+manager)\b/i.test(q)) f.has_gtm = !clause('tag manager') && !clause('gtm')
   if (/\bmeta\s+pixel\b|\bfacebook\s+pixel\b|\bpixel\s+meta\b/i.test(q)) f.has_meta_pixel = !clause('meta pixel') && !clause('facebook pixel')
+  if (/\b(?:assenza|senza|mancanza)\s+(?:di\s+)?(?:strumenti?\s+di\s+)?(?:tracciamento|tracking)\s+(?:pubblicitario|advertising)\b/i.test(q)) {
+    f.has_meta_pixel = false
+    f.has_gtm = false
+    f.has_google_analytics = false
+  }
   if (/\bssl\b|\bcertificato\s+ssl\b/i.test(q)) f.has_ssl = !clause('ssl')
   if (/\bsito\s+lento\b|\bcaricamento\s+lento\b|\blento\s+a\s+caricare\b|\bload\s+speed\s+slow\b/i.test(q)) {
     f.site_speed = 'slow'
@@ -51,7 +56,7 @@ function extractTechnicalFilters(q: string): IntentTechnicalFilters {
   }
   if (/\bsito\s+veloce\b|\bcaricamento\s+veloce\b/i.test(q)) f.site_speed = 'fast'
   if (/\bmobile\s+friendly\b|\bmobile\s+friendly\b|\bresponsiv/i.test(q)) f.mobile_friendly = !clause('mobile')
-  if (/\berrori\s+seo\b|\bseo\s+disaster\b|\bproblemi\s+seo\b/i.test(q)) f.errors_seo = true
+  if (/\b(?:errori|problemi|criticit[aà])\s+(?:tecniche?\s+)?seo\b|\bseo\s+disaster\b/i.test(q)) f.errors_seo = true
   if (/\bchatbot\b|\bchat\s+bot\b/i.test(q)) f.has_chatbot = !clause('chatbot')
   if (/\bbooking\b|\bprenotazione\s+online\b/i.test(q)) f.has_booking = !clause('booking')
 
@@ -290,6 +295,7 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
     ...(buyerMarketingSpend ? [] : [[/\bagenzie?\b.*\bmarketing\b/i, 'agenzie marketing'] as [RegExp, string]]),
     [/\bstartup\b/i, 'startup'],
     [/\bimprese?\s+edil\w*\b/i, 'imprese edili'],
+    [/\bimprese?\s+(?:di\s+)?pulizi\w*\b/i, 'imprese di pulizia'],
     [/\bsoftware\s+house\b/i, 'software house'],
     [/\bweb\s+agenc\w*\b/i, 'web agency'],
     [/\b(ristorant\w*|ristorazion\w*)\b/i, 'ristoranti'],
@@ -339,6 +345,15 @@ export function parseSignalIntentHeuristic(userQuery: string): SignalIntentSpec 
   }
 
   const technical_filters = extractTechnicalFilters(signalQ)
+  if (technical_filters.errors_seo === true && !required_signals.includes('site_stale')) {
+    required_signals.push('site_stale')
+  }
+  if (technical_filters.has_meta_pixel === false && !required_signals.includes('no_pixel')) {
+    required_signals.push('no_pixel')
+  }
+  if (technical_filters.has_gtm === false && !required_signals.includes('no_gtm')) {
+    required_signals.push('no_gtm')
+  }
   const social_filters = extractSocialFilters(signalQ)
   const business_filters = extractBusinessFilters(signalQ)
 

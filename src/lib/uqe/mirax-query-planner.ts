@@ -1093,7 +1093,11 @@ function inferEconomicIntentSignals(query: string): string[] {
   if (/\b(?:senza|no|manca\w*)\s+(?:gtm|google\s+tag\s+manager)\b/i.test(q)) add('no_gtm')
   if (/\b(?:senza|no|manca\w*)\s+instagram\b/i.test(q)) add('missing_instagram')
   if (/\b(?:senza|no|manca\w*)\s+google\s+ads\b/i.test(q)) add('missing_google_ads')
-  if (/\b(?:errori|problemi|disastro)\s+seo\b/i.test(q)) add('seo_errors')
+  if (/\b(?:errori|problemi|disastro|criticit[aà])\s+(?:tecniche?\s+)?seo\b/i.test(q)) add('site_stale')
+  if (/\b(?:assenza|senza|mancanza)\s+(?:di\s+)?(?:strumenti?\s+di\s+)?(?:tracciamento|tracking)\s+(?:pubblicitario|advertising)\b/i.test(q)) {
+    add('no_pixel')
+    add('no_gtm')
+  }
   if (/\bsenza\b[^,.]{0,40}\bpixel\b/i.test(q)) add('no_pixel')
 
   const sellerDefaults = sellerPlaybookDefaults(query)

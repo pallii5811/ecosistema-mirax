@@ -16,6 +16,8 @@ export type MiraxSignalRequirement =
   | 'crm_installed'
   | 'crm_change'
   | 'site_stale'
+  | 'no_pixel'
+  | 'no_gtm'
   | 'meta_ads_started'
   | 'google_ads_started'
   | 'investing_marketing'
