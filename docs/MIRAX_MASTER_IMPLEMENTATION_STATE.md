@@ -90,4 +90,7 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - Accepted prima/dopo: `5 -> 1`; remaining target: `4`.
 - Regressioni mirate: `62 passed`; suite Hiring/lifecycle allargata: `178 passed`; compile e diff check verdi.
 - Nessuna discovery/provider call eseguita durante la correzione e rivalidazione offline.
-- Prossimo passo: commit/push, staging immutabile, massimo due one-shot sulla coda esistente entro cap cumulativo `EUR 0,125`.
+- Due one-shot massimi completati senza discovery: `1` qualified italiano, `0` nuovi qualified, costo invariato `EUR 0,05`.
+- Coda finale: `0 pending / 52 retryable / 103 terminal`; search resta shadow, pending/resumable e non pubblicata.
+- I quattro record esteri sono persisted `rejected/GEO_OUT_OF_SCOPE`; telemetria resume resa cumulativa.
+- Prossimo passo: nessun altro live retry per questa root cause; analizzare offline i 52 retry tecnici prima di nuova autorizzazione.

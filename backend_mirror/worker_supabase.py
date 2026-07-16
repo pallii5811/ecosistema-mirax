@@ -5125,6 +5125,17 @@ def main() -> None:
                     loaded_prior_payloads,
                     target_geographies,
                 )
+                prior_geography_rejections = [
+                    dict(item)
+                    for item in prior_shadow_resume.get("geography_revalidation_rejections") or ()
+                    if isinstance(item, dict)
+                ]
+                geography_rejections_by_employer = {
+                    employer_key_from_payload(item): item
+                    for item in (*prior_geography_rejections, *geography_rejected_payloads)
+                    if employer_key_from_payload(item)
+                }
+                geography_rejected_payloads = list(geography_rejections_by_employer.values())
                 for rejected_payload in geography_rejected_payloads:
                     rejected_domain = canonical_domain(rejected_payload.get("sito") or rejected_payload.get("website"))
                     if not rejected_domain:
@@ -5268,7 +5279,7 @@ def main() -> None:
                         "evidence_verified": shadow_result.progress.evidence_verified_count,
                         "qualified": unique_shadow_count,
                         "lifecycle_qualified": len(unique_lifecycle_keys),
-                        "rejected": shadow_result.progress.rejected_count,
+                        "rejected": shadow_result.progress.rejected_count + len(geography_rejected_payloads),
                         "rejection_codes": {
                             **dict(shadow_result.rejection_codes),
                             **({"GEO_OUT_OF_SCOPE": len(geography_rejected_payloads)} if geography_rejected_payloads else {}),

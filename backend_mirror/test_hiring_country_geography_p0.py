@@ -197,3 +197,16 @@ def test_revalidate_five_existing_payloads_removes_four_from_resume_count():
     processed = collect_processed_employer_keys((), accepted)
     assert processed == ("domain:redbull.com",)
     assert len(processed) == 1
+
+
+def test_geography_rejections_remain_identity_deduplicated_across_resume_rounds():
+    rejected = _existing_payload("DuPont", "dupont.com", "United States")
+    rejected["rejection_code"] = "GEO_OUT_OF_SCOPE"
+    repeated = dict(rejected)
+    by_employer = {
+        key: payload
+        for payload in (rejected, repeated)
+        if (key := next(iter(collect_processed_employer_keys((), [payload])), ""))
+    }
+    assert list(by_employer) == ["domain:dupont.com"]
+    assert len(by_employer) == 1
