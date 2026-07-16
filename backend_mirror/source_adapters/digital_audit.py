@@ -925,10 +925,15 @@ class DigitalAuditAdapter:
                     )),
                 }
             )
-        prior_qualified = max(
-            cursor_state.cumulative_qualified_unique,
-            len(tuple(technical_filters.get("processed_employer_keys") or ())),
-        )
+        if "processed_employer_keys" in technical_filters:
+            # Persisted lifecycle identities are authoritative after a prior
+            # payload is invalidated (for example, a social URL masquerading
+            # as an official domain).  Taking max(cursor, lifecycle) would
+            # retain the rejected lead forever and can create an infinite
+            # completed/resumable loop.
+            prior_qualified = len(tuple(technical_filters.get("processed_employer_keys") or ()))
+        else:
+            prior_qualified = cursor_state.cumulative_qualified_unique
         partitions = _partition_plan(category, location, technical_filters)
         per_round_cap = per_round_raw_cap_for(technical_filters)
         safety_cap = maximum_safety_raw_cap_for(requested_total, technical_filters)
@@ -1070,6 +1075,7 @@ class DigitalAuditAdapter:
         processed_domains = {
             _domain(value) for value in technical_filters.get("processed_domains") or () if _domain(value)
         }
+        candidate_limit = max(0, min(request.requested_count, requested_total - prior_qualified))
         duplicate_skips = 0
         for item in raw_slice:
             identity_hash = _raw_identity_hash(item)
@@ -1087,7 +1093,8 @@ class DigitalAuditAdapter:
                 duplicate_skips += 1
                 continue
             seen.add(key)
-            candidates.append(decision.candidate)
+            if len(candidates) < candidate_limit:
+                candidates.append(decision.candidate)
 
         new_raw_unique = max(0, len(processed_hashes) - len(cursor_state.processed_identity_hashes))
         cumulative_raw = cursor_state.cumulative_raw_unique + new_raw_unique

@@ -8,7 +8,9 @@ import pytest
 from backend_mirror.source_adapters.contracts import AdapterDiscoveryRequest, DiscoveryCursor
 from backend_mirror.source_adapters.catalog import SourceCapabilityRegistry
 from backend_mirror.source_adapters.digital_audit import (
+    DigitalAuditCursorState,
     DigitalAuditAdapter,
+    _build_cursor,
     _parse_cursor,
 )
 from backend_mirror.source_adapters.orchestrator import UniversalSourceOrchestrator
@@ -244,3 +246,31 @@ def test_progress_checkpoint_carries_cursor_identities_leads_and_cost() -> None:
     assert len(state["acquisition"]["processed_identity_hashes"]) == 50
     assert len(snapshot.qualified_leads) == 5
     assert snapshot.cost_eur == pytest.approx(result.cost_eur)
+
+
+def test_persisted_lifecycle_count_overrides_stale_higher_cursor_count() -> None:
+    stale_cursor = _build_cursor(DigitalAuditCursorState(
+        requested_qualified_count=5,
+        cumulative_raw_unique=10,
+        cumulative_audited=10,
+        cumulative_qualified_unique=5,
+        provider_offset=10,
+        observed_yield=0.5,
+        adaptive_raw_target=10,
+    ))
+    runner = ElasticMapsRunner(total_raw=100)
+    base = elastic_request(5, per_round=10)
+    request = AdapterDiscoveryRequest(**{
+        **base.__dict__,
+        "requested_count": 1,
+        "cursor": stale_cursor,
+        "technical_filters": {
+            **dict(base.technical_filters),
+            "requested_qualified_count": 5,
+            "processed_employer_keys": [f"domain:prior-{index}.example" for index in range(4)],
+        },
+    })
+    result = asyncio.run(DigitalAuditAdapter(runner).discover(request))
+    assert len(runner.calls) == 1
+    assert len(result.candidates) == 1
+    assert result.telemetry["acquisition"]["cumulative_qualified_unique"] == 5
