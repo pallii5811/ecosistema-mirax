@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import os
 from datetime import date
 from typing import Any
+
+os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
+os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-role")
+os.environ.setdefault("MIRAX_WORKER_DISABLED", "1")
 
 from source_adapters.contracts import AdapterDiscoveryRequest
 from source_adapters.hiring import _register_unique_employer_record, _validate_record
@@ -11,7 +16,10 @@ from source_adapters.hiring_qualification import (
     vacancy_role_matches_marketing,
 )
 from source_adapters.shadow_runtime import build_shadow_resume_state, merge_shadow_qualified_payloads
-
+from worker_supabase import (
+    _canonicalize_marketing_investment_job,
+    _looks_like_buyer_marketing_investment_query,
+)
 
 def _marketing_request(**overrides: Any) -> AdapterDiscoveryRequest:
     base = {
@@ -141,3 +149,24 @@ def test_requested_count_five_means_five_unique_employers() -> None:
     )
     assert resume["unique_lifecycle_accepted_count"] == 5
     assert resume["resumable"] is False
+
+
+def test_hiring_marketing_query_is_not_rewritten_to_investing_marketing() -> None:
+    query = (
+        "Trovami aziende in Italia che stanno assumendo marketing manager, "
+        "digital marketing specialist, growth manager, performance marketing specialist "
+        "o social media manager."
+    )
+    assert _looks_like_buyer_marketing_investment_query(query) is False
+    _, _, intent, changed = _canonicalize_marketing_investment_job(
+        "Live shadow Source Adapter v5: hiring-marketing",
+        "Italia",
+        {
+            "query": query,
+            "required_signals": ["hiring_marketing"],
+            "signals": [{"type": "hiring_marketing", "params": {}}],
+        },
+        {},
+    )
+    assert changed is False
+    assert intent["required_signals"] == ["hiring_marketing"]

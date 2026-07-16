@@ -1607,6 +1607,13 @@ def _looks_like_seller_leadgen_query(text: str) -> bool:
 
 def _looks_like_buyer_marketing_investment_query(text: str) -> bool:
     q = str(text or "").lower()
+    # Hiring vacancy queries mention "marketing" as a role, not as ad spend.
+    if re.search(
+        r"\b(?:assum\w*|hiring|vacanc\w*|recruit\w*|job posting|posizione aperta|"
+        r"marketing manager|social media manager|growth manager|performance marketing)\b",
+        q,
+    ):
+        return False
     return bool(
         re.search(r"\b(aziende|imprese|pmi|attivit[aà]|negozi|business)\b", q)
         and re.search(r"\b(invest\w*|spend\w*|budget|campagne?|ads|pubblicit[aà]|marketing)\b", q)
@@ -1637,6 +1644,16 @@ def _canonicalize_marketing_investment_job(
         if isinstance(item, dict)
     }
     required = {str(value).strip().lower() for value in (intent_obj.get("required_signals") or [])}
+    hiring_signals = {
+        "hiring",
+        "hiring_operational",
+        "hiring_sales",
+        "hiring_marketing",
+        "hiring_technology",
+    }
+    # Never rewrite an already-scoped hiring search into investing_marketing.
+    if hiring_signals & (signal_types | required):
+        return category, location, intent, False
     looks_like = any(_looks_like_buyer_marketing_investment_query(value) for value in candidates)
     has_signal = bool({"investing_marketing", "meta_ads_started", "google_ads_started"} & (signal_types | required))
     if not (looks_like or has_signal):
