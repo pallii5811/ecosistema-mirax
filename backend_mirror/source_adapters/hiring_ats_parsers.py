@@ -51,6 +51,21 @@ _WORKDAY_TENANT_CORPORATE_DOMAINS: Mapping[str, str] = {
     "dedalus": "dedalus.com",
     "mango": "mango.com",
     "ttiemea": "tti.com",
+    "bakerhughes": "bakerhughes.com",
+    "bdx": "bd.com",
+    "diageo": "diageo.com",
+    "cognex": "cognex.com",
+    "dupont": "dupont.com",
+    "sensata": "sensata.com",
+    "viatris": "viatris.com",
+    "livanova": "livanova.com",
+    "condenast": "condenast.com",
+    "flexerasoftware": "flexera.com",
+    "dentsuaegis": "dentsu.com",
+    "columbiasportswearcompany": "columbia.com",
+    "movadogroup": "movado.com",
+    "scj": "scjohnson.com",
+    "hyperiongrp": "hyperion.com",
 }
 
 RETRYABLE_FAILURE_CODES = frozenset({

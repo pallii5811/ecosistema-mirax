@@ -73,6 +73,8 @@ _EMPLOYER_IDENTITY_HINTS: Tuple[Tuple[re.Pattern[str], str, str, str], ...] = (
     (re.compile(r"vitalaire|vital air", re.I), "vitalaire.com", "VitalAire", "brand_name"),
     (re.compile(r"air liquide", re.I), "airliquide.com", "Air Liquide", "corporate_group"),
     (re.compile(r"lyreco", re.I), "lyreco.it", "Lyreco", "brand_name"),
+    (re.compile(r"baker\s*hughes|nuovo\s*pignone", re.I), "bakerhughes.com", "Baker Hughes", "legal_name"),
+    (re.compile(r"becton\s*dickinson|\bbd\s*sa\b", re.I), "bd.com", "BD", "brand_name"),
     (re.compile(r"\bbaxi\b|bdr thermea", re.I), "baxi.it", "BAXI", "brand_name"),
     (re.compile(r"s\.?a\.? studio santagostino|studio santagostino", re.I), "studiosantagostino.it", "Studio Santagostino", "legal_name"),
     (re.compile(r"techtronic|tti\b", re.I), "tti.com", "Techtronic Industries", "corporate_group"),
