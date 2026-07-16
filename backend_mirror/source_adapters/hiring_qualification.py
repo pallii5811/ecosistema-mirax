@@ -38,6 +38,32 @@ _NON_SALES_ROLE_RE = re.compile(
     r"stage visual)\b",
     re.I,
 )
+_MARKETING_ROLE_RE = re.compile(
+    r"\b(?:"
+    r"marketing manager|head of marketing|chief marketing officer|\bcmo\b|"
+    r"digital marketing(?:\s+manager|\s+specialist)?|"
+    r"growth(?:\s+marketing)?\s+manager|growth manager|"
+    r"performance marketing(?:\s+manager|\s+specialist)?|"
+    r"paid media(?:\s+manager|\s+specialist)?|"
+    r"acquisition manager|demand generation(?:\s+manager)?|"
+    r"crm marketing(?:\s+manager|\s+specialist)?|"
+    r"content marketing(?:\s+manager|\s+specialist)?|"
+    r"social media manager|brand manager|product marketing manager|"
+    r"marketing specialist|digital marketer|performance marketer"
+    r")\b",
+    re.I,
+)
+_NON_MARKETING_ROLE_RE = re.compile(
+    r"\b(?:"
+    r"sales manager|account executive|account manager|business developer|"
+    r"recruiter|talent acquisition|hr business partner|"
+    r"graphic designer|visual merchandiser|art director|"
+    r"communication intern|customer service|customer care|"
+    r"software engineer|backend developer|frontend developer|"
+    r"project manager|product manager(?!\s+marketing)"
+    r")\b",
+    re.I,
+)
 _VACANCY_ID_RE = re.compile(r"[_-](r\d{5,}|jr\d{5,}|req[-_]?\d+|job/\d+)", re.I)
 _EMPLOYER_IDENTITY_HINTS: Tuple[Tuple[re.Pattern[str], str, str, str], ...] = (
     (re.compile(r"verisure", re.I), "verisure.com", "Verisure", "brand_name"),
@@ -118,6 +144,26 @@ def vacancy_role_matches_sales(*, title: str, description: str = "") -> Tuple[bo
         return True, ""
     desc = _text(description)
     if _SALES_ROLE_RE.search(desc) and not _NON_SALES_ROLE_RE.search(title_text):
+        return True, ""
+    return False, "HIRING_ROLE_MISMATCH"
+
+
+def vacancy_role_matches_marketing(
+    *,
+    title: str,
+    description: str = "",
+    structured_role: str = "",
+) -> Tuple[bool, str]:
+    """Marketing gate: title/structured fields only — description alone never qualifies."""
+    del description  # ponytail: description is accepted for API symmetry but must not qualify
+    title_text = _text(title)
+    structured = _text(structured_role)
+    haystack = " ".join(filter(None, (title_text, structured)))
+    if not haystack:
+        return False, "VACANCY_TITLE_MISSING"
+    if _NON_MARKETING_ROLE_RE.search(haystack) and not _MARKETING_ROLE_RE.search(haystack):
+        return False, "HIRING_ROLE_MISMATCH"
+    if _MARKETING_ROLE_RE.search(haystack):
         return True, ""
     return False, "HIRING_ROLE_MISMATCH"
 
@@ -409,7 +455,14 @@ def replay_parsed_candidates(
             result.rejection_counts["GEOGRAPHY_MISMATCH"] = result.rejection_counts.get("GEOGRAPHY_MISMATCH", 0) + 1
             continue
         result.geography_pass += 1
-        role_ok, role_code = vacancy_role_matches_sales(title=title, description=_text(record.get("description")))
+        if "hiring_marketing" in signal_ids:
+            role_ok, role_code = vacancy_role_matches_marketing(
+                title=title,
+                description=_text(record.get("description")),
+                structured_role=_text(record.get("occupational_category") or record.get("role_category")),
+            )
+        else:
+            role_ok, role_code = vacancy_role_matches_sales(title=title, description=_text(record.get("description")))
         if not role_ok:
             result.role_fail += 1
             code = role_code or "HIRING_ROLE_MISMATCH"

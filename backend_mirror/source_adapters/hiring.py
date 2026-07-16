@@ -35,6 +35,7 @@ from .hiring_qualification import (
     outcome_to_record,
     resolve_employer_identity,
     vacancy_geography_matches,
+    vacancy_role_matches_marketing,
     vacancy_role_matches_sales,
 )
 from .hiring_recruiter import enrich_record_with_recruiter_fields
@@ -93,7 +94,16 @@ _HIRING_SALES_ROLE_TERMS = (
     "account manager", "area manager", "SDR", "BDR",
 )
 _HIRING_MARKETING_ROLE_TERMS = (
-    "marketing manager", "social media manager", "performance marketer", "digital marketing",
+    "marketing manager",
+    "digital marketing manager",
+    "digital marketing specialist",
+    "growth manager",
+    "growth marketing manager",
+    "performance marketing specialist",
+    "performance marketing manager",
+    "social media manager",
+    "brand manager",
+    "product marketing manager",
 )
 _LOMBARDIA_GEO_TERMS = (
     "Lombardia", "Milano", "Bergamo", "Brescia", "Monza", "Brianza", "Varese", "Como",
@@ -983,6 +993,14 @@ def _validate_record(
             role_ok, role_code = vacancy_role_matches_sales(
                 title=title,
                 description=_text(record.get("description") or record.get("evidence")),
+            )
+            if not role_ok:
+                return False, role_code or "HIRING_ROLE_MISMATCH"
+        elif "hiring_marketing" in specialized:
+            role_ok, role_code = vacancy_role_matches_marketing(
+                title=title,
+                description=_text(record.get("description") or record.get("evidence")),
+                structured_role=_text(record.get("occupational_category") or record.get("role_category")),
             )
             if not role_ok:
                 return False, role_code or "HIRING_ROLE_MISMATCH"

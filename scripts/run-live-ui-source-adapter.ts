@@ -10,7 +10,7 @@ config({ path: '.env.local' })
 const SPECS = {
   'digital-audit': 'Trova imprese di pulizia a Milano con sito ufficiale, criticità SEO e assenza di strumenti di tracciamento pubblicitario.',
   'hiring-sales': 'Trova aziende in Lombardia che stanno assumendo commerciali, sales manager o business developer.',
-  'hiring-marketing': 'Trova aziende in Lombardia che stanno assumendo marketing manager, social media manager, performance marketer o figure marketing.',
+  'hiring-marketing': 'Trovami aziende in Italia che stanno assumendo marketing manager, digital marketing specialist, growth manager, performance marketing specialist o social media manager.',
 } as const
 
 const args = new Map(process.argv.slice(2).map((arg) => {
