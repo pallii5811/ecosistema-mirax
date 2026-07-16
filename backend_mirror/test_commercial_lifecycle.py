@@ -399,6 +399,42 @@ def test_digital_audit_buyer_fit_passes_with_verified_signal_groups():
     assert gate["buyer_fit_score"] >= 88
 
 
+def test_digital_audit_buyer_fit_passes_exact_seo_only_query():
+    plan = copy.deepcopy(MILANO_PLAN)
+    plan["raw_query"] = "Imprese di pulizia a Milano con errori SEO."
+    plan["signal_policy"]["required_signals"] = ["website_weakness"]
+    plan["signal_policy"]["maximum_age_days_by_signal"] = {"website_weakness": 30}
+    lead = digital_audit_lead(
+        matched_signals=["website_weakness"],
+        required_signals=["website_weakness"],
+        business_signals=[digital_audit_lead()["business_signals"][0]],
+    )
+
+    gate = evaluate_publication_gate(lead, plan, cost_within_budget=True)
+
+    assert gate["publishable"] is True
+    assert gate["buyer_fit_pass"] is True
+    assert gate["buyer_fit_evidence"]["signal_groups_verified"] is True
+
+
+def test_digital_audit_buyer_fit_rejects_seo_only_query_without_seo_evidence():
+    plan = copy.deepcopy(MILANO_PLAN)
+    plan["raw_query"] = "Imprese di pulizia a Milano con errori SEO."
+    plan["signal_policy"]["required_signals"] = ["website_weakness"]
+    plan["signal_policy"]["maximum_age_days_by_signal"] = {"website_weakness": 30}
+    lead = digital_audit_lead(
+        matched_signals=["missing_analytics"],
+        required_signals=["website_weakness"],
+        business_signals=[digital_audit_lead()["business_signals"][2]],
+    )
+
+    gate = evaluate_publication_gate(lead, plan, cost_within_budget=True)
+
+    assert gate["publishable"] is False
+    assert gate["buyer_fit_pass"] is False
+    assert gate["buyer_fit_evidence"]["signal_groups_verified"] is False
+
+
 def test_digital_audit_buyer_fit_fails_wrong_category():
     lead = digital_audit_lead(matched_signals=[], business_signals=[])
     gate = evaluate_publication_gate(lead, MILANO_PLAN, cost_within_budget=True)

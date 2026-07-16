@@ -217,6 +217,25 @@ def _signal_groups_satisfied(groups: List[List[str]], observed: set[str]) -> boo
     return True
 
 
+def _required_digital_audit_signals_satisfied(
+    canonical_plan: Dict[str, Any],
+    observed: set[str],
+) -> bool:
+    """Validate Digital Audit signal intent for grouped and single-lane plans."""
+    groups = _signal_groups_from_plan(canonical_plan)
+    if groups:
+        return _signal_groups_satisfied(groups, observed)
+    required = {
+        canonical_signal_id(str(value)) or str(value)
+        for value in canonical_plan.get("signal_policy", {}).get("required_signals") or ()
+    }
+    if not required:
+        return False
+    if _required_signal_match_mode(canonical_plan) == "any":
+        return bool(required.intersection(observed))
+    return required.issubset(observed)
+
+
 def _geography_matches_target(lead: Dict[str, Any], canonical_plan: Dict[str, Any]) -> bool:
     target = canonical_plan.get("target") if isinstance(canonical_plan.get("target"), dict) else {}
     geographies = [str(item).strip().lower() for item in target.get("geographies") or [] if str(item).strip()]
@@ -281,7 +300,7 @@ def _evaluate_category_scoped_digital_audit_buyer_fit(
         "adapter_category_verified": bool(matched),
         "geography_matches_target": _geography_matches_target(lead, canonical_plan),
         "official_domain_verified": identity_positive,
-        "signal_groups_verified": bool(groups) and _signal_groups_satisfied(groups, matched),
+        "signal_groups_verified": _required_digital_audit_signals_satisfied(canonical_plan, matched),
         "evidence_verifiable": bool(publishable_evidence) and bool(evidence_signals.intersection(matched)),
         "no_critical_contradictions": not unresolved_contradictions,
     }
