@@ -266,6 +266,24 @@ def parse_workday_json(payload: Mapping[str, Any], source_url: str) -> List[Dict
     if not organization and isinstance(payload.get("hiringOrganization"), Mapping):
         organization = payload["hiringOrganization"]
     employer_name = _text(organization.get("name") or info.get("company") or payload.get("company"))
+    corporate = _workday_corporate_guess(source_url)
+    if not employer_name:
+        # Deterministic fallback from Workday tenant map only (never invent names).
+        tenant = str(inspect_workday_url(source_url).get("tenant") or "").lower()
+        name_map = {
+            "airliquidehr": "Air Liquide",
+            "airliquide": "Air Liquide",
+            "solenis": "Solenis",
+            "lyreco": "Lyreco",
+            "teamsystem": "TeamSystem",
+            "gsk": "GSK",
+            "ing": "ING",
+            "convatec": "Convatec",
+            "moog": "Moog",
+            "otis": "Otis",
+            "jj": "Johnson & Johnson",
+        }
+        employer_name = name_map.get(tenant, "")
     if not employer_name:
         return []
     location = _text(info.get("location") or info.get("jobRequisitionLocation") or payload.get("location"))
@@ -276,21 +294,18 @@ def parse_workday_json(payload: Mapping[str, Any], source_url: str) -> List[Dict
         extras = [_text(item) for item in additional if _text(item)]
         if extras:
             location = ", ".join([part for part in (location, *extras) if part])
-    published_at = _text(
-        info.get("postedOn")
-        or info.get("startDate")
-        or info.get("datePosted")
-        or payload.get("postedOn")
-        or payload.get("startDate")
-    )
+    # Prefer ISO startDate over relative postedOn ("Posted Today").
+    published_at = _text(info.get("startDate") or payload.get("startDate") or "")
+    if not re.match(r"^20\d{2}-\d{2}-\d{2}", published_at):
+        posted = _text(info.get("postedOn") or info.get("datePosted") or payload.get("postedOn"))
+        if re.match(r"^20\d{2}-\d{2}-\d{2}", posted):
+            published_at = posted
     description = _text(info.get("jobDescription") or payload.get("jobDescription"))
     organization_website = _text(
         organization.get("sameAs")
         or organization.get("url")
-        or info.get("externalUrl")
-        or payload.get("externalUrl")
+        or ""
     )
-    corporate = _workday_corporate_guess(source_url)
     if corporate and (not organization_website or "myworkdayjobs.com" in organization_website.lower()):
         organization_website = f"https://{corporate}"
     valid_through = _text(info.get("validThrough") or payload.get("validThrough"))
@@ -412,6 +427,7 @@ def parse_vacancy_html(html: str, source_url: str, *, structured_json: Optional[
             records = parse_workday_json(structured_json, source_url)
             if records:
                 return VacancyParseResult(tuple(records), "workday_cxs_json", jsonld_count=0, javascript_shell=shell, fetch_mode="json")
+            return VacancyParseResult((), "workday_cxs_json", failure_code="WORKDAY_CXS_EMPTY", javascript_shell=shell, fetch_mode="json")
         if vendor == "teamtailor":
             records = parse_teamtailor_json(structured_json, source_url)
             if records:

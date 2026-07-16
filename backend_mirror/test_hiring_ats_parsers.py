@@ -91,6 +91,7 @@ def test_workday_cxs_parser_keeps_sales_lombardia_and_corporate_domain():
             "location": "Milano",
             "additionalLocations": ["Bergamo"],
             "startDate": "2026-06-30",
+            "postedOn": "Posted Today",
             "jobDescription": "Solenis cerca un commerciale junior B2B in Lombardia. Candidati.",
             "externalUrl": "https://solenis.wd1.myworkdayjobs.com/en-us/solenis/job/commerciale-junior-b2b--lombardia-_r0028690",
             "jobReqId": "R0028690",
@@ -102,6 +103,7 @@ def test_workday_cxs_parser_keeps_sales_lombardia_and_corporate_domain():
     records = parse_workday_json(payload, url)
     assert len(records) == 1
     record = records[0]
+    assert record["published_at"].startswith("2026-06-30")
     assert "Commerciale" in record["vacancy_title"]
     assert "Milano" in record["location"] and "Bergamo" in record["location"]
     assert record["employer_official_domain"] == "solenis.com"
@@ -116,6 +118,25 @@ def test_workday_cxs_parser_keeps_sales_lombardia_and_corporate_domain():
         geographies=("Lombardia",),
     ) is True
     assert vacancy_role_matches_sales(title=record["vacancy_title"], description=record["description"])[0] is True
+
+
+def test_workday_cxs_tenant_name_fallback_without_hiring_organization():
+    payload = {
+        "jobPostingInfo": {
+            "title": "Agente in attivita finanziaria - Lombardia",
+            "location": "MILAN",
+            "startDate": "2026-03-16",
+            "canApply": True,
+            "jobReqId": "REQ-10083295",
+            "jobDescription": "ING cerca agente finanziario in Lombardia.",
+        }
+    }
+    url = "https://ing.wd3.myworkdayjobs.com/it-it/icsgblcor/job/agente-in-attivit-finanziaria---percorso-beginner_req-10083295"
+    records = parse_workday_json(payload, url)
+    assert len(records) == 1
+    assert records[0]["company_name"] == "ING"
+    assert records[0]["employer_official_domain"] == "ing.it"
+    assert records[0]["published_at"].startswith("2026-03-16")
 
 
 def test_workday_cxs_failure_codes_are_precise():
