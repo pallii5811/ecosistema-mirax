@@ -139,6 +139,22 @@ def test_wrong_category_fails_with_code() -> None:
     assert decision.rejection_code == "CATEGORY_TARGET_MISMATCH"
 
 
+@pytest.mark.parametrize("website", [
+    "https://m.facebook.com/example-cleaning",
+    "https://instagram.com/example-cleaning",
+    "https://www.paginegialle.it/example-cleaning",
+])
+def test_social_and_directory_never_become_official_domain(website: str) -> None:
+    raw = {**milano_rows()[0], "website": website}
+    decision = project_candidate_from_raw(
+        raw,
+        milano_request(count=1),
+        observed_at="2026-07-16T12:00:00+00:00",
+    )
+    assert decision.accepted is False
+    assert decision.rejection_code == "OFFICIAL_DOMAIN_NOT_COMPANY_OWNED"
+
+
 def test_every_rejection_has_code() -> None:
     for row in milano_rows():
         trace = trace_candidate_projection(row, milano_request(count=1), observed_at="2026-07-15T00:00:00+00:00")

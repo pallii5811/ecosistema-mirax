@@ -5135,6 +5135,37 @@ def main() -> None:
                     loaded_prior_payloads,
                     target_geographies,
                 )
+                from source_adapters.digital_audit import is_valid_digital_audit_official_domain
+                invalid_digital_domain_payloads = [
+                    payload for payload in prior_qualified_payloads
+                    if str(payload.get("source_adapter_id") or "") == "legacy_digital_audit_v1"
+                    and not is_valid_digital_audit_official_domain(
+                        payload.get("employer_official_domain") or payload.get("sito") or payload.get("website")
+                    )
+                ]
+                invalid_digital_keys = {
+                    employer_key_from_payload(payload) for payload in invalid_digital_domain_payloads
+                    if employer_key_from_payload(payload)
+                }
+                if invalid_digital_keys:
+                    prior_qualified_payloads = [
+                        payload for payload in prior_qualified_payloads
+                        if employer_key_from_payload(payload) not in invalid_digital_keys
+                    ]
+                    for rejected_payload in invalid_digital_domain_payloads:
+                        rejected_domain = canonical_domain(
+                            rejected_payload.get("sito") or rejected_payload.get("website")
+                        )
+                        if rejected_domain:
+                            supabase.table("search_candidates").update({
+                                "stage": "rejected",
+                                "rejection_code": "OFFICIAL_DOMAIN_NOT_COMPANY_OWNED",
+                                "payload": {
+                                    **rejected_payload,
+                                    "rejection_code": "OFFICIAL_DOMAIN_NOT_COMPANY_OWNED",
+                                },
+                                "updated_at": _utc_now_iso(),
+                            }).eq("search_id", job_id).eq("canonical_domain", rejected_domain).execute()
                 prior_geography_rejections = [
                     dict(item)
                     for item in prior_shadow_resume.get("geography_revalidation_rejections") or ()

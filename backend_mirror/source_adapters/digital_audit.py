@@ -138,6 +138,18 @@ def _domain(value: Any) -> Optional[str]:
     return host or None
 
 
+def is_valid_digital_audit_official_domain(value: Any) -> bool:
+    """Reject social profiles, portals and directories as company domains."""
+    domain = _domain(value)
+    if not domain:
+        return False
+    try:
+        from agents.portal_blacklist import is_blacklisted_domain, is_source_portal_url
+    except ImportError:
+        from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, is_source_portal_url
+    return not is_blacklisted_domain(domain) and not is_source_portal_url(str(value or ""))
+
+
 def _audit_succeeded(raw: Mapping[str, Any]) -> bool:
     return bool(
         _text(raw.get("website"))
@@ -499,6 +511,12 @@ def project_candidate_from_raw(
         return CandidateProjectionDecision(False, rejection_code="OFFICIAL_DOMAIN_MISSING", rejection_details={"reason": "missing_company_name"})
     if not canonical_domain or not website:
         return CandidateProjectionDecision(False, rejection_code="OFFICIAL_DOMAIN_MISSING", rejection_details={"reason": "missing_website", "company_name": name})
+    if not is_valid_digital_audit_official_domain(website):
+        return CandidateProjectionDecision(
+            False,
+            rejection_code="OFFICIAL_DOMAIN_NOT_COMPANY_OWNED",
+            rejection_details={"company_name": name, "rejected_domain": canonical_domain},
+        )
 
     discovery_category = _text(raw.get("category") or raw.get("categoria"))
     requested_category = next((_text(value) for value in request.sectors if _text(value)), None)
