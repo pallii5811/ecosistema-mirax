@@ -34,7 +34,8 @@ _SALES_ROLE_RE = re.compile(
 )
 _NON_SALES_ROLE_RE = re.compile(
     r"\b(?:application engineer|help desk|project manager|visual merchandiser|"
-    r"informatore scientifico|magazziniere|tecnici? ascensorist|stage visual)\b",
+    r"informatore scientifico|magazziniere|tecnici? ascensorist|\bascensorist|"
+    r"stage visual)\b",
     re.I,
 )
 _VACANCY_ID_RE = re.compile(r"[_-](r\d{5,}|jr\d{5,}|req[-_]?\d+|job/\d+)", re.I)
