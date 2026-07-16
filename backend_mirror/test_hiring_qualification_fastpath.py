@@ -138,6 +138,8 @@ def test_bootstrap_revalidation_queue_from_parsed_outcomes():
 def test_offline_replay_first100_parsed_candidates():
     payload = json.loads((FIXTURES / "hiring_forensic_first100_pre_fix.json").read_text(encoding="utf-8"))
     rows = [row for row in payload["rows"] if row.get("parser_result") == "success"]
+    for row in rows:
+        row.setdefault("active", True)
     assert len(rows) == 15
     replay = replay_parsed_candidates(rows, today=date(2026, 7, 15))
     assert replay.geography_pass >= 10

@@ -7,8 +7,20 @@ from typing import Any, Mapping, Sequence, Tuple
 from urllib.parse import urlparse
 
 from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, normalize_domain
+from backend_mirror.source_adapters.hiring_ats_parsers import detect_ats_vendor
 
-QUALIFICATION_VALIDATOR_EPOCH = 3
+QUALIFICATION_VALIDATOR_EPOCH = 4
+_EXPLICIT_SIZE_CONSTRAINT_RE = re.compile(
+    r"\b(?:"
+    r"pmi|sme|microimprese?|"
+    r"piccol[ae]\s+(?:imprese|aziende|impresa|azienda)|"
+    r"medie\s+(?:imprese|aziende)|"
+    r"piccola\s+(?:impresa|azienda)|"
+    r"media\s+(?:impresa|azienda)|"
+    r"multinazional[ei]|grande\s+gruppo"
+    r")\b",
+    re.I,
+)
 MAX_DOMAIN_LOOKUPS = 5
 DOMAIN_LOOKUP_COST_EUR = 0.005
 
@@ -228,8 +240,7 @@ def resolve_employer_identity(record: Mapping[str, Any]) -> dict[str, Any]:
                 f"workday_tenant:{tenant}",
                 f"corporate_domain:{corporate}",
             ])
-            enriched["source_class"] = "first_party_ats"
-            enriched["workday_tenant"] = tenant
+            apply_first_party_ats_metadata(enriched, tenant=tenant)
 
     for pattern, domain, brand, kind in _EMPLOYER_IDENTITY_HINTS:
         if pattern.search(displayed or ""):
@@ -240,7 +251,7 @@ def resolve_employer_identity(record: Mapping[str, Any]) -> dict[str, Any]:
                 evidence.append(f"employer_identity_hint:{kind}")
             enriched.setdefault("employer_brand", brand)
             if detect_ats_vendor(source_url) == "workday":
-                enriched["source_class"] = "first_party_ats"
+                apply_first_party_ats_metadata(enriched)
             break
 
     if official and vacancy_source and official == vacancy_source:
@@ -258,8 +269,6 @@ def resolve_employer_identity(record: Mapping[str, Any]) -> dict[str, Any]:
         else:
             employer_is_direct = True
         source_class = _text(enriched.get("source_class") or record.get("source_class")) or "company_careers"
-        if detect_ats_vendor(source_url) == "workday" and official:
-            source_class = "first_party_ats"
         enriched.update({
             "displayed_employer_name": displayed,
             "legal_or_corporate_employer": _text(record.get("legal_or_corporate_employer")) or displayed,
@@ -277,9 +286,76 @@ def resolve_employer_identity(record: Mapping[str, Any]) -> dict[str, Any]:
             "domain_verification_evidence": tuple(sorted(set(evidence))),
             "entity_class": "operating_company",
             "source_class": source_class,
-            "active": True if record.get("active") is not False else False,
         })
+        if "active" in record:
+            enriched["active"] = record.get("active")
+        if detect_ats_vendor(source_url) == "workday" and official:
+            apply_first_party_ats_metadata(enriched, tenant=str(enriched.get("workday_tenant") or ""))
     return enriched
+
+
+def apply_first_party_ats_metadata(record: dict[str, Any], *, tenant: str = "") -> dict[str, Any]:
+    """Canonical source_class=company_careers with first-party ATS subtype."""
+    source_url = _text(record.get("source_url") or record.get("vacancy_url"))
+    vendor = detect_ats_vendor(source_url)
+    if vendor:
+        record["ats_vendor"] = vendor
+    if tenant:
+        record["workday_tenant"] = tenant
+    if vendor == "workday" and (
+        record.get("employer_official_domain")
+        or record.get("official_domain_verified")
+        or record.get("source_subtype") == "first_party_ats"
+    ):
+        record["source_class"] = "company_careers"
+        record["source_subtype"] = "first_party_ats"
+        record["ats_vendor"] = "workday"
+    return record
+
+
+def explicit_size_constraint_in_text(text: str) -> bool:
+    return bool(_EXPLICIT_SIZE_CONSTRAINT_RE.search(_text(text)))
+
+
+def size_constraint_policy(request: Any) -> dict[str, Any]:
+    """Materialize size-gate inputs; compiler target sizes alone do not activate the gate."""
+    from backend_mirror.source_adapters.contracts import AdapterDiscoveryRequest
+
+    if isinstance(request, AdapterDiscoveryRequest):
+        tf = dict(request.technical_filters or {})
+        raw_query = _text(tf.get("parent_query") or tf.get("raw_query") or request.query)
+    elif isinstance(request, Mapping):
+        tf = dict(request.get("technical_filters") or {})
+        raw_query = _text(tf.get("parent_query") or tf.get("raw_query") or request.get("query"))
+    else:
+        tf = {}
+        raw_query = ""
+    ui_explicit = str(tf.get("size_constraint_provenance") or tf.get("company_size_filter_provenance") or "") == "user_explicit"
+    query_explicit = explicit_size_constraint_in_text(raw_query)
+    explicit_constraints = tuple(
+        str(item) for item in (tf.get("explicit_user_constraints") or ()) if explicit_size_constraint_in_text(str(item))
+    )
+    active = ui_explicit or query_explicit or bool(explicit_constraints)
+    reason = "none"
+    if ui_explicit:
+        reason = "user_explicit_ui_filter"
+    elif query_explicit:
+        reason = "raw_query_explicit_size_terms"
+    elif explicit_constraints:
+        reason = "explicit_user_constraints"
+    return {
+        "raw_query": raw_query,
+        "canonical_plan_target_company_sizes": tuple(str(item) for item in (tf.get("company_sizes") or ())),
+        "required_attributes": tuple(str(item) for item in (tf.get("required_attributes") or ())),
+        "explicit_user_constraints": explicit_constraints,
+        "local_business_preference": tf.get("local_business_preference", tf.get("localBusinessPreference")),
+        "company_size_policy_active": active,
+        "policy_reason": reason,
+    }
+
+
+def requires_sme_size_gate(request: Any) -> bool:
+    return bool(size_constraint_policy(request).get("company_size_policy_active"))
 
 
 def dedupe_key(record: Mapping[str, Any]) -> str:
@@ -381,7 +457,7 @@ def count_unique_employer_keys(payloads: Sequence[Mapping[str, Any]]) -> int:
 def outcome_to_record(outcome: Mapping[str, Any]) -> dict[str, Any]:
     """Rebuild a validation record from persisted url_outcome without refetch."""
     url = _text(outcome.get("canonical_url") or outcome.get("url") or outcome.get("final_url"))
-    return {
+    row: dict[str, Any] = {
         "company_name": _text(outcome.get("employer")),
         "displayed_employer_name": _text(outcome.get("employer")),
         "vacancy_title": _text(outcome.get("vacancy_title")),
@@ -394,13 +470,22 @@ def outcome_to_record(outcome: Mapping[str, Any]) -> dict[str, Any]:
         "source_url": url,
         "vacancy_url": url,
         "source_class": _text(outcome.get("source_class")) or "company_careers",
+        "source_subtype": _text(outcome.get("source_subtype")),
+        "ats_vendor": _text(outcome.get("ats_vendor")),
         "vacancy_source_domain": _text(outcome.get("source_domain")),
+        "employer_official_domain": _text(outcome.get("employer_official_domain") or outcome.get("official_domain")),
+        "official_domain_verified": outcome.get("official_domain_verified"),
+        "workday_tenant": _text(outcome.get("tenant") or outcome.get("workday_tenant")),
         "extraction_method": _text(outcome.get("parser_selected")) or "persisted_outcome",
         "description": _text(outcome.get("description")),
         "evidence": _text(outcome.get("vacancy_title")),
-        "active": True,
         "entity_class": "operating_company",
     }
+    if "active" in outcome:
+        row["active"] = outcome.get("active")
+    elif outcome.get("vacancy_active") is not None:
+        row["active"] = outcome.get("vacancy_active")
+    return row
 
 
 def bootstrap_parsed_and_revalidation_queues(

@@ -12,7 +12,14 @@ from contracts.signal_ontology import canonical_signal_id
 from contracts.source_registry import load_source_registry
 
 _EXPLICIT_SIZE_CONSTRAINT_RE = re.compile(
-    r"\b(?:pmi|sme|piccol[ae]|medi[ae]|micro(?:impresa|imprese)?|multinazional[ei]|grande\s+gruppo)\b",
+    r"\b(?:"
+    r"pmi|sme|microimprese?|"
+    r"piccol[ae]\s+(?:imprese|aziende|impresa|azienda)|"
+    r"medie\s+(?:imprese|aziende)|"
+    r"piccola\s+(?:impresa|azienda)|"
+    r"media\s+(?:impresa|azienda)|"
+    r"multinazional[ei]|grande\s+gruppo"
+    r")\b",
     re.I,
 )
 

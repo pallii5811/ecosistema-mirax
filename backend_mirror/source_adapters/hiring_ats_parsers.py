@@ -72,6 +72,7 @@ RETRYABLE_FAILURE_CODES = frozenset({
     "FETCH_TIMEOUT",
     "FETCH_HTTP_ERROR",
     "FETCH_BLOCKED",
+    "DOMAIN_BATCH_DEFERRED",
     "JAVASCRIPT_SHELL",
     "JSONLD_JOBPOSTING_MISSING",
     "ATS_UNSUPPORTED",
@@ -175,7 +176,6 @@ def _normalize_record(
         "source_publisher": vacancy_source_domain,
         "source_class": source_class,
         "extraction_method": extraction_method,
-        "active": True,
         "description": description[:2000],
         "employer_is_direct": resolved["employer_is_direct"],
         "official_domain_verified": resolved["official_domain_verified"],
@@ -385,10 +385,13 @@ def parse_workday_json(payload: Mapping[str, Any], source_url: str) -> List[Dict
             f"corporate_domain:{corporate}",
         ]))
         resolution_method = resolution_method or "workday_tenant_corporate_map"
-        # First-party ATS: deterministic tenant↔employer↔corporate link.
-        record["source_class"] = "first_party_ats"
+        record["source_class"] = "company_careers"
+        record["source_subtype"] = "first_party_ats"
+        record["ats_vendor"] = "workday"
     elif record.get("employer_official_domain") and detect_ats_vendor(vacancy_url) == "workday":
-        record["source_class"] = "first_party_ats"
+        record["source_class"] = "company_careers"
+        record["source_subtype"] = "first_party_ats"
+        record["ats_vendor"] = "workday"
     record["employer_resolution_method"] = resolution_method or (
         "hiring_organization_name" if employer_name else ""
     )

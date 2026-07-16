@@ -178,6 +178,7 @@ def test_lombard_city_without_region_passes_validation():
     record = parse_workday_json(payload, "https://airliquidehr.wd3.myworkdayjobs.com/job/x/y")[0]
     record["location"] = "Milano, Italia"
     record["published_at"] = "2026-07-10"
+    record["active"] = True
     record["evidence"] = "Commerciale sales business developer"
     enriched = enrich_record_with_recruiter_fields(record)
     ok, rejection = _validate_record(enriched, _sales_request(), date(2026, 7, 15))

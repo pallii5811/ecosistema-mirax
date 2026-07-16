@@ -54,7 +54,9 @@ def test_workday_first_party_ats_not_secondary() -> None:
     rows = parse_workday_json(payload, url)
     assert rows
     record = resolve_employer_identity(rows[0])
-    assert record["source_class"] == "first_party_ats"
+    assert record["source_class"] == "company_careers"
+    assert record["source_subtype"] == "first_party_ats"
+    assert record["ats_vendor"] == "workday"
     assert record["employer_official_domain"] == "bd.com"
     assert "myworkdayjobs.com" not in record["employer_official_domain"]
     assert "workday_tenant_corporate_map" in " ".join(record.get("domain_verification_evidence") or ())
@@ -99,7 +101,9 @@ def test_bd_replay_resolves_with_provenance() -> None:
     }
     record = resolve_employer_identity(prior)
     assert record["employer_official_domain"] == "bd.com"
-    assert record["source_class"] == "first_party_ats"
+    assert record["source_class"] == "company_careers"
+    assert record["source_subtype"] == "first_party_ats"
+    assert record["ats_vendor"] == "workday"
     assert record["official_domain_verified"] is True
 
 
@@ -121,7 +125,7 @@ def test_batch_cap_uses_real_pending_slots_not_bool() -> None:
     assert URL_FETCH_CONCURRENCY == 4
     assert PENDING_PROGRESS_BATCH_CAP >= 20
     assert URLS_PER_BATCH >= 20
-    assert QUALIFICATION_VALIDATOR_EPOCH >= 3
+    assert QUALIFICATION_VALIDATOR_EPOCH >= 4
 
 
 def test_timeout_on_one_url_does_not_block_batch() -> None:

@@ -29,11 +29,14 @@ from .hiring_budget import (
 )
 from .hiring_qualification import (
     QUALIFICATION_VALIDATOR_EPOCH,
+    apply_first_party_ats_metadata,
     bootstrap_parsed_and_revalidation_queues,
     dedupe_key,
     employer_key_from_record,
     outcome_to_record,
+    requires_sme_size_gate,
     resolve_employer_identity,
+    size_constraint_policy,
     vacancy_geography_matches,
     vacancy_role_matches_marketing,
     vacancy_role_matches_sales,
@@ -322,7 +325,6 @@ def parse_hiring_page(
         "source_publisher": host,
         "source_class": "company_careers",
         "extraction_method": "individual_vacancy_page",
-        "active": True,
         "description": evidence,
         "employer_is_direct": True,
         "official_domain_verified": True,
@@ -360,14 +362,27 @@ def _normalize_rejection_code(code: str) -> str:
         "PARSE_EMPTY": "PARSE_FAILED",
         "FETCH_OR_PARSE_EMPTY": "PARSE_FAILED",
         "AGGREGATOR_WITHOUT_EMPLOYER": "AGGREGATOR_WITHOUT_EMPLOYER",
+        "VACANCY_ACTIVE_STATUS_UNVERIFIED": "VACANCY_ACTIVE_STATUS_UNVERIFIED",
     }
     return mapping.get(code, code or "PARSE_FAILED")
+
+
+_CXS_TERMINAL_FAILURE_CODES = frozenset({
+    "WORKDAY_CXS_HTTP_403",
+    "WORKDAY_CXS_HTTP_404",
+    "WORKDAY_CXS_HTTP_422",
+    "WORKDAY_CXS_NOT_JSON",
+    "WORKDAY_CXS_FETCH_ERROR",
+    "WORKDAY_CXS_EMPTY",
+})
 
 
 async def _fetch_ats_structured_json(
     client: Any,
     url: str,
     html: str,
+    *,
+    prior_forensic: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[Optional[Mapping[str, Any]], Dict[str, Any]]:
     import asyncio
 
@@ -377,9 +392,22 @@ async def _fetch_ats_structured_json(
         "Accept": "application/json",
         "User-Agent": "Mozilla/5.0 (compatible; MIRAX-Hiring/1.0)",
     }
+    if prior_forensic:
+        prior_code = str(prior_forensic.get("cxs_failure_code") or "")
+        if prior_code in _CXS_TERMINAL_FAILURE_CODES:
+            forensic = dict(prior_forensic)
+            forensic["cxs_attempt_count"] = len(forensic.get("cxs_attempts") or [])
+            return None, forensic
+        if prior_code and prior_code != "WORKDAY_CXS_URL_UNRESOLVED":
+            forensic = dict(prior_forensic)
+            forensic["cxs_attempt_count"] = len(forensic.get("cxs_attempts") or [])
+            return None, forensic
     candidates: List[str] = []
     vendor = detect_ats_vendor(url)
     forensic: Dict[str, Any] = {"ats_vendor": vendor, "cxs_attempts": []}
+    if prior_forensic:
+        forensic = {**dict(prior_forensic), "cxs_attempts": list(prior_forensic.get("cxs_attempts") or [])}
+        vendor = str(forensic.get("ats_vendor") or vendor)
     if vendor == "workday":
         meta = inspect_workday_url(url, html)
         forensic.update(meta)
@@ -387,7 +415,7 @@ async def _fetch_ats_structured_json(
         if api:
             candidates.append(api)
             forensic["cxs_url"] = api
-        else:
+        elif "cxs_failure_code" not in forensic:
             forensic["cxs_failure_code"] = "WORKDAY_CXS_URL_UNRESOLVED"
     elif vendor == "teamtailor":
         api = build_teamtailor_json_url(url)
@@ -412,33 +440,42 @@ async def _fetch_ats_structured_json(
             forensic["cxs_final_url"] = attempt["final_url"]
             if response.status_code == 404:
                 forensic["cxs_failure_code"] = "WORKDAY_CXS_HTTP_404"
-                continue
+                break
             if response.status_code == 403:
                 forensic["cxs_failure_code"] = "WORKDAY_CXS_HTTP_403"
-                continue
+                break
             if response.status_code != 200:
                 forensic["cxs_failure_code"] = f"WORKDAY_CXS_HTTP_{response.status_code}"
-                continue
+                break
             content_type = attempt["content_type"].lower()
             if "json" not in content_type:
                 forensic["cxs_failure_code"] = "WORKDAY_CXS_NOT_JSON"
                 forensic["json_parse_result"] = "not_json_content_type"
-                continue
+                break
             payload = response.json()
             if isinstance(payload, Mapping):
                 forensic["json_parse_result"] = "ok"
                 forensic.pop("cxs_failure_code", None)
+                forensic["cxs_attempt_count"] = len(forensic.get("cxs_attempts") or [])
                 return payload, forensic
             forensic["cxs_failure_code"] = "WORKDAY_CXS_NOT_JSON"
             forensic["json_parse_result"] = "non_object_json"
+            break
+        except asyncio.TimeoutError:
+            attempt["error"] = "TimeoutError"
+            forensic["cxs_attempts"].append(attempt)
+            forensic["cxs_failure_code"] = "WORKDAY_CXS_FETCH_ERROR"
+            forensic["json_parse_result"] = "timeout"
+            break
         except Exception as exc:
             attempt["error"] = exc.__class__.__name__
             forensic["cxs_attempts"].append(attempt)
             forensic["cxs_failure_code"] = "WORKDAY_CXS_FETCH_ERROR"
             forensic["json_parse_result"] = "exception"
-            continue
+            break
     if vendor == "workday" and candidates and "cxs_failure_code" not in forensic:
         forensic["cxs_failure_code"] = "WORKDAY_CXS_EMPTY"
+    forensic["cxs_attempt_count"] = len(forensic.get("cxs_attempts") or [])
     return None, forensic
 
 
@@ -787,13 +824,10 @@ async def _default_hiring_provider(
                 continue
             host = str(item.get("source_domain") or _host(url))
             if domain_active.get(host, 0) >= DOMAIN_LIMIT_PER_BATCH:
-                rejection = "FETCH_TIMEOUT"
+                rejection = "DOMAIN_BATCH_DEFERRED"
                 traces.append({**base_outcome, "rejection_code": rejection, "rejection_function": "domain_rate_limit", "url_state": "retryable_parser_failure"})
                 _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure"})
                 _update_retry_queue(state, url, rejection, is_retry=is_retry)
-                if not is_retry:
-                    _advance_discovery_offset(state)
-                urls_processed += 1
                 continue
             domain_active[host] = domain_active.get(host, 0) + 1
             query = str(item.get("query") or "")
@@ -805,6 +839,7 @@ async def _default_hiring_provider(
                 structured_json: Optional[Mapping[str, Any]] = None
                 cxs_forensic: Dict[str, Any] = {}
                 prefetched = prefetch_structured.get(url)
+                prior_cxs = prefetched[1] if prefetched else {}
                 if prefetched and prefetched[0] is not None:
                     structured_json, cxs_forensic = prefetched
                     stage_timings["cxs_ms"] = round((__import__("time").monotonic() - t_fetch0) * 1000, 1)
@@ -836,11 +871,20 @@ async def _default_hiring_provider(
                         continue
                     html = response.text[:2_000_000]
                     t_cxs0 = __import__("time").monotonic()
-                    structured_json, cxs_forensic = await _fetch_ats_structured_json(client, url, html)
+                    if prior_cxs and str(prior_cxs.get("cxs_failure_code") or "") in _CXS_TERMINAL_FAILURE_CODES:
+                        structured_json, cxs_forensic = None, dict(prior_cxs)
+                    elif prior_cxs and str(prior_cxs.get("cxs_failure_code") or "") == "WORKDAY_CXS_URL_UNRESOLVED":
+                        structured_json, cxs_forensic = await _fetch_ats_structured_json(client, url, html)
+                    elif prior_cxs and prior_cxs.get("cxs_attempts"):
+                        structured_json, cxs_forensic = None, dict(prior_cxs)
+                    else:
+                        structured_json, cxs_forensic = await _fetch_ats_structured_json(client, url, html)
                     stage_timings["cxs_ms"] = round((__import__("time").monotonic() - t_cxs0) * 1000, 1)
                 base_outcome.update({k: v for k, v in cxs_forensic.items() if k != "cxs_attempts"})
                 if cxs_forensic.get("cxs_attempts"):
                     base_outcome["cxs_attempts"] = list(cxs_forensic["cxs_attempts"])
+                if cxs_forensic.get("cxs_attempt_count") is not None:
+                    base_outcome["cxs_attempt_count"] = cxs_forensic.get("cxs_attempt_count")
                 t_parse0 = __import__("time").monotonic()
                 parsed_result = parse_vacancy_html(html, str(base_outcome.get("final_url") or url), structured_json=structured_json)
                 stage_timings["parse_ms"] = round((__import__("time").monotonic() - t_parse0) * 1000, 1)
@@ -887,6 +931,12 @@ async def _default_hiring_provider(
                         "employer": record.get("company_name") or record.get("name"),
                         "location": record.get("location"),
                         "publication_date": record.get("published_at") or record.get("evidence_date"),
+                        "employer_official_domain": record.get("employer_official_domain"),
+                        "source_class": record.get("source_class"),
+                        "source_subtype": record.get("source_subtype"),
+                        "ats_vendor": record.get("ats_vendor"),
+                        "active": record.get("active"),
+                        "vacancy_active": record.get("active"),
                         "validation_result": "accepted" if valid else normalized,
                         "rejection_code": "ACCEPTED" if valid else normalized,
                         "url_state": "accepted" if valid else ("rejected_final" if not classify_failure_for_retry(normalized) else "retryable_parser_failure"),
@@ -964,7 +1014,7 @@ async def _default_hiring_provider(
 
 
 def _requires_sme(request: AdapterDiscoveryRequest) -> bool:
-    return bool(re.search(r"\b(?:pmi|piccol[ae]|medi[ae]|microimprese?|sme)\b", request.query, re.I))
+    return requires_sme_size_gate(request)
 
 
 def _advance_discovery_offset(state: HiringDiscoveryState) -> None:
@@ -1035,6 +1085,8 @@ def _validate_record(
     valid_through = _iso_date(record.get("valid_through"))
     if valid_through and date.fromisoformat(valid_through) < today:
         return False, "VACANCY_EXPIRED"
+    if record.get("active") is None:
+        return False, "VACANCY_ACTIVE_STATUS_UNVERIFIED"
     if record.get("active") is not True:
         return False, "VACANCY_NOT_CONFIRMED_ACTIVE"
     evidence = " ".join(filter(None, (
@@ -1080,7 +1132,7 @@ def _validate_record(
     if record.get("official_domain_verified") is not True:
         return False, "OFFICIAL_DOMAIN_UNVERIFIED"
     source_class = _text(record.get("source_class")) or ""
-    if source_class not in {"company_careers", "first_party_ats", "job_board"}:
+    if source_class not in {"company_careers", "job_board"}:
         return False, "HIRING_SOURCE_CLASS_INVALID"
     if source_class == "job_board" and record.get("corroborated") is not True:
         return False, "SECONDARY_SOURCE_NOT_CORROBORATED"
@@ -1202,9 +1254,12 @@ class HiringAdapter:
                 publisher = _text(record.get("source_publisher")) or _host(source_url)
                 vacancy_source_domain = _text(record.get("vacancy_source_domain")) or _host(source_url)
                 source_class = _text(record.get("source_class")) or "company_careers"
+                source_subtype = _text(record.get("source_subtype"))
+                ats_vendor = _text(record.get("ats_vendor"))
                 signal_id = next((item for item in request.signal_ids if item.startswith("hiring")), "hiring")
                 excerpt = _text(record.get("evidence") or record.get("evidence_excerpt")) or f"{company} cerca {title}"
                 confidence = 0.96 if source_class == "company_careers" else 0.86
+                record_active = record.get("active")
                 verification_evidence = tuple(record.get("domain_verification_evidence") or (
                     ("schema_org_identity_match", "official_page_host_match")
                     if "schema_org" in (_text(record.get("extraction_method")) or "")
@@ -1224,13 +1279,16 @@ class HiringAdapter:
                         "vacancy_title": title,
                         "location": record.get("location"),
                         "valid_through": _iso_date(record.get("valid_through")),
-                        "active": True,
-                        "employer_is_direct": True,
+                        "active": record_active,
+                        "employer_is_direct": record.get("employer_is_direct") is True,
                         "company_size": record.get("company_size"),
                         "employee_count": record.get("employee_count"),
                         "vacancy_url": source_url,
                         "vacancy_source_domain": vacancy_source_domain,
                         "employer_official_domain": domain,
+                        "source_subtype": source_subtype,
+                        "ats_vendor": ats_vendor,
+                        "workday_tenant": record.get("workday_tenant"),
                     },
                 )
                 candidates.append(OpportunityCandidate(
@@ -1253,6 +1311,9 @@ class HiringAdapter:
                         "vacancy_source_domain": vacancy_source_domain,
                         "employer_official_domain": domain,
                         "employer_is_direct": record.get("employer_is_direct") is True,
+                        "source_subtype": source_subtype,
+                        "ats_vendor": ats_vendor,
+                        "workday_tenant": record.get("workday_tenant"),
                         "employer_is_recruiter": record.get("employer_is_recruiter") is True,
                         "hiring_for_self": record.get("hiring_for_self") is True,
                         "final_employer_name": record.get("final_employer_name"),
@@ -1314,6 +1375,7 @@ class HiringAdapter:
                     "url_traces": list(url_traces),
                     "url_outcomes": list(discovery_state.url_outcomes),
                     "prefetch_traces": list(discovery_state.prefetch_traces),
+                    "size_constraint_policy": size_constraint_policy(request),
                 },
             },
         )
