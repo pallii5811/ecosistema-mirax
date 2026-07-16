@@ -102,8 +102,8 @@ def test_discovery_locked_still_fetches_pending_urls(monkeypatch):
     assert fetch_urls
     assert result.urls_processed > 0
     assert result.discovery_state is not None
-    assert len(result.discovery_state.processed_terminal_urls) == 1
-    assert len(result.discovery_state.retryable_urls) == 1
+    assert len(result.discovery_state.processed_terminal_urls) == 2
+    assert len(result.discovery_state.retryable_urls) == 0
 
 
 def test_priority_queue_puts_ats_before_aggregators():

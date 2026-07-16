@@ -27,8 +27,10 @@ from .hiring_budget import (
     encode_discovery_cursor,
     load_discovery_state,
     reconcile_hiring_url_queue,
+    hiring_provider_exhausted,
     url_outcomes_map,
 )
+from .hiring_retry_policy import apply_retry_policy
 from .hiring_qualification import (
     QUALIFICATION_VALIDATOR_EPOCH,
     apply_first_party_ats_metadata,
@@ -363,12 +365,22 @@ def _normalize_rejection_code(code: str) -> str:
     return mapping.get(code, code or "PARSE_FAILED")
 
 
+def _network_exception_rejection(exc: Exception) -> str:
+    text = f"{exc.__class__.__name__} {exc}".casefold()
+    if "timeout" in text:
+        return "FETCH_TIMEOUT"
+    if any(token in text for token in ("gaierror", "dns", "name resolution")):
+        return "DNS_ERROR"
+    if any(token in text for token in ("connect", "connection", "reset")):
+        return "CONNECTION_RESET"
+    return "FETCH_BLOCKED"
+
+
 _CXS_TERMINAL_FAILURE_CODES = frozenset({
     "WORKDAY_CXS_HTTP_403",
     "WORKDAY_CXS_HTTP_404",
     "WORKDAY_CXS_HTTP_422",
     "WORKDAY_CXS_NOT_JSON",
-    "WORKDAY_CXS_FETCH_ERROR",
     "WORKDAY_CXS_EMPTY",
 })
 
@@ -488,14 +500,15 @@ def _append_url_outcome(state: HiringDiscoveryState, outcome: Mapping[str, Any])
     canonical = canonical_url_key(outcome.get("canonical_url") or outcome.get("url"))
     if not canonical:
         return
+    normalized_outcome = apply_retry_policy(outcome)
     rows = [dict(item) for item in state.url_outcomes if isinstance(item, Mapping)]
     for index, item in enumerate(rows):
         key = canonical_url_key(item.get("canonical_url") or item.get("url"))
         if key == canonical:
-            rows[index] = dict(outcome)
+            rows[index] = normalized_outcome
             state.url_outcomes = tuple(rows)
             return
-    rows.append(dict(outcome))
+    rows.append(normalized_outcome)
     state.url_outcomes = tuple(rows)
 
 
@@ -751,6 +764,8 @@ async def _default_hiring_provider(
         async def _prefetch_ats(item: Mapping[str, Any]) -> None:
             url = str(item.get("url") or "")
             prior = outcomes_by_url.get(canonical_url_key(url)) or {}
+            if str(prior.get("retry_strategy") or "") == "official_html_structured":
+                return
             active_refetch = str(prior.get("rejection_code") or "") == "ACTIVE_STATUS_REFETCH_REQUIRED"
             if not url or (item.get("is_revalidation") and not active_refetch) or item.get("prefetch_accept") is False:
                 return
@@ -844,6 +859,16 @@ async def _default_hiring_provider(
                 _update_retry_queue(state, url, "PENDING", is_retry=is_retry)
                 continue
             domain_active[host] = domain_active.get(host, 0) + 1
+            attempt_at = datetime.now(timezone.utc).isoformat()
+            base_outcome["last_attempt_at"] = attempt_at
+            base_outcome["fetch_attempt_count"] = int(prior_outcome.get("fetch_attempt_count") or 0) + 1
+            if is_retry:
+                base_outcome["retry_attempt_count"] = int(prior_outcome.get("retry_attempt_count") or 0) + 1
+                strategy = str(prior_outcome.get("retry_strategy") or "same_provider_transient")
+                attempted = list(prior_outcome.get("fallback_strategies_attempted") or ())
+                if strategy not in attempted:
+                    attempted.append(strategy)
+                base_outcome["fallback_strategies_attempted"] = attempted
             query = str(item.get("query") or "")
             query_source = str(item.get("query_source") or "unknown")
             stage_timings: Dict[str, float] = {}
@@ -883,7 +908,9 @@ async def _default_hiring_provider(
                         continue
                     html = response.text[:2_000_000]
                     t_cxs0 = __import__("time").monotonic()
-                    if prior_cxs and str(prior_cxs.get("cxs_failure_code") or "") in _CXS_TERMINAL_FAILURE_CODES:
+                    if str(prior_outcome.get("retry_strategy") or "") == "official_html_structured":
+                        structured_json, cxs_forensic = None, dict(prior_cxs)
+                    elif prior_cxs and str(prior_cxs.get("cxs_failure_code") or "") in _CXS_TERMINAL_FAILURE_CODES:
                         structured_json, cxs_forensic = None, dict(prior_cxs)
                     elif prior_cxs and str(prior_cxs.get("cxs_failure_code") or "") == "WORKDAY_CXS_URL_UNRESOLVED":
                         structured_json, cxs_forensic = await _fetch_ats_structured_json(client, url, html)
@@ -1015,10 +1042,16 @@ async def _default_hiring_provider(
                 traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
                 _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure", "fetch_success": False})
                 _update_retry_queue(state, url, rejection, is_retry=is_retry)
-            except Exception:
-                rejection = "FETCH_BLOCKED"
+            except Exception as exc:
+                rejection = _network_exception_rejection(exc)
                 traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
-                _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure", "fetch_success": False})
+                _append_url_outcome(state, {
+                    **base_outcome,
+                    "rejection_code": rejection,
+                    "url_state": "retryable_parser_failure",
+                    "fetch_success": False,
+                    "fetch_error": exc.__class__.__name__,
+                })
                 _update_retry_queue(state, url, rejection, is_retry=is_retry)
             if (is_retry or is_active_refetch) and traces and traces[-1].get("rejection_code") == "ACCEPTED":
                 _update_retry_queue(state, url, "ACCEPTED", is_retry=True)
@@ -1033,11 +1066,9 @@ async def _default_hiring_provider(
     actual_cost = max(0.0, round(after_cost - before_cost, 6))
     if actual_cost <= 0 and queries_run:
         actual_cost = round(queries_run * QUERY_COST_EUR, 6)
-    exhausted = (
-        not state.pending_urls
-        and not state.retry_urls
-        and not state.revalidation_queue
-        and (discovery_locked or state.query_index >= len(query_pairs))
+    exhausted = hiring_provider_exhausted(
+        state,
+        discovery_exhausted=(discovery_locked or state.query_index >= len(query_pairs)),
     )
     return HiringProviderResult(
         tuple(records),

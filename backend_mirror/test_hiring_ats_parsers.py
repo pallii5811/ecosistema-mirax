@@ -230,8 +230,9 @@ def test_stale_vacancy_rejected():
 
 
 def test_retryable_failures_requeue_hard_rejects_do_not():
-    assert classify_failure_for_retry("JAVASCRIPT_SHELL")
-    assert classify_failure_for_retry("JSONLD_JOBPOSTING_MISSING")
+    assert classify_failure_for_retry("FETCH_TIMEOUT")
+    assert not classify_failure_for_retry("JAVASCRIPT_SHELL")
+    assert not classify_failure_for_retry("JSONLD_JOBPOSTING_MISSING")
     assert not classify_failure_for_retry("LISTING_PAGE")
     assert not classify_failure_for_retry("RECRUITER_FINAL_EMPLOYER_UNRESOLVED")
 

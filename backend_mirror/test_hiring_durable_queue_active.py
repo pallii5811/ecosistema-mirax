@@ -218,6 +218,7 @@ def test_failed_active_refetch_moves_from_revalidation_to_technical_retry():
             "active": None,
             "cxs_failure_code": "WORKDAY_CXS_HTTP_403",
             "cxs_attempt_count": 1,
+            "available_fallback_strategies": ["official_html_structured"],
         },),
     )
     summary = reconcile_hiring_url_queue(state)

@@ -18,7 +18,10 @@ DOMAIN_CAP_EUR = 0.025
 QUERY_COST_EUR = 0.005
 QUERIES_PER_BATCH = 4
 URLS_PER_BATCH = 24
-TERMINAL_URL_STATES = frozenset({"accepted", "rejected_final", "duplicate", "duplicate_employer"})
+TERMINAL_URL_STATES = frozenset({
+    "accepted", "rejected_final", "rejected_final_technical_exhausted",
+    "duplicate", "duplicate_employer",
+})
 
 
 def canonical_url_key(value: Any) -> str:
@@ -178,6 +181,8 @@ def reconcile_hiring_url_queue(state: HiringDiscoveryState) -> dict[str, int]:
     Legacy parser successes without active-status provenance require one refetch;
     a historical scalar offset can never turn them (or unseen outcomes) terminal.
     """
+    from .hiring_retry_policy import apply_retry_policy
+
     unique_seen: list[str] = []
     seen_set: set[str] = set()
     for value in state.seen_urls:
@@ -197,6 +202,7 @@ def reconcile_hiring_url_queue(state: HiringDiscoveryState) -> dict[str, int]:
     rewritten: list[dict[str, Any]] = []
     for item in state.url_outcomes:
         row = dict(item)
+        active_refetch_required = False
         key = canonical_url_key(row.get("canonical_url") or row.get("url"))
         if not key:
             continue
@@ -238,10 +244,25 @@ def reconcile_hiring_url_queue(state: HiringDiscoveryState) -> dict[str, int]:
             })
             revalidation.add(key)
             retryable.add(key)
-        elif str(row.get("url_state") or "") in TERMINAL_URL_STATES:
+            active_refetch_required = True
+
+        if active_refetch_required:
+            row.update({
+                "retryable": True,
+                "retry_strategy": "active_status_refetch",
+                "retry_attempt_count": int(row.get("retry_attempt_count") or 0),
+                "max_retry_attempts": 1,
+                "terminal_after_reason": None,
+            })
+        else:
+            row = apply_retry_policy(row)
+
+        if str(row.get("url_state") or "") in TERMINAL_URL_STATES:
             terminal.add(key)
-        elif str(row.get("url_state") or "").startswith("retryable"):
+        elif bool(row.get("retryable")) and str(row.get("url_state") or "").startswith("retryable"):
             retryable.add(key)
+        else:
+            retryable.discard(key)
         rewritten.append(row)
 
     terminal.intersection_update(seen_set)
@@ -279,3 +300,20 @@ def reconcile_hiring_url_queue(state: HiringDiscoveryState) -> dict[str, int]:
         "duplicates": len(state.seen_urls) - len(unique_seen),
         "reconciliation_total": len(terminal) + len(retryable) + len(pending),
     }
+
+
+def has_executable_retry_work(state: HiringDiscoveryState) -> bool:
+    """Retry URL presence is not evidence of executable provider work."""
+    reconcile_hiring_url_queue(state)
+    outcomes = url_outcomes_map(state)
+    return any(bool(outcomes.get(canonical_url_key(url), {}).get("retryable")) for url in state.retryable_urls)
+
+
+def hiring_provider_exhausted(state: HiringDiscoveryState, *, discovery_exhausted: bool) -> bool:
+    reconcile_hiring_url_queue(state)
+    return bool(
+        discovery_exhausted
+        and not state.pending_urls
+        and not state.revalidation_queue
+        and not has_executable_retry_work(state)
+    )
