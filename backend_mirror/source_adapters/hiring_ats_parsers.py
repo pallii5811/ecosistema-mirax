@@ -30,7 +30,28 @@ _JS_SHELL_RE = re.compile(
 )
 _WORKDAY_TENANT_RE = re.compile(r"\"tenant\"\s*:\s*\"([^\"]+)\"", re.I)
 _WORKDAY_SITE_RE = re.compile(r"\"siteId\"\s*:\s*\"([^\"]+)\"", re.I)
+_WORKDAY_OUTAGE_RE = re.compile(r"/wday/drs/outage\?t=([^&\"']+)&s=([^&\"']+)", re.I)
 _LOCALE_RE = re.compile(r"^[a-z]{2}(?:-[a-z]{2})?$", re.I)
+_REQUISITION_RE = re.compile(r"(?:_r\d+|_jr-?\d+|_req-?\d+|_\d{5,}|r-\d+)$", re.I)
+
+# Deterministic Workday tenant -> corporate domain (never invent arbitrary .com).
+_WORKDAY_TENANT_CORPORATE_DOMAINS: Mapping[str, str] = {
+    "airliquidehr": "airliquide.com",
+    "airliquide": "airliquide.com",
+    "solenis": "solenis.com",
+    "lyreco": "lyreco.it",
+    "teamsystem": "teamsystem.com",
+    "gsk": "gsk.com",
+    "ing": "ing.it",
+    "convatec": "convatec.com",
+    "moog": "moog.com",
+    "otis": "otis.com",
+    "jj": "jnj.com",
+    "bdrthermea": "bdrthermea.com",
+    "dedalus": "dedalus.com",
+    "mango": "mango.com",
+    "ttiemea": "tti.com",
+}
 
 RETRYABLE_FAILURE_CODES = frozenset({
     "FETCH_TIMEOUT",
@@ -40,6 +61,13 @@ RETRYABLE_FAILURE_CODES = frozenset({
     "JSONLD_JOBPOSTING_MISSING",
     "ATS_UNSUPPORTED",
     "PARSE_FAILED",
+    "WORKDAY_CXS_HTTP_403",
+    "WORKDAY_CXS_HTTP_404",
+    "WORKDAY_CXS_HTTP_422",
+    "WORKDAY_CXS_NOT_JSON",
+    "WORKDAY_CXS_FETCH_ERROR",
+    "WORKDAY_CXS_URL_UNRESOLVED",
+    "WORKDAY_CXS_EMPTY",
 })
 
 HARD_REJECT_CODES = frozenset({
@@ -141,7 +169,8 @@ def _normalize_record(
     }
 
 
-def _workday_path_parts(source_url: str) -> Optional[Tuple[str, str, str]]:
+def _workday_path_parts(source_url: str) -> Optional[Tuple[str, str, str, str]]:
+    """Return (tenant_hint, career_site, job_path, requisition_id) from a Workday vacancy URL."""
     parsed = urlparse(source_url)
     segments = [item for item in parsed.path.split("/") if item]
     if "job" not in segments:
@@ -155,7 +184,7 @@ def _workday_path_parts(source_url: str) -> Optional[Tuple[str, str, str]]:
     else:
         site = prefix[0]
     job_segments = segments[job_idx + 1:]
-    stop_words = {"apply", "usemylastapplication", "applymanually", "login"}
+    stop_words = {"apply", "usemylastapplication", "applymanually", "login", "autofillwithresume"}
     trimmed: List[str] = []
     for segment in job_segments:
         if segment.lower() in stop_words:
@@ -163,45 +192,68 @@ def _workday_path_parts(source_url: str) -> Optional[Tuple[str, str, str]]:
         trimmed.append(segment)
     if not trimmed:
         return None
-    if len(trimmed) >= 2:
-        job_path = f"{trimmed[0]}/{trimmed[1]}"
-    else:
-        job_path = trimmed[0]
+    job_path = "/".join(trimmed)
+    requisition_id = ""
+    tail = trimmed[-1]
+    req_match = _REQUISITION_RE.search(tail)
+    if req_match:
+        requisition_id = req_match.group(0).lstrip("_-")
     host_prefix = (parsed.hostname or "").split(".")[0].lower()
-    tenant = host_prefix.replace("hr", "").replace("careers", "").replace("jobs", "")
-    return tenant or host_prefix, site, job_path
+    # Keep the Workday tenant as the hostname label (airliquidehr, not airliquide).
+    tenant = host_prefix
+    return tenant, site, job_path, requisition_id
+
+
+def inspect_workday_url(source_url: str, html: str = "") -> dict[str, Any]:
+    """Forensic breakdown used by CXS fetch traces."""
+    parsed = urlparse(source_url)
+    parts = _workday_path_parts(source_url)
+    tenant = ""
+    site = ""
+    job_path = ""
+    requisition_id = ""
+    if parts:
+        tenant, site, job_path, requisition_id = parts
+    outage = _WORKDAY_OUTAGE_RE.search(html or "")
+    if outage:
+        tenant = outage.group(1)
+        site = outage.group(2)
+    for match in _WORKDAY_TENANT_RE.finditer(html or ""):
+        tenant = match.group(1)
+    for match in _WORKDAY_SITE_RE.finditer(html or ""):
+        site = match.group(1)
+    return {
+        "original_url": source_url,
+        "host": parsed.hostname or "",
+        "tenant": tenant,
+        "career_site": site,
+        "job_path": job_path,
+        "requisition_id": requisition_id,
+    }
 
 
 def build_workday_cxs_url(source_url: str, html: str = "") -> Optional[str]:
-    parts = _workday_path_parts(source_url)
-    if not parts:
+    meta = inspect_workday_url(source_url, html)
+    tenant = str(meta.get("tenant") or "")
+    site = str(meta.get("career_site") or "")
+    job_path = str(meta.get("job_path") or "")
+    if not tenant or not site or not job_path:
         return None
-    tenant_hint, site, job_path = parts
-    tenants = [tenant_hint]
-    for match in _WORKDAY_TENANT_RE.finditer(html or ""):
-        tenants.insert(0, match.group(1))
-    for site_match in _WORKDAY_SITE_RE.finditer(html or ""):
-        site = site_match.group(1)
     host = urlparse(source_url).netloc
-    seen: set[str] = set()
-    for tenant in tenants:
-        if not tenant or tenant in seen:
-            continue
-        seen.add(tenant)
-        yield_candidate = f"https://{host}/wday/cxs/{tenant}/{site}/job/{job_path}"
-        return yield_candidate
-    return None
+    return f"https://{host}/wday/cxs/{tenant}/{site}/job/{job_path}"
 
 
 def _workday_corporate_guess(source_url: str) -> str:
     host = normalize_domain(urlparse(source_url if "://" in source_url else f"https://{source_url}").hostname or "")
     prefix = (host.split(".")[0] if host else "").lower()
+    if prefix in _WORKDAY_TENANT_CORPORATE_DOMAINS:
+        return _WORKDAY_TENANT_CORPORATE_DOMAINS[prefix]
     for suffix in ("externalcareer", "external", "careers", "jobs", "hr"):
-        if prefix.endswith(suffix) and len(prefix) > len(suffix):
-            prefix = prefix[: -len(suffix)]
-            break
-    if prefix and len(prefix) >= 3 and not prefix.isdigit():
-        return prefix
+        stripped = prefix
+        if stripped.endswith(suffix) and len(stripped) > len(suffix):
+            stripped = stripped[: -len(suffix)]
+            if stripped in _WORKDAY_TENANT_CORPORATE_DOMAINS:
+                return _WORKDAY_TENANT_CORPORATE_DOMAINS[stripped]
     return ""
 
 
@@ -219,25 +271,67 @@ def parse_workday_json(payload: Mapping[str, Any], source_url: str) -> List[Dict
     location = _text(info.get("location") or info.get("jobRequisitionLocation") or payload.get("location"))
     if isinstance(info.get("locationsText"), str):
         location = location or _text(info.get("locationsText"))
-    published_at = _text(info.get("postedOn") or info.get("startDate") or info.get("datePosted") or payload.get("postedOn"))
+    additional = info.get("additionalLocations")
+    if isinstance(additional, Sequence) and not isinstance(additional, (str, bytes)):
+        extras = [_text(item) for item in additional if _text(item)]
+        if extras:
+            location = ", ".join([part for part in (location, *extras) if part])
+    published_at = _text(
+        info.get("postedOn")
+        or info.get("startDate")
+        or info.get("datePosted")
+        or payload.get("postedOn")
+        or payload.get("startDate")
+    )
     description = _text(info.get("jobDescription") or payload.get("jobDescription"))
-    organization_website = _text(organization.get("sameAs") or organization.get("url") or info.get("externalUrl") or payload.get("externalUrl"))
-    if not organization_website and detect_ats_vendor(source_url) == "workday":
-        guess = _workday_corporate_guess(source_url)
-        if guess:
-            organization_website = f"https://{guess}.com"
+    organization_website = _text(
+        organization.get("sameAs")
+        or organization.get("url")
+        or info.get("externalUrl")
+        or payload.get("externalUrl")
+    )
+    corporate = _workday_corporate_guess(source_url)
+    if corporate and (not organization_website or "myworkdayjobs.com" in organization_website.lower()):
+        organization_website = f"https://{corporate}"
     valid_through = _text(info.get("validThrough") or payload.get("validThrough"))
-    return [_normalize_record(
+    requisition_id = _text(info.get("jobReqId") or info.get("id") or payload.get("jobReqId"))
+    active = info.get("canApply")
+    external_url = _text(info.get("externalUrl") or payload.get("externalUrl") or source_url)
+    record = _normalize_record(
         employer_name=employer_name,
         title=title,
         location=location,
         published_at=published_at,
-        source_url=source_url,
+        source_url=external_url or source_url,
         extraction_method="workday_cxs_json",
         description=description,
         organization_website=organization_website,
         valid_through=valid_through,
-    )]
+    )
+    record["requisition_id"] = requisition_id
+    record["external_url"] = external_url
+    record["additional_locations"] = list(additional) if isinstance(additional, list) else []
+    record["start_date"] = _text(info.get("startDate") or published_at)
+    if active is not None:
+        record["active"] = bool(active)
+    if record.get("employer_official_domain") and "myworkdayjobs.com" in str(record.get("employer_official_domain") or "").lower():
+        if corporate:
+            record["employer_official_domain"] = corporate
+            record["website"] = f"https://{corporate}"
+            record["official_domain_verified"] = True
+            record["domain_verification_evidence"] = list(dict.fromkeys([
+                *(record.get("domain_verification_evidence") or []),
+                "workday_tenant_corporate_map",
+            ]))
+        else:
+            record["employer_official_domain"] = ""
+            record["official_domain_verified"] = False
+    record["employer_resolution_method"] = (
+        "hiring_organization_same_as"
+        if organization.get("sameAs")
+        else ("workday_tenant_corporate_map" if corporate else "hiring_organization_name")
+    )
+    return [record]
 
 
 def parse_teamtailor_json(payload: Mapping[str, Any], source_url: str) -> List[Dict[str, Any]]:

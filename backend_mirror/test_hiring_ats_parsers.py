@@ -16,6 +16,7 @@ from backend_mirror.source_adapters.hiring_ats_parsers import (
     parse_vacancy_html,
     parse_workday_json,
 )
+from backend_mirror.source_adapters.hiring_qualification import vacancy_geography_matches, vacancy_role_matches_sales
 from backend_mirror.source_adapters.hiring_recruiter import enrich_record_with_recruiter_fields
 from backend_mirror.source_adapters.hiring_url_queue import classify_url_prefetch
 
@@ -70,9 +71,58 @@ def test_workday_cxs_parser_extracts_employer_role_location():
 def test_workday_cxs_url_builder():
     url = "https://airliquidehr.wd3.myworkdayjobs.com/en-us/airliquideexternalcareer/job/italy-moncalieri/commerciale---lombardia-nord_r10094218/apply"
     api = build_workday_cxs_url(url)
-    assert api
-    assert "/wday/cxs/" in api
-    assert "commerciale---lombardia-nord_r10094218" in api
+    assert api == (
+        "https://airliquidehr.wd3.myworkdayjobs.com/wday/cxs/airliquidehr/"
+        "airliquideexternalcareer/job/italy-moncalieri/commerciale---lombardia-nord_r10094218"
+    )
+
+
+def test_workday_cxs_url_uses_outage_tenant_from_html():
+    url = "https://airliquidehr.wd3.myworkdayjobs.com/en-us/airliquideexternalcareer/job/commerciale---lombardia-nord_r10094218"
+    html = '<script src="/wday/drs/outage?t=airliquidehr&s=airliquideexternalcareer"></script>'
+    api = build_workday_cxs_url(url, html)
+    assert "/wday/cxs/airliquidehr/airliquideexternalcareer/job/" in api
+
+
+def test_workday_cxs_parser_keeps_sales_lombardia_and_corporate_domain():
+    payload = {
+        "jobPostingInfo": {
+            "title": "Commerciale Junior B2B - Lombardia",
+            "location": "Milano",
+            "additionalLocations": ["Bergamo"],
+            "startDate": "2026-06-30",
+            "jobDescription": "Solenis cerca un commerciale junior B2B in Lombardia. Candidati.",
+            "externalUrl": "https://solenis.wd1.myworkdayjobs.com/en-us/solenis/job/commerciale-junior-b2b--lombardia-_r0028690",
+            "jobReqId": "R0028690",
+            "canApply": True,
+            "hiringOrganization": {"name": "Solenis", "url": ""},
+        }
+    }
+    url = "https://solenis.wd1.myworkdayjobs.com/en-us/solenis/job/commerciale-junior-b2b--lombardia-_r0028690/apply/applymanually"
+    records = parse_workday_json(payload, url)
+    assert len(records) == 1
+    record = records[0]
+    assert "Commerciale" in record["vacancy_title"]
+    assert "Milano" in record["location"] and "Bergamo" in record["location"]
+    assert record["employer_official_domain"] == "solenis.com"
+    assert "myworkdayjobs.com" not in record["employer_official_domain"]
+    assert record["requisition_id"] == "R0028690"
+    request = _sales_request()
+    valid, rejection = _validate_record(enrich_record_with_recruiter_fields(record), request, date(2026, 7, 15))
+    assert valid is True, rejection
+    assert vacancy_geography_matches(
+        location=record["location"],
+        title=record["vacancy_title"],
+        geographies=("Lombardia",),
+    ) is True
+    assert vacancy_role_matches_sales(title=record["vacancy_title"], description=record["description"])[0] is True
+
+
+def test_workday_cxs_failure_codes_are_precise():
+    from backend_mirror.source_adapters.hiring import _workday_parse_failure_code
+    assert _workday_parse_failure_code({"cxs_failure_code": "WORKDAY_CXS_HTTP_404"}, "JAVASCRIPT_SHELL") == "WORKDAY_CXS_HTTP_404"
+    assert _workday_parse_failure_code({"cxs_failure_code": "WORKDAY_CXS_NOT_JSON"}, "PARSE_FAILED") == "WORKDAY_CXS_NOT_JSON"
+    assert _workday_parse_failure_code({}, "JAVASCRIPT_SHELL") == "JAVASCRIPT_SHELL"
 
 
 def test_javascript_shell_not_treated_as_success_without_records():

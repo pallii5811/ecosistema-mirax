@@ -347,8 +347,14 @@ def _normalize_rejection_code(code: str) -> str:
     return mapping.get(code, code or "PARSE_FAILED")
 
 
-async def _fetch_ats_structured_json(client: Any, url: str, html: str) -> Optional[Mapping[str, Any]]:
+async def _fetch_ats_structured_json(
+    client: Any,
+    url: str,
+    html: str,
+) -> Tuple[Optional[Mapping[str, Any]], Dict[str, Any]]:
     import asyncio
+
+    from .hiring_ats_parsers import inspect_workday_url
 
     headers = {
         "Accept": "application/json",
@@ -356,10 +362,16 @@ async def _fetch_ats_structured_json(client: Any, url: str, html: str) -> Option
     }
     candidates: List[str] = []
     vendor = detect_ats_vendor(url)
+    forensic: Dict[str, Any] = {"ats_vendor": vendor, "cxs_attempts": []}
     if vendor == "workday":
+        meta = inspect_workday_url(url, html)
+        forensic.update(meta)
         api = build_workday_cxs_url(url, html)
         if api:
             candidates.append(api)
+            forensic["cxs_url"] = api
+        else:
+            forensic["cxs_failure_code"] = "WORKDAY_CXS_URL_UNRESOLVED"
     elif vendor == "teamtailor":
         api = build_teamtailor_json_url(url)
         if api:
@@ -369,20 +381,57 @@ async def _fetch_ats_structured_json(client: Any, url: str, html: str) -> Option
         if api:
             candidates.append(api)
     for api in candidates:
+        attempt: Dict[str, Any] = {"cxs_url": api}
         try:
             response = await asyncio.wait_for(client.get(api, headers=headers), timeout=10.0)
-            if response.status_code != 200:
+            attempt["http_status"] = response.status_code
+            attempt["content_type"] = str(response.headers.get("content-type") or "")
+            attempt["response_bytes"] = len(response.content or b"")
+            attempt["final_url"] = str(response.url)
+            forensic["cxs_attempts"].append(attempt)
+            forensic["cxs_http_status"] = response.status_code
+            forensic["cxs_content_type"] = attempt["content_type"]
+            forensic["cxs_response_bytes"] = attempt["response_bytes"]
+            forensic["cxs_final_url"] = attempt["final_url"]
+            if response.status_code == 404:
+                forensic["cxs_failure_code"] = "WORKDAY_CXS_HTTP_404"
                 continue
-            content_type = str(response.headers.get("content-type") or "").lower()
+            if response.status_code == 403:
+                forensic["cxs_failure_code"] = "WORKDAY_CXS_HTTP_403"
+                continue
+            if response.status_code != 200:
+                forensic["cxs_failure_code"] = f"WORKDAY_CXS_HTTP_{response.status_code}"
+                continue
+            content_type = attempt["content_type"].lower()
             if "json" not in content_type:
+                forensic["cxs_failure_code"] = "WORKDAY_CXS_NOT_JSON"
+                forensic["json_parse_result"] = "not_json_content_type"
                 continue
             payload = response.json()
             if isinstance(payload, Mapping):
-                return payload
-        except Exception:
+                forensic["json_parse_result"] = "ok"
+                forensic.pop("cxs_failure_code", None)
+                return payload, forensic
+            forensic["cxs_failure_code"] = "WORKDAY_CXS_NOT_JSON"
+            forensic["json_parse_result"] = "non_object_json"
+        except Exception as exc:
+            attempt["error"] = exc.__class__.__name__
+            forensic["cxs_attempts"].append(attempt)
+            forensic["cxs_failure_code"] = "WORKDAY_CXS_FETCH_ERROR"
+            forensic["json_parse_result"] = "exception"
             continue
-    return None
+    if vendor == "workday" and candidates and "cxs_failure_code" not in forensic:
+        forensic["cxs_failure_code"] = "WORKDAY_CXS_EMPTY"
+    return None, forensic
 
+
+def _workday_parse_failure_code(forensic: Mapping[str, Any], parsed_failure: str) -> str:
+    code = str(forensic.get("cxs_failure_code") or "").strip()
+    if code:
+        return code
+    if parsed_failure == "JAVASCRIPT_SHELL":
+        return "JAVASCRIPT_SHELL"
+    return parsed_failure or "JSONLD_JOBPOSTING_MISSING"
 
 def _append_url_outcome(state: HiringDiscoveryState, outcome: Mapping[str, Any]) -> None:
     canonical = str(outcome.get("canonical_url") or outcome.get("url") or "").lower().rstrip("/")
@@ -730,19 +779,33 @@ async def _default_hiring_provider(
                     urls_processed += 1
                     continue
                 html = response.text[:2_000_000]
-                structured_json = await _fetch_ats_structured_json(client, url, html)
+                structured_json, cxs_forensic = await _fetch_ats_structured_json(client, url, html)
+                base_outcome.update({k: v for k, v in cxs_forensic.items() if k != "cxs_attempts"})
+                if cxs_forensic.get("cxs_attempts"):
+                    base_outcome["cxs_attempts"] = list(cxs_forensic["cxs_attempts"])
                 parsed_result = parse_vacancy_html(html, str(response.url), structured_json=structured_json)
                 base_outcome.update({
                     "fetch_success": True,
                     "javascript_shell": parsed_result.javascript_shell,
                     "jsonld_jobposting_count": parsed_result.jsonld_count,
                     "parser_selected": parsed_result.parser_id,
+                    "cxs_used": bool(structured_json),
                 })
                 parsed = [resolve_employer_identity(enrich_record_with_recruiter_fields(row)) for row in parsed_result.records]
                 if not parsed:
-                    rejection = _normalize_rejection_code(parsed_result.failure_code or "PARSE_FAILED")
+                    rejection = _normalize_rejection_code(
+                        _workday_parse_failure_code(cxs_forensic, parsed_result.failure_code or "PARSE_FAILED")
+                        if detect_ats_vendor(url) == "workday"
+                        else (parsed_result.failure_code or "PARSE_FAILED")
+                    )
                     traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
-                    _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure" if classify_failure_for_retry(rejection) else "rejected_final", "parser_result": "empty"})
+                    _append_url_outcome(state, {
+                        **base_outcome,
+                        "rejection_code": rejection,
+                        "url_state": "retryable_parser_failure" if classify_failure_for_retry(rejection) else "rejected_final",
+                        "parser_result": "empty",
+                        "failure_code": rejection,
+                    })
                     _update_retry_queue(state, url, rejection, is_retry=is_retry)
                     if not is_retry:
                         _advance_discovery_offset(state)
