@@ -176,8 +176,12 @@ class _GrowingPoolRunner:
 
     async def __call__(self, **kwargs):
         self.calls.append(kwargs)
-        cap = int(str(kwargs.get("zone") or "15"))
-        return self.pool[:cap]
+        intent = kwargs.get("intent") or {}
+        start = int(intent.get("maps_start_index") or 0)
+        page_size = int(intent.get("maps_page_size") or kwargs.get("zone") or 15)
+        fetch_cap = int(intent.get("maps_fetch_cap") or start + page_size)
+        page = self.pool[start:start + page_size]
+        return [dict(item, _maps_acquired_total=min(len(self.pool), fetch_cap), _maps_provider_page_count=len(page)) for item in page]
 
 
 def test_zero_projected_candidates_do_not_exhaust_when_more_batches_exist() -> None:
@@ -185,21 +189,25 @@ def test_zero_projected_candidates_do_not_exhaust_when_more_batches_exist() -> N
     pool = [{**rejected, "result_index": index, "place_id": f"maps-reject-{index}"} for index in range(15)]
     pool.extend(milano_rows()[:2])
     runner = _GrowingPoolRunner(pool)
-    first = asyncio.run(DigitalAuditAdapter(runner).discover(milano_request(count=5)))
+    first_request = AdapterDiscoveryRequest(**{
+        **milano_request(count=5).__dict__,
+        "technical_filters": {**dict(milano_request(count=5).technical_filters), "per_round_raw_cap": 15},
+    })
+    first = asyncio.run(DigitalAuditAdapter(runner).discover(first_request))
     assert first.candidates == ()
     assert first.exhaustion.exhausted is False
-    assert first.exhaustion.reason == "batch_cap_reached"
+    assert first.exhaustion.reason == "page_complete"
     assert first.exhaustion.next_cursor is not None
     assert runner.calls[0]["zone"] == "15"
 
     second = asyncio.run(DigitalAuditAdapter(runner).discover(
         AdapterDiscoveryRequest(**{
-            **milano_request(count=5).__dict__,
+            **first_request.__dict__,
             "cursor": first.exhaustion.next_cursor,
         })
     ))
     assert len(second.candidates) >= 1
-    assert runner.calls[1]["zone"] == "25"
+    assert runner.calls[1]["zone"] == "30"
 
 
 def test_orchestrator_continues_until_qualified() -> None:
@@ -212,7 +220,12 @@ def test_orchestrator_continues_until_qualified() -> None:
     async def run_once():
         adapter = DigitalAuditAdapter(runner)
         registry = __import__("backend_mirror.source_adapters.catalog", fromlist=["SourceCapabilityRegistry"]).SourceCapabilityRegistry((adapter,))
-        return await UniversalSourceOrchestrator(registry).run(milano_request(count=1))
+        req = milano_request(count=1)
+        req = AdapterDiscoveryRequest(**{
+            **req.__dict__,
+            "technical_filters": {**dict(req.technical_filters), "per_round_raw_cap": 15},
+        })
+        return await UniversalSourceOrchestrator(registry).run(req)
 
     result = asyncio.run(run_once())
     assert result.progress.qualified_count == 1
@@ -226,18 +239,20 @@ def test_requested_count_does_not_set_raw_cap_to_five() -> None:
     assert batch == 15
 
 
-def test_raw_budget_reached_is_not_provider_exhaustion() -> None:
+def test_raw_safety_cap_is_not_provider_exhaustion() -> None:
     rejected = {**milano_rows()[2], "place_id": "maps-reject"}
     pool = [{**rejected, "result_index": index, "place_id": f"maps-reject-{index}"} for index in range(30)]
     runner = _GrowingPoolRunner(pool)
     request = milano_request(count=5)
     request = AdapterDiscoveryRequest(**{
         **request.__dict__,
-        "technical_filters": {**dict(request.technical_filters), "raw_candidate_budget": 30, "maps_batch_size": 15},
+        "technical_filters": {**dict(request.technical_filters), "maximum_safety_raw_cap": 5, "per_round_raw_cap": 5},
     })
     first = asyncio.run(DigitalAuditAdapter(runner).discover(request))
-    assert first.exhaustion.reason == "batch_cap_reached"
-    assert runner.calls[0]["zone"] == "15"
+    assert first.exhaustion.reason == "raw_safety_cap_reached"
+    assert first.exhaustion.authoritative is False
+    assert first.exhaustion.next_cursor is not None
+    assert runner.calls[0]["zone"] == "5"
 
 
 def test_orchestrator_terminates_at_qualified_five() -> None:
@@ -333,9 +348,14 @@ def test_deduplication_blocks_repeated_domains_across_batch_keys() -> None:
 
 def test_exhaustion_is_explicit_when_maps_returns_less_than_fetch_cap() -> None:
     runner = _BatchRunner([milano_rows()[2:3]])
-    result = asyncio.run(DigitalAuditAdapter(runner).discover(milano_request(count=5)))
+    request = milano_request(count=5)
+    request = AdapterDiscoveryRequest(**{
+        **request.__dict__,
+        "technical_filters": {**dict(request.technical_filters), "digital_audit_partitions": [{"category": "imprese di pulizia", "location": "Milano"}]},
+    })
+    result = asyncio.run(DigitalAuditAdapter(runner).discover(request))
     assert result.exhaustion.exhausted is True
-    assert result.exhaustion.reason == "provider_exhausted"
+    assert result.exhaustion.reason == "provider_exhausted_authoritative"
 
 
 def test_worker_tech_stack_labels_confirm_signals() -> None:

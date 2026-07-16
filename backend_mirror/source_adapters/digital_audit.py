@@ -7,7 +7,13 @@ projection and truthful exhaustion metadata.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+import math
+import os
 import re
+import zlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -52,9 +58,51 @@ DEFAULT_MAPS_BATCH_SIZE = 15
 DEFAULT_MAPS_BATCH_GROWTH = 10
 DEFAULT_MAPS_MAX_FETCH = 200
 DEFAULT_RAW_CANDIDATE_BUDGET_MIN = 30
-DEFAULT_RAW_CANDIDATE_BUDGET_MAX = 50
+DEFAULT_PER_ROUND_RAW_CAP = 50
+DEFAULT_MAXIMUM_SAFETY_RAW_CAP = 100_000
+DEFAULT_YIELD_FLOOR = 0.05
+DEFAULT_ADAPTIVE_MARGIN = 1.25
 _CURSOR_PREFIX_V1 = "da:v1:"
-_CURSOR_PREFIX = "da:v2:"
+_CURSOR_PREFIX_V2 = "da:v2:"
+_CURSOR_PREFIX = "da:v3:"
+
+_CATEGORY_PARTITION_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "imprese di pulizia": (
+        "imprese di pulizia",
+        "impresa di pulizie",
+        "servizi di pulizia",
+    ),
+}
+
+_GEOGRAPHY_PARTITIONS: Dict[str, Tuple[str, ...]] = {
+    "milano": (
+        "Milano", "Milano Centro", "Milano Nord", "Milano Sud", "Milano Est", "Milano Ovest",
+        "Milano Niguarda", "Milano Lambrate", "Milano Baggio",
+    ),
+    "lombardia": (
+        "Milano", "Bergamo", "Brescia", "Monza", "Como", "Varese", "Pavia", "Cremona",
+        "Lecco", "Lodi", "Mantova", "Sondrio",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class DigitalAuditCursorState:
+    requested_qualified_count: int
+    cumulative_raw_unique: int = 0
+    cumulative_audited: int = 0
+    cumulative_qualified_unique: int = 0
+    processed_identity_hashes: Tuple[str, ...] = ()
+    provider_offset: int = 0
+    partition_index: int = 0
+    observed_yield: float = 0.0
+    adaptive_raw_target: int = 0
+    termination_state: str = "active"
+
+    @property
+    def processed_place_ids_ref(self) -> str:
+        payload = "\n".join(self.processed_identity_hashes).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest() if payload else "empty"
 
 _CANONICAL_CATEGORY_ALIASES: Dict[str, frozenset[str]] = {
     "imprese di pulizia": frozenset({
@@ -188,14 +236,75 @@ def _gtm_present(raw: Mapping[str, Any], audit: Mapping[str, Any], labels: set[s
     return "GTM" in labels
 
 
-def raw_candidate_budget_for(requested_qualified: int, technical_filters: Mapping[str, Any]) -> int:
-    explicit = technical_filters.get("raw_candidate_budget")
+def per_round_raw_cap_for(technical_filters: Mapping[str, Any]) -> int:
+    explicit = technical_filters.get("per_round_raw_cap")
     if explicit is not None:
         try:
-            return min(DEFAULT_RAW_CANDIDATE_BUDGET_MAX, max(DEFAULT_RAW_CANDIDATE_BUDGET_MIN, int(explicit)))
+            return min(DEFAULT_MAPS_MAX_FETCH, max(1, int(explicit)))
         except (TypeError, ValueError):
             pass
-    return min(DEFAULT_RAW_CANDIDATE_BUDGET_MAX, max(DEFAULT_RAW_CANDIDATE_BUDGET_MIN, requested_qualified * 6))
+    try:
+        configured = int(os.getenv("MIRAX_DIGITAL_AUDIT_PER_ROUND_RAW_CAP", str(DEFAULT_PER_ROUND_RAW_CAP)))
+    except ValueError:
+        configured = DEFAULT_PER_ROUND_RAW_CAP
+    return min(DEFAULT_MAPS_MAX_FETCH, max(1, configured))
+
+
+def maximum_safety_raw_cap_for(
+    requested_qualified: int,
+    technical_filters: Mapping[str, Any],
+) -> int:
+    explicit = technical_filters.get("maximum_safety_raw_cap")
+    if explicit is not None:
+        try:
+            return max(requested_qualified, int(explicit))
+        except (TypeError, ValueError):
+            pass
+    try:
+        configured = int(os.getenv(
+            "MIRAX_DIGITAL_AUDIT_MAX_CUMULATIVE_RAW",
+            str(DEFAULT_MAXIMUM_SAFETY_RAW_CAP),
+        ))
+    except ValueError:
+        configured = DEFAULT_MAXIMUM_SAFETY_RAW_CAP
+    return max(requested_qualified, configured)
+
+
+def adaptive_raw_target_for(
+    *,
+    requested_qualified: int,
+    cumulative_qualified: int,
+    cumulative_raw: int,
+    technical_filters: Mapping[str, Any],
+) -> Tuple[int, float]:
+    try:
+        yield_floor = float(technical_filters.get("configured_yield_floor") or DEFAULT_YIELD_FLOOR)
+    except (TypeError, ValueError):
+        yield_floor = DEFAULT_YIELD_FLOOR
+    try:
+        margin = float(technical_filters.get("adaptive_raw_margin") or DEFAULT_ADAPTIVE_MARGIN)
+    except (TypeError, ValueError):
+        margin = DEFAULT_ADAPTIVE_MARGIN
+    yield_floor = min(1.0, max(0.001, yield_floor))
+    margin = max(1.0, margin)
+    observed_yield = cumulative_qualified / cumulative_raw if cumulative_raw else 0.0
+    remaining = max(0, requested_qualified - cumulative_qualified)
+    estimated_remaining = math.ceil(remaining / max(observed_yield, yield_floor)) if remaining else 0
+    return cumulative_raw + math.ceil(estimated_remaining * margin), observed_yield
+
+
+def raw_candidate_budget_for(requested_qualified: int, technical_filters: Mapping[str, Any]) -> int:
+    """Backward-compatible name for the initial adaptive cumulative target."""
+    target, _ = adaptive_raw_target_for(
+        requested_qualified=requested_qualified,
+        cumulative_qualified=0,
+        cumulative_raw=0,
+        technical_filters=technical_filters,
+    )
+    return min(maximum_safety_raw_cap_for(requested_qualified, technical_filters), max(
+        DEFAULT_RAW_CANDIDATE_BUDGET_MIN,
+        target,
+    ))
 
 
 def maps_batch_size_for(technical_filters: Mapping[str, Any]) -> int:
@@ -206,6 +315,34 @@ def maps_batch_size_for(technical_filters: Mapping[str, Any]) -> int:
         except (TypeError, ValueError):
             pass
     return DEFAULT_MAPS_BATCH_SIZE
+
+
+def _partition_plan(category: str, location: str, technical_filters: Mapping[str, Any]) -> Tuple[Tuple[str, str], ...]:
+    explicit = technical_filters.get("digital_audit_partitions")
+    if isinstance(explicit, list) and explicit:
+        parsed: List[Tuple[str, str]] = []
+        for item in explicit:
+            if not isinstance(item, Mapping):
+                continue
+            item_category = _text(item.get("category")) or category
+            item_location = _text(item.get("location")) or location
+            parsed.append((item_category, item_location))
+        if parsed:
+            return tuple(dict.fromkeys(parsed))
+    canonical_category = _normalize_category_label(category)
+    aliases = _CATEGORY_PARTITION_ALIASES.get(canonical_category, (category,))
+    geographies = _GEOGRAPHY_PARTITIONS.get(_normalize_category_label(location), (location,))
+    return tuple(dict.fromkeys((alias, geography) for geography in geographies for alias in aliases))
+
+
+def _raw_identity_hash(raw: Mapping[str, Any]) -> str:
+    place_id = _text(raw.get("place_id"))
+    maps_url = _text(raw.get("maps_url") or raw.get("google_maps_url"))
+    website = _domain(raw.get("website"))
+    name = _normalize_category_label(_text(raw.get("business_name") or raw.get("name")))
+    address = _normalize_category_label(_text(raw.get("address")))
+    identity = place_id or maps_url or website or f"{name}|{address}"
+    return hashlib.sha256(str(identity).encode("utf-8")).hexdigest()[:20]
 
 
 def _confirmed_signal_values(raw: Mapping[str, Any]) -> Dict[str, str]:
@@ -592,31 +729,87 @@ def _candidate_from_raw(
     return decision.candidate if decision.accepted else None
 
 
-def _parse_cursor(cursor: Optional[DiscoveryCursor]) -> Tuple[int, int, int]:
+def _parse_cursor(cursor: Optional[DiscoveryCursor], *, requested_count: int) -> DigitalAuditCursorState:
     if cursor is None:
-        return 0, 0, 0
+        return DigitalAuditCursorState(requested_qualified_count=requested_count)
     if cursor.value.startswith(_CURSOR_PREFIX):
         payload = cursor.value[len(_CURSOR_PREFIX):]
+        try:
+            decoded = zlib.decompress(base64.urlsafe_b64decode(payload.encode("ascii")))
+            state = json.loads(decoded.decode("utf-8"))
+            if not isinstance(state, Mapping):
+                raise ValueError("cursor payload must be an object")
+            return DigitalAuditCursorState(
+                requested_qualified_count=max(1, int(state.get("requested_qualified_count") or requested_count)),
+                cumulative_raw_unique=max(0, int(state.get("cumulative_raw_unique") or 0)),
+                cumulative_audited=max(0, int(state.get("cumulative_audited") or 0)),
+                cumulative_qualified_unique=max(0, int(state.get("cumulative_qualified_unique") or 0)),
+                processed_identity_hashes=tuple(
+                    dict.fromkeys(str(item) for item in state.get("processed_identity_hashes") or () if str(item))
+                ),
+                provider_offset=max(0, int(state.get("provider_offset") or 0)),
+                partition_index=max(0, int(state.get("partition_index") or 0)),
+                observed_yield=max(0.0, float(state.get("observed_yield") or 0.0)),
+                adaptive_raw_target=max(0, int(state.get("adaptive_raw_target") or 0)),
+                termination_state=str(state.get("termination_state") or "active"),
+            )
+        except (ValueError, TypeError, json.JSONDecodeError, zlib.error, base64.binascii.Error):
+            return DigitalAuditCursorState(requested_qualified_count=requested_count)
+    if cursor.value.startswith(_CURSOR_PREFIX_V2):
+        payload = cursor.value[len(_CURSOR_PREFIX_V2):]
         parts = payload.split(":")
         if len(parts) == 3:
             try:
-                return int(parts[0]), int(parts[1]), int(parts[2])
+                start = int(parts[0])
+                return DigitalAuditCursorState(
+                    requested_qualified_count=requested_count,
+                    cumulative_raw_unique=start,
+                    cumulative_audited=start,
+                    provider_offset=start,
+                    adaptive_raw_target=max(start, int(parts[2])),
+                    termination_state="migrated_v2",
+                )
             except ValueError:
-                return 0, 0, 0
+                return DigitalAuditCursorState(requested_qualified_count=requested_count)
     if cursor.value.startswith(_CURSOR_PREFIX_V1):
         payload = cursor.value[len(_CURSOR_PREFIX_V1):]
         if ":" not in payload:
             return 0, 0, 0
         start_text, _, cap_text = payload.partition(":")
         try:
-            return int(start_text), int(cap_text), 0
+            start = int(start_text)
+            return DigitalAuditCursorState(
+                requested_qualified_count=requested_count,
+                cumulative_raw_unique=start,
+                cumulative_audited=start,
+                provider_offset=start,
+                adaptive_raw_target=max(start, int(cap_text)),
+                termination_state="migrated_v1",
+            )
         except ValueError:
-            return 0, 0, 0
-    return 0, 0, 0
+            return DigitalAuditCursorState(requested_qualified_count=requested_count)
+    return DigitalAuditCursorState(requested_qualified_count=requested_count)
 
 
-def _build_cursor(start_index: int, batch_cap: int, raw_budget: int) -> DiscoveryCursor:
-    return DiscoveryCursor(f"{_CURSOR_PREFIX}{start_index}:{batch_cap}:{raw_budget}", exhausted=False)
+def _build_cursor(state: DigitalAuditCursorState) -> DiscoveryCursor:
+    payload = {
+        "requested_qualified_count": state.requested_qualified_count,
+        "cumulative_raw_unique": state.cumulative_raw_unique,
+        "cumulative_audited": state.cumulative_audited,
+        "cumulative_qualified_unique": state.cumulative_qualified_unique,
+        "processed_identity_hashes": list(state.processed_identity_hashes),
+        "processed_place_ids_ref": state.processed_place_ids_ref,
+        "provider_offset": state.provider_offset,
+        "partition_index": state.partition_index,
+        "observed_yield": round(state.observed_yield, 8),
+        "adaptive_raw_target": state.adaptive_raw_target,
+        "termination_state": state.termination_state,
+    }
+    encoded = base64.urlsafe_b64encode(zlib.compress(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        level=9,
+    )).decode("ascii")
+    return DiscoveryCursor(f"{_CURSOR_PREFIX}{encoded}", partition=str(state.partition_index), exhausted=False)
 
 
 def _initial_batch_cap(batch_size: int) -> int:
@@ -664,8 +857,6 @@ class DigitalAuditAdapter:
         return self.CAPABILITY
 
     async def discover(self, request: AdapterDiscoveryRequest) -> AdapterExecutionResult:
-        if request.requested_count > (self.capability.max_results_per_run or 0):
-            raise ValueError("requested_count exceeds the bounded legacy Digital Audit run")
         category = next((_text(value) for value in request.sectors if _text(value)), None)
         location = next((_text(value) for value in request.geographies if _text(value) and value.lower() not in {"italy", "italia"}), None)
         location = location or next((_text(value) for value in request.geographies if _text(value)), None)
@@ -691,15 +882,58 @@ class DigitalAuditAdapter:
             cursor=request.cursor,
         )
 
-        start_index, previous_batch_cap, cursor_raw_budget = _parse_cursor(request.cursor)
-        batch_size = maps_batch_size_for(technical_filters)
-        raw_budget = cursor_raw_budget or raw_candidate_budget_for(request.requested_count, technical_filters)
-        batch_cap = previous_batch_cap or _initial_batch_cap(batch_size)
-        if start_index > 0:
-            batch_cap = min(DEFAULT_MAPS_MAX_FETCH, batch_cap + DEFAULT_MAPS_BATCH_GROWTH)
+        requested_total = max(
+            request.requested_count,
+            int(technical_filters.get("requested_qualified_count") or request.requested_count),
+        )
+        cursor_state = _parse_cursor(request.cursor, requested_count=requested_total)
+        persisted_hashes = tuple(
+            dict.fromkeys(str(item) for item in technical_filters.get("processed_identity_hashes") or () if str(item))
+        )
+        if persisted_hashes or technical_filters.get("cumulative_raw_unique") or technical_filters.get("cumulative_audited"):
+            cursor_state = DigitalAuditCursorState(
+                **{
+                    **cursor_state.__dict__,
+                    "cumulative_raw_unique": max(
+                        cursor_state.cumulative_raw_unique,
+                        int(technical_filters.get("cumulative_raw_unique") or 0),
+                    ),
+                    "cumulative_audited": max(
+                        cursor_state.cumulative_audited,
+                        int(technical_filters.get("cumulative_audited") or 0),
+                    ),
+                    "processed_identity_hashes": tuple(dict.fromkeys(
+                        (*cursor_state.processed_identity_hashes, *persisted_hashes)
+                    )),
+                }
+            )
+        prior_qualified = max(
+            cursor_state.cumulative_qualified_unique,
+            len(tuple(technical_filters.get("processed_employer_keys") or ())),
+        )
+        partitions = _partition_plan(category, location, technical_filters)
+        per_round_cap = per_round_raw_cap_for(technical_filters)
+        safety_cap = maximum_safety_raw_cap_for(requested_total, technical_filters)
+        adaptive_target, observed_yield = adaptive_raw_target_for(
+            requested_qualified=requested_total,
+            cumulative_qualified=prior_qualified,
+            cumulative_raw=cursor_state.cumulative_raw_unique,
+            technical_filters=technical_filters,
+        )
+        adaptive_target = min(safety_cap, max(cursor_state.cumulative_raw_unique, adaptive_target))
 
-        if start_index >= raw_budget:
+        if cursor_state.cumulative_raw_unique >= safety_cap:
             observed_at = datetime.now(timezone.utc).isoformat()
+            paused_state = DigitalAuditCursorState(
+                **{
+                    **cursor_state.__dict__,
+                    "requested_qualified_count": requested_total,
+                    "cumulative_qualified_unique": prior_qualified,
+                    "observed_yield": observed_yield,
+                    "adaptive_raw_target": adaptive_target,
+                    "termination_state": "raw_safety_cap_reached",
+                }
+            )
             return AdapterExecutionResult(
                 adapter_id=self.capability.adapter_id,
                 adapter_version=self.capability.adapter_version,
@@ -707,83 +941,185 @@ class DigitalAuditAdapter:
                 exhaustion=SourceExhaustion(
                     exhausted=True,
                     scope="budget",
-                    reason="raw_budget_reached",
+                    reason="raw_safety_cap_reached",
                     authoritative=False,
+                    next_cursor=_build_cursor(paused_state),
+                ),
+                operations=0,
+                cost_eur=0.0,
+                started_at=observed_at,
+                completed_at=observed_at,
+                warnings=("raw_safety_cap_reached",),
+                telemetry={
+                    "projection_traces": [],
+                    "acquisition": {
+                        "requested_qualified_count": requested_total,
+                        "per_round_raw_cap": per_round_cap,
+                        "maximum_safety_raw_cap": safety_cap,
+                        "cumulative_raw_unique": cursor_state.cumulative_raw_unique,
+                        "cumulative_audited": cursor_state.cumulative_audited,
+                        "cumulative_qualified_unique": prior_qualified,
+                        "observed_yield": observed_yield,
+                        "adaptive_raw_target": adaptive_target,
+                        "processed_place_ids_ref": paused_state.processed_place_ids_ref,
+                        "partition_index": cursor_state.partition_index,
+                        "partition_count": len(partitions),
+                        "termination_hint": "raw_safety_cap_reached",
+                        "provider_exhausted_authoritative": False,
+                    },
+                },
+            )
+
+        partition_index = cursor_state.partition_index
+        provider_offset = cursor_state.provider_offset
+        while provider_offset >= DEFAULT_MAPS_MAX_FETCH and partition_index < len(partitions):
+            partition_index += 1
+            provider_offset = 0
+        if partition_index >= len(partitions):
+            observed_at = datetime.now(timezone.utc).isoformat()
+            return AdapterExecutionResult(
+                adapter_id=self.capability.adapter_id,
+                adapter_version=self.capability.adapter_version,
+                candidates=(),
+                exhaustion=SourceExhaustion(
+                    exhausted=True,
+                    scope="source",
+                    reason="provider_exhausted_authoritative",
+                    authoritative=True,
                     next_cursor=None,
                 ),
                 operations=0,
                 cost_eur=0.0,
                 started_at=observed_at,
                 completed_at=observed_at,
-                warnings=("raw_budget_reached",),
-                telemetry={
-                    "projection_traces": [],
-                    "acquisition": {
-                        "requested_qualified_count": request.requested_count,
-                        "raw_candidate_budget": raw_budget,
-                        "maps_batch_size": batch_size,
-                        "start_index": start_index,
-                        "termination_hint": "raw_budget_reached",
-                    },
-                },
+                warnings=("provider_exhausted_authoritative",),
+                telemetry={"projection_traces": [], "acquisition": {
+                    "requested_qualified_count": requested_total,
+                    "cumulative_raw_unique": cursor_state.cumulative_raw_unique,
+                    "cumulative_audited": cursor_state.cumulative_audited,
+                    "cumulative_qualified_unique": prior_qualified,
+                    "partition_index": partition_index,
+                    "partition_count": len(partitions),
+                    "provider_exhausted_authoritative": True,
+                    "termination_hint": "provider_exhausted_authoritative",
+                }},
             )
 
-        remaining_budget = raw_budget - start_index
-        fetch_cap = min(batch_cap, raw_budget)
+        remaining_adaptive = max(1, adaptive_target - cursor_state.cumulative_raw_unique)
+        remaining_safety = max(1, safety_cap - cursor_state.cumulative_raw_unique)
+        page_size = min(per_round_cap, remaining_adaptive, remaining_safety, DEFAULT_MAPS_MAX_FETCH - provider_offset)
+        fetch_cap = provider_offset + page_size
+        partition_category, partition_location = partitions[partition_index]
 
         started_at = datetime.now(timezone.utc).isoformat()
         raw = await self._legacy_runner(
-            category=category,
-            location=location,
+            category=partition_category,
+            location=partition_location,
             zone=str(fetch_cap),
             intent={
                 "required_signals": list(enriched_request.signal_ids),
                 "technical_filters": dict(enriched_request.technical_filters),
                 "signal_match_mode": enriched_request.signal_match_mode,
                 "source_adapter": self.capability.adapter_id,
-                "maps_start_index": start_index,
-                "raw_candidate_budget": raw_budget,
-                "maps_batch_size": batch_size,
+                "maps_start_index": provider_offset,
+                "maps_page_size": page_size,
+                "maps_fetch_cap": fetch_cap,
+                "processed_identity_hashes": list(cursor_state.processed_identity_hashes),
+                "per_round_raw_cap": per_round_cap,
+                "maximum_safety_raw_cap": safety_cap,
+                "partition_index": partition_index,
             },
+        )
+        provider_records_total = max(
+            (int(item.get("_maps_acquired_total") or 0) for item in raw if isinstance(item, Mapping)),
+            default=provider_offset + len(raw),
+        )
+        provider_page_count = max(
+            (int(item.get("_maps_provider_page_count") or 0) for item in raw if isinstance(item, Mapping)),
+            default=len(raw),
         )
         raw = [
             {**item, "category": item.get("category") or item.get("categoria") or category}
             for item in raw
+            if item.get("_maps_control_only") is not True
         ]
         observed_at = datetime.now(timezone.utc).isoformat()
-        raw_slice = raw[start_index:start_index + remaining_budget] if start_index < len(raw) else []
+        raw_slice = raw[:page_size]
         candidates: List[OpportunityCandidate] = []
         projection_traces: List[Dict[str, Any]] = []
         seen: set[str] = set()
+        processed_hashes = set(cursor_state.processed_identity_hashes)
+        processed_domains = {
+            _domain(value) for value in technical_filters.get("processed_domains") or () if _domain(value)
+        }
         duplicate_skips = 0
         for item in raw_slice:
+            identity_hash = _raw_identity_hash(item)
+            if identity_hash in processed_hashes:
+                duplicate_skips += 1
+                continue
+            processed_hashes.add(identity_hash)
             trace = trace_candidate_projection(item, enriched_request, observed_at=observed_at)
             projection_traces.append(trace)
             decision = project_candidate_from_raw(item, enriched_request, observed_at=observed_at)
             if not decision.accepted or decision.candidate is None:
                 continue
             key = _dedupe_key(item, decision.candidate)
-            if key in seen:
+            if key in seen or (decision.candidate.official_domain and decision.candidate.official_domain in processed_domains):
                 duplicate_skips += 1
                 continue
             seen.add(key)
             candidates.append(decision.candidate)
 
-        next_start = start_index + len(raw_slice)
-        raw_budget_reached = next_start >= raw_budget
-        provider_exhausted = len(raw) < fetch_cap
-        if provider_exhausted:
+        new_raw_unique = max(0, len(processed_hashes) - len(cursor_state.processed_identity_hashes))
+        cumulative_raw = cursor_state.cumulative_raw_unique + new_raw_unique
+        cumulative_audited = cursor_state.cumulative_audited + len(raw_slice)
+        cumulative_qualified = prior_qualified + len(candidates)
+        next_adaptive_target, next_yield = adaptive_raw_target_for(
+            requested_qualified=requested_total,
+            cumulative_qualified=cumulative_qualified,
+            cumulative_raw=cumulative_raw,
+            technical_filters=technical_filters,
+        )
+        next_adaptive_target = min(safety_cap, max(cumulative_raw, next_adaptive_target))
+        partition_exhausted = provider_records_total < fetch_cap or fetch_cap >= DEFAULT_MAPS_MAX_FETCH
+        next_partition_index = partition_index + 1 if partition_exhausted else partition_index
+        next_provider_offset = 0 if partition_exhausted else fetch_cap
+        all_partitions_exhausted = partition_exhausted and next_partition_index >= len(partitions)
+        safety_cap_reached = cumulative_raw >= safety_cap
+        next_state = DigitalAuditCursorState(
+            requested_qualified_count=requested_total,
+            cumulative_raw_unique=cumulative_raw,
+            cumulative_audited=cumulative_audited,
+            cumulative_qualified_unique=cumulative_qualified,
+            processed_identity_hashes=tuple(sorted(processed_hashes)),
+            provider_offset=next_provider_offset,
+            partition_index=next_partition_index,
+            observed_yield=next_yield,
+            adaptive_raw_target=next_adaptive_target,
+            termination_state=(
+                "provider_exhausted_authoritative" if all_partitions_exhausted
+                else "raw_safety_cap_reached" if safety_cap_reached
+                else "partition_exhausted" if partition_exhausted
+                else "page_complete"
+            ),
+        )
+        if all_partitions_exhausted:
             exhausted = True
-            termination_hint = "provider_exhausted"
+            termination_hint = "provider_exhausted_authoritative"
             next_cursor = None
-        elif raw_budget_reached:
+        elif safety_cap_reached:
             exhausted = True
-            termination_hint = "raw_budget_reached"
-            next_cursor = None
+            termination_hint = "raw_safety_cap_reached"
+            next_cursor = _build_cursor(next_state)
+        elif partition_exhausted:
+            exhausted = False
+            termination_hint = "partition_exhausted"
+            next_cursor = _build_cursor(next_state)
         else:
             exhausted = False
-            termination_hint = "batch_cap_reached"
-            next_cursor = _build_cursor(next_start, batch_cap, raw_budget)
+            termination_hint = "page_complete"
+            next_cursor = _build_cursor(next_state)
 
         warnings: List[str] = []
         rejected_count = sum(1 for trace in projection_traces if trace.get("rejected"))
@@ -799,9 +1135,9 @@ class DigitalAuditAdapter:
             candidates=tuple(candidates),
             exhaustion=SourceExhaustion(
                 exhausted=exhausted,
-                scope="source" if provider_exhausted else ("budget" if raw_budget_reached else "partition"),
+                scope="source" if all_partitions_exhausted else ("budget" if safety_cap_reached else ("partition" if partition_exhausted else "page")),
                 reason=termination_hint,
-                authoritative=provider_exhausted,
+                authoritative=all_partitions_exhausted,
                 next_cursor=next_cursor,
             ),
             operations=len(raw_slice),
@@ -812,18 +1148,35 @@ class DigitalAuditAdapter:
             telemetry={
                 "projection_traces": projection_traces,
                 "acquisition": {
-                    "requested_qualified_count": request.requested_count,
-                    "raw_candidate_budget": raw_budget,
-                    "maps_batch_size": batch_size,
-                    "batch_cap": fetch_cap,
-                    "start_index": start_index,
-                    "next_start_index": next_start,
-                    "maps_records_total": len(raw),
+                    "cursor_version": 3,
+                    "requested_qualified_count": requested_total,
+                    "per_round_raw_cap": per_round_cap,
+                    "maximum_safety_raw_cap": safety_cap,
+                    "provider_fetch_cap": fetch_cap,
+                    "provider_offset": provider_offset,
+                    "next_provider_offset": next_provider_offset,
+                    "maps_records_total": provider_records_total,
+                    "provider_page_count": provider_page_count,
                     "records_read": len(raw_slice),
+                    "raw_new": new_raw_unique,
+                    "cumulative_raw_unique": cumulative_raw,
+                    "cumulative_audited": cumulative_audited,
+                    "cumulative_qualified_unique": cumulative_qualified,
                     "unique_candidates": len(candidates),
                     "duplicate_skips": duplicate_skips,
+                    "observed_yield": next_yield,
+                    "adaptive_raw_target": next_adaptive_target,
+                    "processed_place_ids_ref": next_state.processed_place_ids_ref,
+                    "processed_identity_hashes": list(next_state.processed_identity_hashes),
+                    "partition_index": partition_index,
+                    "next_partition_index": next_partition_index,
+                    "partition_count": len(partitions),
+                    "partition_category": partition_category,
+                    "partition_location": partition_location,
+                    "partition_exhausted": partition_exhausted,
                     "termination_hint": termination_hint,
-                    "provider_exhausted": provider_exhausted,
+                    "provider_exhausted": all_partitions_exhausted,
+                    "provider_exhausted_authoritative": all_partitions_exhausted,
                 },
             },
         )

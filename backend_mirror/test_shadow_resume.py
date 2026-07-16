@@ -26,8 +26,10 @@ class _GrowingPoolRunner:
     async def __call__(self, **kwargs):
         self.calls.append(kwargs)
         start = int(kwargs.get("intent", {}).get("maps_start_index") or 0)
-        cap = int(str(kwargs.get("zone") or "15"))
-        return self.pool[start:start + cap]
+        page_size = int(kwargs.get("intent", {}).get("maps_page_size") or 15)
+        fetch_cap = int(kwargs.get("intent", {}).get("maps_fetch_cap") or start + page_size)
+        page = self.pool[start:start + page_size]
+        return [dict(item, _maps_acquired_total=min(len(self.pool), fetch_cap), _maps_provider_page_count=len(page)) for item in page]
 
 
 def _mock_partial_time_result(*, cursor: str, qualified_payloads: list[dict]) -> OrchestrationResult:
@@ -87,6 +89,55 @@ def test_partial_time_limit_produces_resumable_state() -> None:
     assert resume["resume_cursors"]["legacy_digital_audit_v1"] == "da:v2:15:15:30"
 
 
+def test_raw_safety_cap_remains_resumable_and_not_provider_exhausted() -> None:
+    result = _mock_partial_time_result(cursor="da:v3:safety", qualified_payloads=[])
+    result = OrchestrationResult(**{
+        **result.__dict__,
+        "status": "raw_safety_cap_reached",
+        "adapter_progress": (
+            AdapterProgress(
+                adapter_id="legacy_digital_audit_v1",
+                exhausted=True,
+                exhaustion_authoritative=False,
+                exhaustion_scope="budget",
+                exhaustion_reason="raw_safety_cap_reached",
+                next_cursor=DiscoveryCursor("da:v3:safety"),
+            ),
+        ),
+    })
+    resume = build_shadow_resume_state(result, qualified_lead_payloads=[], requested_count=5)
+    assert resume["resumable"] is True
+    assert resume["provider_exhausted"] is False
+    assert resume["resume_cursors"]["legacy_digital_audit_v1"] == "da:v3:safety"
+
+
+def test_authoritative_exhaustion_is_terminal_and_removes_stale_cursor() -> None:
+    result = _mock_partial_time_result(cursor="da:v3:old", qualified_payloads=[])
+    result = OrchestrationResult(**{
+        **result.__dict__,
+        "status": "provider_exhausted_authoritative",
+        "adapter_progress": (
+            AdapterProgress(
+                adapter_id="legacy_digital_audit_v1",
+                exhausted=True,
+                exhaustion_authoritative=True,
+                exhaustion_scope="source",
+                exhaustion_reason="provider_exhausted_authoritative",
+                next_cursor=None,
+            ),
+        ),
+    })
+    resume = build_shadow_resume_state(
+        result,
+        qualified_lead_payloads=[],
+        prior_state={"resume_cursors": {"legacy_digital_audit_v1": "da:v3:old"}},
+        requested_count=5,
+    )
+    assert resume["resumable"] is False
+    assert resume["provider_exhausted"] is True
+    assert resume["resume_cursors"] == {}
+
+
 def test_merge_shadow_qualified_payloads_preserves_primary_and_related() -> None:
     prior = [{
         "sito": "https://verisure.com",
@@ -122,11 +173,15 @@ def test_resume_cursor_starts_at_next_batch() -> None:
     pool.extend([accepted, accepted])
     runner = _GrowingPoolRunner(pool)
     adapter = DigitalAuditAdapter(runner)
-    first = asyncio.run(adapter.discover(milano_request(count=5)))
+    first_request = AdapterDiscoveryRequest(**{
+        **milano_request(count=5).__dict__,
+        "technical_filters": {**dict(milano_request(count=5).technical_filters), "per_round_raw_cap": 15},
+    })
+    first = asyncio.run(adapter.discover(first_request))
     assert first.exhaustion.next_cursor is not None
     asyncio.run(adapter.discover(
         AdapterDiscoveryRequest(**{
-            **milano_request(count=4).__dict__,
+            **first_request.__dict__,
             "cursor": first.exhaustion.next_cursor,
         })
     ))

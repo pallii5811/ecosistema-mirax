@@ -45,9 +45,9 @@ def test_twenty_fixture_replay_preserves_legacy_results_and_canonicalizes() -> N
 
     assert len(fixture_rows()) == 20
     assert len(result.candidates) == 20
-    assert result.exhaustion.reason in {"batch_cap_reached", "provider_exhausted"}
+    assert result.exhaustion.reason == "provider_exhausted_authoritative"
     assert result.cost_eur == 0
-    assert calls[0]["zone"] == "15"
+    assert calls[0]["zone"] == "50"
     assert calls[0]["intent"]["source_adapter"] == "legacy_digital_audit_v1"
     assert len({candidate.official_domain for candidate in result.candidates}) == 20
     assert all(candidate.entity_class == "operating_company" for candidate in result.candidates)
@@ -96,7 +96,7 @@ def test_any_mode_and_domain_dedup_are_deterministic() -> None:
 
     result = asyncio.run(DigitalAuditAdapter(fake_runner).discover(request(signals=("no_pixel", "no_dmarc"), mode="any", count=3)))
     assert len(result.candidates) == 2
-    assert result.exhaustion.reason == "provider_exhausted"
+    assert result.exhaustion.reason == "provider_exhausted_authoritative"
 
 
 def test_canonical_missing_advertising_pixel_signal_is_supported() -> None:
@@ -123,12 +123,21 @@ def test_runtime_registry_and_source_bindings_are_truthful() -> None:
     assert source_runtime_coverage("public_procurement_portal") == "supported"
 
 
-def test_legacy_hard_cap_and_required_target_are_enforced_before_runner() -> None:
+def test_cumulative_target_above_legacy_page_cap_is_valid() -> None:
+    calls: list[dict] = []
+
+    async def empty_runner(**kwargs):
+        calls.append(kwargs)
+        return []
+
+    result = asyncio.run(DigitalAuditAdapter(empty_runner).discover(request(count=5000)))
+    assert calls
+    assert result.telemetry["acquisition"]["requested_qualified_count"] == 5000
+    assert int(calls[0]["zone"]) <= 200
+
     async def forbidden_runner(**_kwargs):
         raise AssertionError("runner must not be called")
 
-    with pytest.raises(ValueError, match="requested_count"):
-        asyncio.run(DigitalAuditAdapter(forbidden_runner).discover(request(count=201)))
     missing_sector = AdapterDiscoveryRequest(**{**request(count=1).__dict__, "sectors": ()})
     with pytest.raises(ValueError, match="category and geography"):
         asyncio.run(DigitalAuditAdapter(forbidden_runner).discover(missing_sector))

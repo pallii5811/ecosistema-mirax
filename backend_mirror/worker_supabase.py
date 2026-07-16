@@ -75,6 +75,7 @@ _install_flat_runtime_package_alias(
 from job_leases import build_claim_payload, is_processing_job_stale
 from url_safety import assert_safe_public_url, install_playwright_ssrf_guard
 from adaptive_audit import AdaptiveAuditCache, adaptive_modules, module_payload
+from maps_pagination import select_digital_audit_maps_page
 
 
 def _runtime_release_id() -> str:
@@ -4018,6 +4019,10 @@ async def _run_core_scraper(category: str, location: str, zone: Optional[str] = 
 
     results: List[Dict[str, Any]] = []
     raw_items = raw or []
+    if isinstance(intent, dict) and str(intent.get("source_adapter") or "").strip() == "legacy_digital_audit_v1":
+        raw_items = select_digital_audit_maps_page(raw_items, intent)
+    control_records = [item for item in raw_items if item.get("_maps_control_only") is True]
+    raw_items = [item for item in raw_items if item.get("_maps_control_only") is not True]
     if raw_items:
         sem = asyncio.Semaphore(12)
 
@@ -4050,7 +4055,11 @@ async def _run_core_scraper(category: str, location: str, zone: Optional[str] = 
             except Exception:
                 pass
         results.sort(key=lambda x: x.get("result_index", 0))
-    print(f"[worker_supabase] Core scraper: raw={len(raw or [])} audited={len(results)}", flush=True)
+    results.extend(control_records)
+    print(
+        f"[worker_supabase] Core scraper: acquired={len(raw or [])} page_raw={len(raw_items)} audited={len(results)}",
+        flush=True,
+    )
 
     # Reviews/competitors: optional enrichment — must NOT block job completion (Blocco 1.3).
     enrich_reviews = os.getenv("ENRICH_REVIEWS", "0").strip().lower() in {"1", "true", "yes"}
@@ -5104,6 +5113,7 @@ def main() -> None:
                 from commercial_lifecycle import canonical_domain, persist_and_publish_candidates
                 from source_adapters.shadow_runtime import (
                     build_shadow_resume_state,
+                    candidate_to_lifecycle_shadow_payload,
                     execute_source_adapter_shadow,
                     merge_shadow_qualified_payloads,
                     revalidate_hiring_payload_geographies,
@@ -5200,12 +5210,75 @@ def main() -> None:
                     continue
 
                 def _on_source_adapter_progress(snapshot: Any) -> None:
+                    current_payloads = [
+                        candidate_to_lifecycle_shadow_payload(
+                            lead.candidate,
+                            opportunity_value_score=lead.opportunity_value_score,
+                        )
+                        for lead in getattr(snapshot, "qualified_leads", ())
+                    ]
+                    checkpoint_payloads = merge_shadow_qualified_payloads(
+                        prior_qualified_payloads,
+                        current_payloads,
+                    )
+                    checkpoint_keys = collect_processed_employer_keys((), checkpoint_payloads)
+                    runtime_state = getattr(snapshot, "runtime_state", {})
+                    runtime_state = runtime_state if isinstance(runtime_state, dict) else {}
+                    resume_cursors = dict(prior_shadow_resume.get("resume_cursors") or {})
+                    acquisition = dict(prior_shadow_resume.get("acquisition") or {})
+                    all_authoritatively_exhausted = bool(runtime_state)
+                    for adapter_id, adapter_state in runtime_state.items():
+                        if not isinstance(adapter_state, dict):
+                            continue
+                        next_cursor = adapter_state.get("next_cursor")
+                        if next_cursor:
+                            resume_cursors[str(adapter_id)] = str(next_cursor)
+                        elif adapter_state.get("exhausted"):
+                            resume_cursors.pop(str(adapter_id), None)
+                        adapter_acquisition = adapter_state.get("acquisition")
+                        if isinstance(adapter_acquisition, dict):
+                            acquisition.update(adapter_acquisition)
+                        all_authoritatively_exhausted = (
+                            all_authoritatively_exhausted
+                            and bool(adapter_state.get("exhausted"))
+                            and bool(adapter_state.get("exhaustion_authoritative"))
+                        )
+                    processed_identity_hashes = list(dict.fromkeys(
+                        list(prior_shadow_resume.get("processed_identity_hashes") or ())
+                        + list(acquisition.get("processed_identity_hashes") or ())
+                    ))
+                    checkpoint_resume = {
+                        **prior_shadow_resume,
+                        "resumable": bool(
+                            len(checkpoint_keys) < int(job_max)
+                            and not all_authoritatively_exhausted
+                            and resume_cursors
+                        ),
+                        "resume_cursors": resume_cursors,
+                        "prior_cost_eur": round(
+                            float(prior_shadow_resume.get("prior_cost_eur") or 0.0)
+                            + float(getattr(snapshot, "cost_eur", 0.0) or 0.0),
+                            6,
+                        ),
+                        "cumulative_orchestrator_qualified": len(checkpoint_keys),
+                        "unique_lifecycle_accepted_count": len(checkpoint_keys),
+                        "processed_employer_keys": list(checkpoint_keys),
+                        "qualified_lead_payloads": checkpoint_payloads,
+                        "processed_identity_hashes": processed_identity_hashes,
+                        "processed_place_ids_ref": acquisition.get("processed_place_ids_ref"),
+                        "cumulative_raw_unique": int(acquisition.get("cumulative_raw_unique") or 0),
+                        "cumulative_audited": int(acquisition.get("cumulative_audited") or 0),
+                        "cumulative_qualified_unique": len(checkpoint_keys),
+                        "acquisition": acquisition,
+                        "provider_exhausted": all_authoritatively_exhausted,
+                        "provider_exhausted_authoritative": all_authoritatively_exhausted,
+                    }
                     progress_payload = {
                         "stage": "source_adapter_shadow",
                         "target": snapshot.requested_count,
-                        "found": snapshot.qualified_count,
+                        "found": len(checkpoint_keys),
                         "discovered": snapshot.discovered_count,
-                        "raw": snapshot.raw_candidate_count,
+                        "raw": snapshot.discovered_count,
                         "unique_entities": snapshot.unique_entity_count,
                         "resolved": snapshot.resolved_count,
                         "audited": snapshot.audited_count,
@@ -5213,10 +5286,12 @@ def main() -> None:
                         "qualified": snapshot.qualified_count,
                         "rejected": snapshot.rejected_count,
                         "published": 0,
+                        "resume_cursor": next(iter(resume_cursors.values()), None),
+                        "shadow_resume": checkpoint_resume,
                         "updated_at": _utc_now_iso(),
                     }
                     supabase.table("searches").update({
-                        "results": [],
+                        "results": checkpoint_payloads,
                         "progress": progress_payload,
                         "heartbeat_at": _utc_now_iso() if _lease_supported else None,
                         "lease_expires_at": _lease_timestamp() if _lease_supported else None,
@@ -5244,7 +5319,10 @@ def main() -> None:
                         shadow_mode=True,
                     )
                     _heartbeat_stop.set()
-                    provider_exhausted = all(item.exhausted for item in shadow_result.adapter_progress) if shadow_result.adapter_progress else False
+                    provider_exhausted = all(
+                        item.exhausted and bool(getattr(item, "exhaustion_authoritative", False))
+                        for item in shadow_result.adapter_progress
+                    ) if shadow_result.adapter_progress else False
                     cumulative_cost = round(float(prior_shadow_resume.get("prior_cost_eur") or 0.0) + float(shadow_result.cost_eur or 0.0), 6)
                     shadow_resume = build_shadow_resume_state(
                         shadow_result,
@@ -5262,20 +5340,22 @@ def main() -> None:
                         for item in lifecycle_accepted
                         if isinstance(item, dict) and employer_key_from_payload(item)
                     }
-                    resumable = bool(shadow_resume.get("resumable")) or len(unique_lifecycle_keys) < int(job_max)
-                    final_status = "completed" if len(unique_lifecycle_keys) >= int(job_max) else "pending"
+                    resumable = bool(shadow_resume.get("resumable"))
+                    final_status = "completed" if len(unique_lifecycle_keys) >= int(job_max) or not resumable else "pending"
+                    cumulative_raw = int(shadow_resume.get("cumulative_raw_unique") or 0)
+                    cumulative_audited = int(shadow_resume.get("cumulative_audited") or 0)
                     final_shadow_progress = {
                         "stage": "source_adapter_shadow_resumable" if resumable else "source_adapter_shadow_completed",
                         "stop_reason": shadow_result.status if len(unique_lifecycle_keys) >= int(job_max) else "UNIQUE_EMPLOYER_TARGET_NOT_REACHED",
                         "target": int(job_max),
                         "found": len(unique_lifecycle_keys),
-                        "discovered": shadow_result.progress.discovered_count + int(prior_shadow_resume.get("discovered") or 0),
-                        "raw": shadow_result.progress.raw_candidate_count + int(prior_shadow_resume.get("raw") or 0),
+                        "discovered": cumulative_raw,
+                        "raw": cumulative_raw,
                         "unique_entities": unique_shadow_count,
                         "unique_lifecycle_accepted_count": len(unique_lifecycle_keys),
                         "processed_employer_keys": list(collect_processed_employer_keys(processed_employer_keys, shadow_leads)),
                         "resolved": shadow_result.progress.resolved_count,
-                        "audited": shadow_result.progress.audited_count,
+                        "audited": cumulative_audited,
                         "evidence_verified": shadow_result.progress.evidence_verified_count,
                         "qualified": unique_shadow_count,
                         "lifecycle_qualified": len(unique_lifecycle_keys),
@@ -5298,6 +5378,9 @@ def main() -> None:
                                 "qualified": item.qualified,
                                 "cost_eur": item.cost_eur,
                                 "exhausted": item.exhausted,
+                                "exhaustion_authoritative": bool(getattr(item, "exhaustion_authoritative", False)),
+                                "exhaustion_scope": getattr(item, "exhaustion_scope", None),
+                                "exhaustion_reason": getattr(item, "exhaustion_reason", None),
                                 "warnings": list(item.warnings),
                                 "acquisition": dict(getattr(item, "acquisition_telemetry", {}) or {}),
                                 "next_cursor": item.next_cursor.value if item.next_cursor else None,
@@ -5311,6 +5394,7 @@ def main() -> None:
                         ],
                         "termination_reason": shadow_result.status,
                         "provider_exhausted": provider_exhausted,
+                        "provider_exhausted_authoritative": provider_exhausted,
                         "shadow_resume": shadow_resume,
                         "resume_cursor": next(iter(shadow_resume.get("resume_cursors", {}).values()), None),
                         "published": 0,

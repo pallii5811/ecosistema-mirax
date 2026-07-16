@@ -52,6 +52,8 @@ TerminalStatus = Literal[
     "completed_requested_count",
     "partial_market_exhausted",
     "partial_sources_exhausted",
+    "provider_exhausted_authoritative",
+    "raw_safety_cap_reached",
     "partial_budget_exhausted",
     "partial_time_limit",
     "clarification_required",
@@ -84,6 +86,9 @@ class AdapterProgress:
     qualified: int = 0
     cost_eur: float = 0.0
     exhausted: bool = False
+    exhaustion_authoritative: bool = False
+    exhaustion_scope: Optional[str] = None
+    exhaustion_reason: Optional[str] = None
     next_cursor: Optional[DiscoveryCursor] = None
     warnings: List[str] = field(default_factory=list)
     projection_traces: List[Dict[str, Any]] = field(default_factory=list)
@@ -106,6 +111,9 @@ class SearchProgress:
     qualified_count: int
     rejected_count: int
     published_count: int = 0
+    cost_eur: float = 0.0
+    qualified_leads: Tuple[QualifiedLead, ...] = ()
+    runtime_state: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -412,11 +420,26 @@ class UniversalSourceOrchestrator:
         round_index = 0
         processed_employer_keys = _processed_employer_keys(request)
 
+        def digital_audit_only() -> bool:
+            return bool(states) and set(states) == {"legacy_digital_audit_v1"}
+
         async def emit_progress() -> None:
             if progress_callback is None:
                 return
             audited_now = sum(1 for decision in decisions.values() if decision.audited)
             evidence_now = sum(1 for decision in decisions.values() if decision.evidence_verified)
+            new_unique_keys = _new_unique_qualified_keys(qualified_by_entity, processed_employer_keys)
+            runtime_state = {
+                adapter_id: {
+                    "next_cursor": state.next_cursor.value if state.next_cursor is not None else None,
+                    "exhausted": state.exhausted,
+                    "exhaustion_authoritative": state.exhaustion_authoritative,
+                    "exhaustion_scope": state.exhaustion_scope,
+                    "exhaustion_reason": state.exhaustion_reason,
+                    "acquisition": dict(state.acquisition_telemetry),
+                }
+                for adapter_id, state in states.items()
+            }
             snapshot = SearchProgress(
                 requested_count=_total_unique_target(request),
                 discovered_count=discovered,
@@ -427,6 +450,9 @@ class UniversalSourceOrchestrator:
                 evidence_verified_count=evidence_now,
                 qualified_count=_cumulative_unique_qualified(qualified_by_entity, processed_employer_keys),
                 rejected_count=len(accumulated) - len(qualified_by_entity),
+                cost_eur=spent,
+                qualified_leads=tuple(qualified_by_entity[key] for key in sorted(new_unique_keys)),
+                runtime_state=runtime_state,
             )
             outcome = progress_callback(snapshot)
             if inspect.isawaitable(outcome):
@@ -435,7 +461,14 @@ class UniversalSourceOrchestrator:
         while round_index < self.max_rounds and time.monotonic() - start_clock < self.max_seconds:
             active = [state for state in states.values() if not state.exhausted]
             if not active:
-                terminal = "partial_sources_exhausted"
+                terminal = (
+                    "provider_exhausted_authoritative"
+                    if digital_audit_only() and all(state.exhaustion_authoritative for state in states.values())
+                    else "raw_safety_cap_reached"
+                    if digital_audit_only()
+                    and any(state.exhaustion_reason == "raw_safety_cap_reached" for state in states.values())
+                    else "partial_sources_exhausted"
+                )
                 break
             progressed = False
             for state in active:
@@ -476,11 +509,16 @@ class UniversalSourceOrchestrator:
                         **request.technical_filters,
                         "discovery_round": round_index + 1,
                         "requested_qualified_count": _total_unique_target(request),
-                        "raw_candidate_budget": min(
-                            50,
-                            max(30, int(request.technical_filters.get("raw_candidate_budget") or request.requested_count * 6)),
-                        ),
                         "maps_batch_size": int(request.technical_filters.get("maps_batch_size") or 15),
+                        **({
+                            "raw_candidate_budget": min(
+                                50,
+                                max(30, int(
+                                    request.technical_filters.get("raw_candidate_budget")
+                                    or request.requested_count * 6
+                                )),
+                            ),
+                        } if state.adapter_id != "legacy_digital_audit_v1" else {}),
                     },
                     cursor=state.next_cursor,
                 )
@@ -495,6 +533,9 @@ class UniversalSourceOrchestrator:
                 state.raw_candidates += len(result.candidates)
                 state.warnings.extend(result.warnings)
                 state.exhausted = result.exhaustion.exhausted
+                state.exhaustion_authoritative = result.exhaustion.authoritative
+                state.exhaustion_scope = result.exhaustion.scope
+                state.exhaustion_reason = result.exhaustion.reason
                 state.next_cursor = result.exhaustion.next_cursor
                 if isinstance(result.telemetry, Mapping):
                     traces = result.telemetry.get("projection_traces")
@@ -555,7 +596,14 @@ class UniversalSourceOrchestrator:
         if terminal is None:
             terminal = "partial_time_limit"
         if terminal != "completed_requested_count" and states and all(state.exhausted for state in states.values()):
-            terminal = "partial_sources_exhausted"
+            if digital_audit_only() and all(state.exhaustion_authoritative for state in states.values()):
+                terminal = "provider_exhausted_authoritative"
+            elif digital_audit_only() and any(
+                state.exhaustion_reason == "raw_safety_cap_reached" for state in states.values()
+            ):
+                terminal = "raw_safety_cap_reached"
+            else:
+                terminal = "partial_sources_exhausted"
 
         for key in accumulated:
             if key not in qualified_by_entity and key not in rejection_by_entity:

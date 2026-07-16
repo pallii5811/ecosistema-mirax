@@ -189,6 +189,11 @@ async def execute_source_adapter_shadow(
         technical_filters={
             **request.technical_filters,
             "processed_employer_keys": processed_employer_keys,
+            "processed_domains": tuple(resume.get("processed_domains") or ()),
+            "processed_identity_hashes": tuple(resume.get("processed_identity_hashes") or ()),
+            "cumulative_raw_unique": int(resume.get("cumulative_raw_unique") or 0),
+            "cumulative_audited": int(resume.get("cumulative_audited") or 0),
+            "cumulative_qualified_unique": len(processed_employer_keys),
             "total_unique_employer_target": total_unique_target,
         },
     )
@@ -243,11 +248,19 @@ def build_shadow_resume_state(
     prior = dict(prior_state or {})
     resume_cursors: dict[str, str] = dict(prior.get("resume_cursors") or {})
     provider_exhausted = True
+    provider_exhausted_authoritative = True
     acquisition: dict[str, Any] = dict(prior.get("acquisition") or {})
     for item in result.adapter_progress:
         if item.next_cursor is not None:
             resume_cursors[item.adapter_id] = item.next_cursor.value
+        elif item.exhausted:
+            resume_cursors.pop(item.adapter_id, None)
         provider_exhausted = provider_exhausted and item.exhausted
+        provider_exhausted_authoritative = (
+            provider_exhausted_authoritative
+            and item.exhausted
+            and bool(getattr(item, "exhaustion_authoritative", False))
+        )
         if item.acquisition_telemetry:
             acquisition.update(dict(item.acquisition_telemetry))
     processed_domains = list(dict.fromkeys(
@@ -271,9 +284,13 @@ def build_shadow_resume_state(
                 result.status == "completed_requested_count"
                 and cumulative_orchestrator < requested_count
             )
-            or (not provider_exhausted and bool(resume_cursors))
+            or (not provider_exhausted_authoritative and bool(resume_cursors))
         )
     )
+    processed_identity_hashes = tuple(dict.fromkeys(
+        list(prior.get("processed_identity_hashes") or ())
+        + list(acquisition.get("processed_identity_hashes") or ())
+    ))
     return {
         "resumable": resumable,
         "resume_cursors": resume_cursors,
@@ -284,9 +301,15 @@ def build_shadow_resume_state(
         "total_unique_employer_target": int(prior.get("total_unique_employer_target") or requested_count),
         "qualified_lead_payloads": [dict(item) for item in qualified_lead_payloads if isinstance(item, Mapping)],
         "processed_domains": processed_domains,
+        "processed_identity_hashes": list(processed_identity_hashes),
+        "processed_place_ids_ref": acquisition.get("processed_place_ids_ref") or prior.get("processed_place_ids_ref"),
+        "cumulative_raw_unique": int(acquisition.get("cumulative_raw_unique") or prior.get("cumulative_raw_unique") or 0),
+        "cumulative_audited": int(acquisition.get("cumulative_audited") or prior.get("cumulative_audited") or 0),
+        "cumulative_qualified_unique": cumulative_orchestrator,
         "acquisition": acquisition,
         "termination_reason": result.status,
-        "provider_exhausted": provider_exhausted,
+        "provider_exhausted": provider_exhausted_authoritative,
+        "provider_exhausted_authoritative": provider_exhausted_authoritative,
     }
 
 
