@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
@@ -130,6 +131,30 @@ def is_javascript_shell(html: str) -> bool:
 
 def _text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _active_provenance(
+    record: Dict[str, Any],
+    *,
+    active: Optional[bool],
+    evidence: str,
+    method: str,
+) -> Dict[str, Any]:
+    record["active"] = active
+    record["active_evidence"] = evidence
+    record["active_checked_at"] = datetime.now(timezone.utc).isoformat()
+    record["active_verification_method"] = method
+    return record
+
+
+def _iso_day(value: Any) -> Optional[date]:
+    text = _text(value)
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
 
 
 def _normalize_record(
@@ -366,8 +391,18 @@ def parse_workday_json(payload: Mapping[str, Any], source_url: str) -> List[Dict
     record["hiring_organization_name"] = employer_name
     record["additional_locations"] = list(additional) if isinstance(additional, list) else []
     record["start_date"] = _text(info.get("startDate") or published_at)
-    if active is not None:
-        record["active"] = bool(active)
+    if active is True:
+        _active_provenance(
+            record, active=True, evidence="workday_can_apply_true", method="workday_cxs_can_apply",
+        )
+    elif active is False:
+        _active_provenance(
+            record, active=False, evidence="workday_can_apply_false", method="workday_cxs_can_apply",
+        )
+    else:
+        _active_provenance(
+            record, active=None, evidence="", method="workday_cxs_can_apply_missing",
+        )
     official = str(record.get("employer_official_domain") or "")
     if official and "myworkdayjobs.com" in official.lower():
         official = ""
@@ -399,14 +434,16 @@ def parse_workday_json(payload: Mapping[str, Any], source_url: str) -> List[Dict
 
 
 def parse_teamtailor_json(payload: Mapping[str, Any], source_url: str) -> List[Dict[str, Any]]:
-    attrs = payload.get("attributes") if isinstance(payload.get("attributes"), Mapping) else payload
+    entity = payload.get("data") if isinstance(payload.get("data"), Mapping) else payload
+    attrs = entity.get("attributes") if isinstance(entity.get("attributes"), Mapping) else entity
     title = _text(attrs.get("title") or payload.get("title"))
-    employer_name = _text((payload.get("company") or {}).get("name") if isinstance(payload.get("company"), Mapping) else attrs.get("company-name"))
+    company = payload.get("company") if isinstance(payload.get("company"), Mapping) else entity.get("company")
+    employer_name = _text(company.get("name") if isinstance(company, Mapping) else attrs.get("company-name"))
     location = _text(attrs.get("location") or attrs.get("locations"))
     published_at = _text(attrs.get("created-at") or attrs.get("published-at"))
     if not title or not employer_name:
         return []
-    return [_normalize_record(
+    record = _normalize_record(
         employer_name=employer_name,
         title=title,
         location=location,
@@ -414,7 +451,19 @@ def parse_teamtailor_json(payload: Mapping[str, Any], source_url: str) -> List[D
         source_url=source_url,
         extraction_method="teamtailor_json",
         description=_text(attrs.get("body")),
-    )]
+    )
+    status = _text(attrs.get("status") or attrs.get("state")).casefold()
+    closed = attrs.get("archived") is True or status in {"closed", "archived", "unlisted", "expired"}
+    _active_provenance(
+        record,
+        active=False if closed else True,
+        evidence="teamtailor_job_closed" if closed else "teamtailor_job_api_current",
+        method="teamtailor_individual_job_json",
+    )
+    record["source_class"] = "company_careers"
+    record["source_subtype"] = "first_party_ats"
+    record["ats_vendor"] = "teamtailor"
+    return [record]
 
 
 def build_teamtailor_json_url(source_url: str) -> Optional[str]:
@@ -451,10 +500,8 @@ def parse_greenhouse_json(payload: Mapping[str, Any], source_url: str) -> List[D
     if not title:
         return []
     if not employer_name:
-        employer_name = _text(payload.get("departments", [{}])[0].get("name") if payload.get("departments") else "")
-    if not employer_name:
         return []
-    return [_normalize_record(
+    record = _normalize_record(
         employer_name=employer_name,
         title=title,
         location=location,
@@ -462,14 +509,41 @@ def parse_greenhouse_json(payload: Mapping[str, Any], source_url: str) -> List[D
         source_url=source_url,
         extraction_method="greenhouse_api_json",
         description=_text(payload.get("content")),
-    )]
+    )
+    _active_provenance(
+        record,
+        active=True,
+        evidence="greenhouse_job_api_current",
+        method="greenhouse_individual_job_api",
+    )
+    record["source_class"] = "company_careers"
+    record["source_subtype"] = "first_party_ats"
+    record["ats_vendor"] = "greenhouse"
+    return [record]
 
 
 def parse_vacancy_html(html: str, source_url: str, *, structured_json: Optional[Mapping[str, Any]] = None) -> VacancyParseResult:
     shell = is_javascript_shell(html)
     jsonld = extract_jobposting_leads(html, source_url)
     if jsonld:
-        return VacancyParseResult(tuple(dict(item) for item in jsonld), "jsonld", jsonld_count=len(jsonld), javascript_shell=shell)
+        today = date.today()
+        records: list[dict[str, Any]] = []
+        for item in jsonld:
+            record = dict(item)
+            published = _iso_day(record.get("published_at") or record.get("evidence_date"))
+            valid_through = _iso_day(record.get("valid_through"))
+            recent = bool(published and 0 <= (today - published).days <= 60)
+            unexpired = valid_through is None or valid_through >= today
+            if recent and unexpired:
+                _active_provenance(
+                    record, active=True, evidence="live_jobposting_page", method="http_200_jsonld_jobposting",
+                )
+            else:
+                _active_provenance(
+                    record, active=None, evidence="", method="jsonld_jobposting_unverified",
+                )
+            records.append(record)
+        return VacancyParseResult(tuple(records), "jsonld", jsonld_count=len(records), javascript_shell=shell)
     if structured_json:
         vendor = detect_ats_vendor(source_url)
         if vendor == "workday":

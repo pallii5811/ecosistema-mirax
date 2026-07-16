@@ -46,6 +46,8 @@ def _base_record(**overrides) -> dict:
         "location": "Milano, Lombardia, Italia",
         "published_at": "2026-07-10",
         "active": True,
+        "active_evidence": "live_jobposting_page",
+        "active_verification_method": "http_200_jsonld_jobposting",
         "source_url": "https://acme.test/jobs/commerciale-milano",
         "source_class": "company_careers",
         "employer_is_direct": True,

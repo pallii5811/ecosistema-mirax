@@ -102,6 +102,8 @@ def test_verisure_domain_resolved_from_careers_host():
         "vacancy_source_domain": "careers.verisure.com",
         "published_at": "2026-07-02",
         "active": True,
+        "active_evidence": "live_jobposting_page",
+        "active_verification_method": "http_200_jsonld_jobposting",
         "source_class": "company_careers",
     })
     assert record["employer_official_domain"] == "verisure.com"
@@ -132,7 +134,7 @@ def test_bootstrap_revalidation_queue_from_parsed_outcomes():
     assert reval == ("https://a.example/j/1",)
     parsed2, reval2 = bootstrap_parsed_and_revalidation_queues(outcomes, qualification_validator_epoch=QUALIFICATION_VALIDATOR_EPOCH)
     assert parsed2 == ("https://a.example/j/1",)
-    assert reval2 == ()
+    assert reval2 == ("https://a.example/j/1",)
 
 
 def test_offline_replay_first100_parsed_candidates():
@@ -140,6 +142,8 @@ def test_offline_replay_first100_parsed_candidates():
     rows = [row for row in payload["rows"] if row.get("parser_result") == "success"]
     for row in rows:
         row.setdefault("active", True)
+        row.setdefault("active_evidence", "workday_can_apply_true")
+        row.setdefault("active_verification_method", "workday_cxs_can_apply")
     assert len(rows) == 15
     replay = replay_parsed_candidates(rows, today=date(2026, 7, 15))
     assert replay.geography_pass >= 10

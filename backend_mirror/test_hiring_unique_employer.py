@@ -285,6 +285,9 @@ def test_hiring_adapter_stops_only_on_new_unique_employers(monkeypatch: pytest.M
             "source_class": "company_careers",
             "published_at": "2026-07-01",
             "official_domain_verified": True,
+            "active": True,
+            "active_evidence": "live_jobposting_page",
+            "active_verification_method": "http_200_jsonld_jobposting",
         })
         record_b = resolve_employer_identity({
             "company_name": "Dedalus",
@@ -295,6 +298,9 @@ def test_hiring_adapter_stops_only_on_new_unique_employers(monkeypatch: pytest.M
             "source_class": "company_careers",
             "published_at": "2026-07-01",
             "official_domain_verified": True,
+            "active": True,
+            "active_evidence": "live_jobposting_page",
+            "active_verification_method": "http_200_jsonld_jobposting",
         })
         records = (record_a, record_b) if calls["count"] == 1 else (record_a,)
         return HiringProviderResult(records, True, 0.0, (), (), state, 1, 1)

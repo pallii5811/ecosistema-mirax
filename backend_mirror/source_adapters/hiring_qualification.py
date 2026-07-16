@@ -485,6 +485,9 @@ def outcome_to_record(outcome: Mapping[str, Any]) -> dict[str, Any]:
         row["active"] = outcome.get("active")
     elif outcome.get("vacancy_active") is not None:
         row["active"] = outcome.get("vacancy_active")
+    row["active_evidence"] = _text(outcome.get("active_evidence"))
+    row["active_checked_at"] = _text(outcome.get("active_checked_at"))
+    row["active_verification_method"] = _text(outcome.get("active_verification_method"))
     return row
 
 
@@ -505,12 +508,29 @@ def bootstrap_parsed_and_revalidation_queues(
         if not url:
             continue
         parsed.append(url)
-        if str(item.get("rejection_code") or "") != "ACCEPTED":
+        missing_active_provenance = (
+            ("active" not in item and item.get("vacancy_active") is None)
+            or not item.get("active_evidence")
+            or not item.get("active_verification_method")
+        )
+        if missing_active_provenance or str(item.get("rejection_code") or "") != "ACCEPTED":
             revalidation.append(url)
     parsed_unique = tuple(dict.fromkeys(parsed))
     reval_unique = tuple(dict.fromkeys(revalidation))
     if qualification_validator_epoch >= QUALIFICATION_VALIDATOR_EPOCH:
-        return parsed_unique, ()
+        active_refetch = tuple(
+            url for url in reval_unique
+            if any(
+                _text(item.get("canonical_url") or item.get("url")) == url
+                and (
+                    ("active" not in item and item.get("vacancy_active") is None)
+                    or not item.get("active_evidence")
+                    or not item.get("active_verification_method")
+                )
+                for item in url_outcomes if isinstance(item, Mapping)
+            )
+        )
+        return parsed_unique, active_refetch
     return parsed_unique, reval_unique
 
 

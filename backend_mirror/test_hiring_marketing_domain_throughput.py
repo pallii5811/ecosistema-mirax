@@ -71,6 +71,8 @@ def test_job_board_third_party_stays_secondary() -> None:
         "location": "Milano, Italia",
         "published_at": "2026-07-01",
         "active": True,
+        "active_evidence": "live_jobposting_page",
+        "active_verification_method": "http_200_jsonld_jobposting",
         "company_name": "Acme SpA",
         "employer_official_domain": "acme.it",
         "official_domain_verified": True,

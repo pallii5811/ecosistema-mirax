@@ -18,6 +18,12 @@ DOMAIN_CAP_EUR = 0.025
 QUERY_COST_EUR = 0.005
 QUERIES_PER_BATCH = 4
 URLS_PER_BATCH = 24
+TERMINAL_URL_STATES = frozenset({"accepted", "rejected_final", "duplicate", "duplicate_employer"})
+
+
+def canonical_url_key(value: Any) -> str:
+    """Stable queue identity; URL position is never authoritative."""
+    return str(value or "").strip().lower().rstrip("/")
 
 
 @dataclass
@@ -40,6 +46,9 @@ class HiringDiscoveryState:
     parsed_candidate_queue: Tuple[str, ...] = ()
     revalidation_queue: Tuple[str, ...] = ()
     qualification_validator_epoch: int = 1
+    processed_terminal_urls: Tuple[str, ...] = ()
+    retryable_urls: Tuple[str, ...] = ()
+    pending_urls: Tuple[str, ...] = ()
 
     @property
     def total_spent_eur(self) -> float:
@@ -58,8 +67,8 @@ class HiringDiscoveryState:
         return self.discovery_remaining_eur() + 1e-9 < QUERY_COST_EUR
 
     def queue_pending(self) -> int:
-        offset = self.discovery_url_offset or self.url_offset
-        return max(0, len(self.seen_urls) - offset)
+        reconcile_hiring_url_queue(self)
+        return len(self.pending_urls)
 
     @property
     def retry_fetch_queue(self) -> Tuple[str, ...]:
@@ -85,6 +94,9 @@ class HiringDiscoveryState:
             "parsed_candidate_queue": list(self.parsed_candidate_queue),
             "revalidation_queue": list(self.revalidation_queue),
             "qualification_validator_epoch": int(self.qualification_validator_epoch),
+            "processed_terminal_urls": list(self.processed_terminal_urls),
+            "retryable_urls": list(self.retryable_urls),
+            "pending_urls": list(self.pending_urls),
         }
 
     @classmethod
@@ -116,6 +128,9 @@ class HiringDiscoveryState:
             parsed_candidate_queue=tuple(str(item) for item in payload.get("parsed_candidate_queue") or ()),
             revalidation_queue=tuple(str(item) for item in payload.get("revalidation_queue") or ()),
             qualification_validator_epoch=int(payload.get("qualification_validator_epoch") or 1),
+            processed_terminal_urls=tuple(str(item) for item in payload.get("processed_terminal_urls") or ()),
+            retryable_urls=tuple(str(item) for item in payload.get("retryable_urls") or payload.get("retry_urls") or ()),
+            pending_urls=tuple(str(item) for item in payload.get("pending_urls") or ()),
         )
 
 
@@ -151,7 +166,92 @@ def url_outcomes_map(state: HiringDiscoveryState) -> dict[str, dict[str, Any]]:
     for item in state.url_outcomes:
         if not isinstance(item, Mapping):
             continue
-        key = str(item.get("canonical_url") or item.get("url") or "").lower().rstrip("/")
+        key = canonical_url_key(item.get("canonical_url") or item.get("url"))
         if key:
             mapped[key] = dict(item)
     return mapped
+
+
+def reconcile_hiring_url_queue(state: HiringDiscoveryState) -> dict[str, int]:
+    """Rebuild durable queue tiers from canonical identities and persisted outcomes.
+
+    Legacy parser successes without active-status provenance require one refetch;
+    a historical scalar offset can never turn them (or unseen outcomes) terminal.
+    """
+    unique_seen: list[str] = []
+    seen_set: set[str] = set()
+    for value in state.seen_urls:
+        key = canonical_url_key(value)
+        if key and key not in seen_set:
+            seen_set.add(key)
+            unique_seen.append(key)
+
+    outcomes = url_outcomes_map(state)
+    revalidation = {canonical_url_key(item) for item in state.revalidation_queue if canonical_url_key(item)}
+    retryable = {
+        canonical_url_key(item)
+        for item in (*state.retry_urls, *state.retryable_urls)
+        if canonical_url_key(item)
+    }
+    terminal: set[str] = set()
+    rewritten: list[dict[str, Any]] = []
+    for item in state.url_outcomes:
+        row = dict(item)
+        key = canonical_url_key(row.get("canonical_url") or row.get("url"))
+        if not key:
+            continue
+        parser_success = str(row.get("parser_result") or "") == "success"
+        has_active = "active" in row or row.get("vacancy_active") is not None
+        has_provenance = bool(row.get("active_evidence") and row.get("active_verification_method"))
+        if parser_success and (not has_active or not has_provenance):
+            row.update({
+                "canonical_url": key,
+                "active": None,
+                "vacancy_active": None,
+                "validation_result": "ACTIVE_STATUS_REFETCH_REQUIRED",
+                "rejection_code": "ACTIVE_STATUS_REFETCH_REQUIRED",
+                "url_state": "retryable_active_refetch",
+            })
+            revalidation.add(key)
+            retryable.add(key)
+        elif str(row.get("url_state") or "") in TERMINAL_URL_STATES:
+            terminal.add(key)
+        elif str(row.get("url_state") or "").startswith("retryable"):
+            retryable.add(key)
+        rewritten.append(row)
+
+    terminal.intersection_update(seen_set)
+    retryable.intersection_update(seen_set)
+    revalidation.intersection_update(seen_set)
+    retryable.difference_update(terminal)
+    revalidation.difference_update(terminal)
+    pending = [key for key in unique_seen if key not in terminal and key not in retryable and key not in revalidation]
+    retry_order = [key for key in unique_seen if key in retryable]
+    retry_order.extend(sorted(retryable.difference(retry_order)))
+    revalidation_order = [key for key in unique_seen if key in revalidation]
+    revalidation_order.extend(sorted(revalidation.difference(revalidation_order)))
+
+    # Telemetry only: contiguous terminal prefix in original discovery order.
+    contiguous = 0
+    for key in unique_seen:
+        if key not in terminal:
+            break
+        contiguous += 1
+    state.url_outcomes = tuple(rewritten)
+    state.processed_terminal_urls = tuple(key for key in unique_seen if key in terminal)
+    state.retryable_urls = tuple(retry_order)
+    state.retry_urls = tuple(retry_order)
+    state.revalidation_queue = tuple(revalidation_order)
+    state.pending_urls = tuple(pending)
+    state.discovery_url_offset = contiguous
+    state.url_offset = contiguous
+    return {
+        "seen_urls": len(state.seen_urls),
+        "unique_seen_urls": len(unique_seen),
+        "unique_outcome_urls": len(outcomes),
+        "terminal_urls": len(terminal),
+        "retryable_urls": len(retryable),
+        "recovered_unprocessed_urls": len(pending),
+        "duplicates": len(state.seen_urls) - len(unique_seen),
+        "reconciliation_total": len(terminal) + len(retryable) + len(pending),
+    }

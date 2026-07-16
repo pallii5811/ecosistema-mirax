@@ -23,8 +23,10 @@ from .hiring_budget import (
     HiringDiscoveryState,
     QUERY_COST_EUR,
     URLS_PER_BATCH,
+    canonical_url_key,
     encode_discovery_cursor,
     load_discovery_state,
+    reconcile_hiring_url_queue,
     url_outcomes_map,
 )
 from .hiring_qualification import (
@@ -362,7 +364,9 @@ def _normalize_rejection_code(code: str) -> str:
         "PARSE_EMPTY": "PARSE_FAILED",
         "FETCH_OR_PARSE_EMPTY": "PARSE_FAILED",
         "AGGREGATOR_WITHOUT_EMPLOYER": "AGGREGATOR_WITHOUT_EMPLOYER",
-        "VACANCY_ACTIVE_STATUS_UNVERIFIED": "VACANCY_ACTIVE_STATUS_UNVERIFIED",
+        "VACANCY_ACTIVE_STATUS_UNVERIFIED": "ACTIVE_STATUS_REFETCH_REQUIRED",
+        "VACANCY_ACTIVE_EVIDENCE_MISSING": "ACTIVE_STATUS_REFETCH_REQUIRED",
+        "ACTIVE_STATUS_REFETCH_REQUIRED": "ACTIVE_STATUS_REFETCH_REQUIRED",
     }
     return mapping.get(code, code or "PARSE_FAILED")
 
@@ -438,18 +442,19 @@ async def _fetch_ats_structured_json(
             forensic["cxs_content_type"] = attempt["content_type"]
             forensic["cxs_response_bytes"] = attempt["response_bytes"]
             forensic["cxs_final_url"] = attempt["final_url"]
+            failure_prefix = "WORKDAY_CXS" if vendor == "workday" else f"{str(vendor or 'ATS').upper()}_JOB_API"
             if response.status_code == 404:
-                forensic["cxs_failure_code"] = "WORKDAY_CXS_HTTP_404"
+                forensic["cxs_failure_code"] = f"{failure_prefix}_HTTP_404"
                 break
             if response.status_code == 403:
-                forensic["cxs_failure_code"] = "WORKDAY_CXS_HTTP_403"
+                forensic["cxs_failure_code"] = f"{failure_prefix}_HTTP_403"
                 break
             if response.status_code != 200:
-                forensic["cxs_failure_code"] = f"WORKDAY_CXS_HTTP_{response.status_code}"
+                forensic["cxs_failure_code"] = f"{failure_prefix}_HTTP_{response.status_code}"
                 break
             content_type = attempt["content_type"].lower()
             if "json" not in content_type:
-                forensic["cxs_failure_code"] = "WORKDAY_CXS_NOT_JSON"
+                forensic["cxs_failure_code"] = f"{failure_prefix}_NOT_JSON"
                 forensic["json_parse_result"] = "not_json_content_type"
                 break
             payload = response.json()
@@ -458,19 +463,19 @@ async def _fetch_ats_structured_json(
                 forensic.pop("cxs_failure_code", None)
                 forensic["cxs_attempt_count"] = len(forensic.get("cxs_attempts") or [])
                 return payload, forensic
-            forensic["cxs_failure_code"] = "WORKDAY_CXS_NOT_JSON"
+            forensic["cxs_failure_code"] = f"{failure_prefix}_NOT_JSON"
             forensic["json_parse_result"] = "non_object_json"
             break
         except asyncio.TimeoutError:
             attempt["error"] = "TimeoutError"
             forensic["cxs_attempts"].append(attempt)
-            forensic["cxs_failure_code"] = "WORKDAY_CXS_FETCH_ERROR"
+            forensic["cxs_failure_code"] = f"{('WORKDAY_CXS' if vendor == 'workday' else str(vendor or 'ATS').upper() + '_JOB_API')}_FETCH_ERROR"
             forensic["json_parse_result"] = "timeout"
             break
         except Exception as exc:
             attempt["error"] = exc.__class__.__name__
             forensic["cxs_attempts"].append(attempt)
-            forensic["cxs_failure_code"] = "WORKDAY_CXS_FETCH_ERROR"
+            forensic["cxs_failure_code"] = f"{('WORKDAY_CXS' if vendor == 'workday' else str(vendor or 'ATS').upper() + '_JOB_API')}_FETCH_ERROR"
             forensic["json_parse_result"] = "exception"
             break
     if vendor == "workday" and candidates and "cxs_failure_code" not in forensic:
@@ -488,12 +493,12 @@ def _workday_parse_failure_code(forensic: Mapping[str, Any], parsed_failure: str
     return parsed_failure or "JSONLD_JOBPOSTING_MISSING"
 
 def _append_url_outcome(state: HiringDiscoveryState, outcome: Mapping[str, Any]) -> None:
-    canonical = str(outcome.get("canonical_url") or outcome.get("url") or "").lower().rstrip("/")
+    canonical = canonical_url_key(outcome.get("canonical_url") or outcome.get("url"))
     if not canonical:
         return
     rows = [dict(item) for item in state.url_outcomes if isinstance(item, Mapping)]
     for index, item in enumerate(rows):
-        key = str(item.get("canonical_url") or item.get("url") or "").lower().rstrip("/")
+        key = canonical_url_key(item.get("canonical_url") or item.get("url"))
         if key == canonical:
             rows[index] = dict(outcome)
             state.url_outcomes = tuple(rows)
@@ -523,6 +528,7 @@ def _revalidate_from_outcome(
     record = resolve_employer_identity(enrich_record_with_recruiter_fields(outcome_to_record(merged)))
     valid, rejection = _validate_record(record, request, date.today())
     normalized = _normalize_rejection_code(rejection)
+    needs_refetch = normalized in {"VACANCY_ACTIVE_STATUS_UNVERIFIED", "ACTIVE_STATUS_REFETCH_REQUIRED"}
     _append_url_outcome(state, {
         **merged,
         "vacancy_title": record.get("vacancy_title") or record.get("hiring_title"),
@@ -531,18 +537,24 @@ def _revalidate_from_outcome(
         "publication_date": record.get("published_at") or record.get("evidence_date"),
         "employer_official_domain": record.get("employer_official_domain"),
         "validation_result": "accepted" if valid else normalized,
-        "rejection_code": "ACCEPTED" if valid else normalized,
-        "url_state": "accepted" if valid else "rejected_final",
+        "rejection_code": "ACCEPTED" if valid else ("ACTIVE_STATUS_REFETCH_REQUIRED" if needs_refetch else normalized),
+        "url_state": "accepted" if valid else ("retryable_active_refetch" if needs_refetch else "rejected_final"),
         "parser_result": "success",
         "revalidation": True,
     })
-    _update_revalidation_queue(state, url)
+    if not needs_refetch:
+        _update_revalidation_queue(state, url)
+    elif canonical not in {canonical_url_key(item) for item in state.retry_urls}:
+        state.retry_urls = tuple([*state.retry_urls, canonical])
     return (record if valid else None, normalized, "accepted" if valid else normalized)
 
 
 def _update_retry_queue(state: HiringDiscoveryState, url: str, rejection_code: str, *, is_retry: bool) -> None:
     canonical = url.lower().rstrip("/")
     retry = [item for item in state.retry_urls if item.lower().rstrip("/") != canonical]
+    state.retryable_urls = tuple(
+        item for item in state.retryable_urls if item.lower().rstrip("/") != canonical
+    )
     if rejection_code == "ACCEPTED" or not classify_failure_for_retry(rejection_code):
         state.retry_urls = tuple(retry)
         return
@@ -696,14 +708,14 @@ async def _default_hiring_provider(
             state.revalidation_queue = tuple(dict.fromkeys([*state.revalidation_queue, *reval_queue]))
         state.qualification_validator_epoch = QUALIFICATION_VALIDATOR_EPOCH
 
-    discovery_offset = state.discovery_url_offset or state.url_offset
-    state.discovery_url_offset = discovery_offset
+    reconcile_hiring_url_queue(state)
+    discovery_offset = state.discovery_url_offset
     prefer_pending = should_prefer_pending_over_retry(
         revalidation_urls=state.revalidation_queue,
         discovery_offset=discovery_offset,
         total_urls=len(urls),
     )
-    pending_url_slots = max(0, len(urls) - discovery_offset)
+    pending_url_slots = len(state.pending_urls)
     queue_pending = pending_url_slots > 0 or bool(state.retry_urls) or bool(state.revalidation_queue)
     if not queue_pending and queries_run == 0:
         exhausted = discovery_locked and state.query_index >= len(query_pairs)
@@ -732,6 +744,8 @@ async def _default_hiring_provider(
         start_offset=discovery_offset,
         batch_cap=batch_cap,
         prefer_pending_over_retry=prefer_pending,
+        pending_urls=state.pending_urls,
+        processed_terminal_urls=state.processed_terminal_urls,
     )
     domain_active: Dict[str, int] = {}
     urls_processed = 0
@@ -744,7 +758,9 @@ async def _default_hiring_provider(
 
         async def _prefetch_ats(item: Mapping[str, Any]) -> None:
             url = str(item.get("url") or "")
-            if not url or item.get("is_revalidation") or item.get("prefetch_accept") is False:
+            prior = outcomes_by_url.get(canonical_url_key(url)) or {}
+            active_refetch = str(prior.get("rejection_code") or "") == "ACTIVE_STATUS_REFETCH_REQUIRED"
+            if not url or (item.get("is_revalidation") and not active_refetch) or item.get("prefetch_accept") is False:
                 return
             vendor = detect_ats_vendor(url)
             if vendor not in {"workday", "greenhouse", "teamtailor"}:
@@ -762,7 +778,9 @@ async def _default_hiring_provider(
             is_retry = bool(item.get("is_retry"))
             is_revalidation = bool(item.get("is_revalidation"))
             prefetch_traces.append(dict(item))
-            canonical = url.lower().rstrip("/")
+            canonical = canonical_url_key(url)
+            prior_outcome = outcomes_by_url.get(canonical) or {}
+            is_active_refetch = is_revalidation and str(prior_outcome.get("rejection_code") or "") == "ACTIVE_STATUS_REFETCH_REQUIRED"
             base_outcome: Dict[str, Any] = {
                 "url": url,
                 "canonical_url": canonical,
@@ -771,7 +789,7 @@ async def _default_hiring_provider(
                 "priority": item.get("priority"),
                 "ats_vendor": detect_ats_vendor(url),
             }
-            if is_revalidation:
+            if is_revalidation and not is_active_refetch:
                 record, rejection, _ = _revalidate_from_outcome(
                     state,
                     url=url,
@@ -816,18 +834,16 @@ async def _default_hiring_provider(
                     "url_state": "rejected_final",
                 })
                 _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "rejected_final"})
-                if not is_retry:
-                    _advance_discovery_offset(state)
-                else:
+                if is_retry:
                     _update_retry_queue(state, url, rejection, is_retry=True)
                 urls_processed += 1
                 continue
             host = str(item.get("source_domain") or _host(url))
             if domain_active.get(host, 0) >= DOMAIN_LIMIT_PER_BATCH:
                 rejection = "DOMAIN_BATCH_DEFERRED"
-                traces.append({**base_outcome, "rejection_code": rejection, "rejection_function": "domain_rate_limit", "url_state": "retryable_parser_failure"})
-                _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure"})
-                _update_retry_queue(state, url, rejection, is_retry=is_retry)
+                traces.append({**base_outcome, "rejection_code": rejection, "rejection_function": "domain_rate_limit", "url_state": "pending_deferred"})
+                _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "pending_deferred"})
+                _update_retry_queue(state, url, "PENDING", is_retry=is_retry)
                 continue
             domain_active[host] = domain_active.get(host, 0) + 1
             query = str(item.get("query") or "")
@@ -865,8 +881,6 @@ async def _default_hiring_provider(
                         traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
                         _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure", "fetch_success": False, "stage_timings": stage_timings})
                         _update_retry_queue(state, url, rejection, is_retry=is_retry)
-                        if not is_retry:
-                            _advance_discovery_offset(state)
                         urls_processed += 1
                         continue
                     html = response.text[:2_000_000]
@@ -902,8 +916,6 @@ async def _default_hiring_provider(
                 if not parsed:
                     rejection = _normalize_rejection_code(
                         _workday_parse_failure_code(cxs_forensic, parsed_result.failure_code or "PARSE_FAILED")
-                        if detect_ats_vendor(url) == "workday"
-                        else (parsed_result.failure_code or "PARSE_FAILED")
                     )
                     traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
                     _append_url_outcome(state, {
@@ -914,8 +926,6 @@ async def _default_hiring_provider(
                         "failure_code": rejection,
                     })
                     _update_retry_queue(state, url, rejection, is_retry=is_retry)
-                    if not is_retry:
-                        _advance_discovery_offset(state)
                     urls_processed += 1
                     continue
                 url_accepted = False
@@ -932,14 +942,24 @@ async def _default_hiring_provider(
                         "location": record.get("location"),
                         "publication_date": record.get("published_at") or record.get("evidence_date"),
                         "employer_official_domain": record.get("employer_official_domain"),
+                        "official_domain_verified": record.get("official_domain_verified"),
+                        "domain_verification_evidence": record.get("domain_verification_evidence"),
                         "source_class": record.get("source_class"),
                         "source_subtype": record.get("source_subtype"),
                         "ats_vendor": record.get("ats_vendor"),
+                        "workday_tenant": record.get("workday_tenant"),
+                        "description": record.get("description"),
                         "active": record.get("active"),
                         "vacancy_active": record.get("active"),
+                        "active_evidence": record.get("active_evidence"),
+                        "active_checked_at": record.get("active_checked_at"),
+                        "active_verification_method": record.get("active_verification_method"),
                         "validation_result": "accepted" if valid else normalized,
                         "rejection_code": "ACCEPTED" if valid else normalized,
-                        "url_state": "accepted" if valid else ("rejected_final" if not classify_failure_for_retry(normalized) else "retryable_parser_failure"),
+                        "url_state": "accepted" if valid else (
+                            "retryable_active_refetch" if normalized == "ACTIVE_STATUS_REFETCH_REQUIRED"
+                            else ("rejected_final" if not classify_failure_for_retry(normalized) else "retryable_parser_failure")
+                        ),
                         "parser_result": "success",
                     })
                     if valid:
@@ -960,6 +980,17 @@ async def _default_hiring_provider(
                                 "vacancy_title": record.get("vacancy_title") or record.get("hiring_title"),
                                 "employer": record.get("company_name") or record.get("name"),
                                 "location": record.get("location"),
+                                "publication_date": record.get("published_at") or record.get("evidence_date"),
+                                "employer_official_domain": record.get("employer_official_domain"),
+                                "official_domain_verified": record.get("official_domain_verified"),
+                                "source_class": record.get("source_class"),
+                                "source_subtype": record.get("source_subtype"),
+                                "ats_vendor": record.get("ats_vendor"),
+                                "active": record.get("active"),
+                                "vacancy_active": record.get("active"),
+                                "active_evidence": record.get("active_evidence"),
+                                "active_checked_at": record.get("active_checked_at"),
+                                "active_verification_method": record.get("active_verification_method"),
                                 "validation_result": duplicate_reason,
                                 "rejection_code": duplicate_reason,
                                 "url_state": "duplicate_employer",
@@ -982,21 +1013,21 @@ async def _default_hiring_provider(
                 traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
                 _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure", "fetch_success": False})
                 _update_retry_queue(state, url, rejection, is_retry=is_retry)
-            if not is_retry:
-                _advance_discovery_offset(state)
-            elif traces and traces[-1].get("rejection_code") == "ACCEPTED":
+            if (is_retry or is_active_refetch) and traces and traces[-1].get("rejection_code") == "ACCEPTED":
                 _update_retry_queue(state, url, "ACCEPTED", is_retry=True)
+                _update_revalidation_queue(state, url)
             urls_processed += 1
             if _new_unique_target_reached(new_unique_employer_keys, request):
                 break
 
     state.prefetch_traces = tuple(prefetch_traces)
+    reconcile_hiring_url_queue(state)
     after_cost = _governor_committed_eur()
     actual_cost = max(0.0, round(after_cost - before_cost, 6))
     if actual_cost <= 0 and queries_run:
         actual_cost = round(queries_run * QUERY_COST_EUR, 6)
     exhausted = (
-        (state.discovery_url_offset or state.url_offset) >= len(urls)
+        not state.pending_urls
         and not state.retry_urls
         and not state.revalidation_queue
         and (discovery_locked or state.query_index >= len(query_pairs))
@@ -1015,11 +1046,6 @@ async def _default_hiring_provider(
 
 def _requires_sme(request: AdapterDiscoveryRequest) -> bool:
     return requires_sme_size_gate(request)
-
-
-def _advance_discovery_offset(state: HiringDiscoveryState) -> None:
-    state.url_offset += 1
-    state.discovery_url_offset = state.url_offset
 
 
 def _location_matches(record_location: str, geographies: Sequence[str]) -> bool:
@@ -1089,6 +1115,8 @@ def _validate_record(
         return False, "VACANCY_ACTIVE_STATUS_UNVERIFIED"
     if record.get("active") is not True:
         return False, "VACANCY_NOT_CONFIRMED_ACTIVE"
+    if not record.get("active_evidence") or not record.get("active_verification_method"):
+        return False, "VACANCY_ACTIVE_EVIDENCE_MISSING"
     evidence = " ".join(filter(None, (
         title, _text(record.get("evidence") or record.get("evidence_excerpt")), _text(record.get("description")),
     )))

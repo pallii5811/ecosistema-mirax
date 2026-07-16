@@ -111,6 +111,11 @@ def _rexel_lead() -> dict:
         "https://careers.rexel.com/en/job/own-brand-business-developer-italy-in-sesto-san-giovanni-lombardia-italy-jid-2752",
     )
     assert len(leads) == 1
+    leads[0].update({
+        "active": True,
+        "active_evidence": "live_jobposting_page",
+        "active_verification_method": "http_200_jsonld_jobposting",
+    })
     return leads[0]
 
 

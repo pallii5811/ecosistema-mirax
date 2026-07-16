@@ -95,6 +95,9 @@ def _hiring_adapter() -> HiringAdapter:
         days = row.pop("days_ago")
         row["published_at"] = (date.today() - timedelta(days=int(days))).isoformat() if days is not None else ""
         row["valid_through"] = (date.today() + timedelta(days=int(row.pop("valid_days")))).isoformat()
+        if row.get("active") is True:
+            row["active_evidence"] = "live_jobposting_page"
+            row["active_verification_method"] = "fixture_http_200_jsonld_jobposting"
 
     async def provider(_request, _state, _limit):
         return HiringProviderResult(tuple(rows), True, 0.0, (), (), _state)

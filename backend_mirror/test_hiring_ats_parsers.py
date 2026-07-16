@@ -179,6 +179,8 @@ def test_lombard_city_without_region_passes_validation():
     record["location"] = "Milano, Italia"
     record["published_at"] = "2026-07-10"
     record["active"] = True
+    record["active_evidence"] = "workday_can_apply_true"
+    record["active_verification_method"] = "workday_cxs_can_apply"
     record["evidence"] = "Commerciale sales business developer"
     enriched = enrich_record_with_recruiter_fields(record)
     ok, rejection = _validate_record(enriched, _sales_request(), date(2026, 7, 15))
@@ -192,6 +194,8 @@ def test_non_sales_role_rejected():
         "location": "Milano, Lombardia",
         "published_at": "2026-07-10",
         "active": True,
+        "active_evidence": "live_jobposting_page",
+        "active_verification_method": "http_200_jsonld_jobposting",
         "source_url": "https://acme.it/jobs/magazziniere",
         "source_class": "company_careers",
         "employer_is_direct": True,

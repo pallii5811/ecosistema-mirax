@@ -45,6 +45,8 @@ def _base_record(**overrides: Any) -> dict[str, Any]:
         "address_region": "Lombardia",
         "published_at": "2026-07-01",
         "active": True,
+        "active_evidence": "greenhouse_job_api_current",
+        "active_verification_method": "greenhouse_individual_job_api",
         "description": "Ruolo operativo nel team.",
         "company_name": "Acme SpA",
         "employer_official_domain": "acme.it",

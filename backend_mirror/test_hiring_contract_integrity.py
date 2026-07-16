@@ -226,6 +226,8 @@ def test_bd_revalidation_from_persisted_outcome_without_refetch() -> None:
         "tenant": "bdx",
         "parser_result": "success",
         "active": True,
+        "active_evidence": "workday_can_apply_true",
+        "active_verification_method": "workday_cxs_can_apply",
         "official_domain_verified": True,
     }
     record = resolve_employer_identity(outcome_to_record(outcome))
@@ -293,8 +295,10 @@ def test_provider_real_batch_twenty_five_pending(monkeypatch) -> None:
 
     assert search_calls == []
     assert result.urls_processed >= 20
-    assert end_offset - start_offset >= 20
+    assert 0 <= end_offset - start_offset <= outcomes
     assert outcomes >= 20
+    assert result.discovery_state is not None
+    assert len(result.discovery_state.pending_urls) == 5
 
 
 def test_provider_slow_url_does_not_block_batch(monkeypatch) -> None:

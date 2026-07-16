@@ -102,7 +102,8 @@ def test_discovery_locked_still_fetches_pending_urls(monkeypatch):
     assert fetch_urls
     assert result.urls_processed > 0
     assert result.discovery_state is not None
-    assert result.discovery_state.url_offset > 0
+    assert len(result.discovery_state.processed_terminal_urls) == 1
+    assert len(result.discovery_state.retryable_urls) == 1
 
 
 def test_priority_queue_puts_ats_before_aggregators():
@@ -165,7 +166,9 @@ def test_resume_cursor_preserves_url_offset_and_skips_discovery(monkeypatch):
     assert loaded.url_offset == 60
     assert loaded.discovery_spent_eur == pytest.approx(0.05)
     assert loaded.discovery_locked()
-    assert loaded.queue_pending() == 110
+    # A legacy scalar offset cannot prove that any URL was processed.
+    assert loaded.queue_pending() == 170
+    assert loaded.url_offset == 0
 
 
 def test_pending_first_queue_puts_p1_before_workday_retry():

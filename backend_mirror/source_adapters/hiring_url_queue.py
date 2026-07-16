@@ -227,6 +227,8 @@ def build_processing_batch(
     start_offset: int = 0,
     batch_cap: int = 24,
     prefer_pending_over_retry: bool = False,
+    pending_urls: Sequence[str] | None = None,
+    processed_terminal_urls: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Merge queue tiers: revalidation, then pending or retry depending on mode."""
     reval_items: list[dict[str, Any]] = []
@@ -257,7 +259,18 @@ def build_processing_batch(
         retry_items.append(item)
     retry_items.sort(key=lambda row: (row["priority"], row["canonical_url"]))
 
-    pending_all = build_priority_queue(urls, url_query_meta, start_offset=start_offset)
+    terminal = {url.lower().rstrip("/") for url in processed_terminal_urls}
+    queued_elsewhere = {
+        url.lower().rstrip("/") for url in (*retry_urls, *revalidation_urls)
+    }
+    pending_source = list(pending_urls) if pending_urls is not None else [
+        url for url in urls
+        if url.lower().rstrip("/") not in terminal
+        and url.lower().rstrip("/") not in queued_elsewhere
+    ]
+    # start_offset is legacy telemetry only when an explicit durable tier is absent.
+    legacy_offset = start_offset if pending_urls is None and not processed_terminal_urls else 0
+    pending_all = build_priority_queue(pending_source, url_query_meta, start_offset=legacy_offset)
     pending_p1: list[dict[str, Any]] = []
     pending_p2: list[dict[str, Any]] = []
     pending_hard: list[dict[str, Any]] = []

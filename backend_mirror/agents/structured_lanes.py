@@ -235,7 +235,9 @@ def extract_jobposting_leads(html: str, source_url: str) -> List[Dict[str, Any]]
                     "source_publisher": vacancy_source_domain or source_host,
                     "source_class": source_class,
                     "extraction_method": "schema_org_jobposting",
-                    "active": True,
+                    # Active status is assigned only by the acquisition adapter,
+                    # which can prove the HTTP/API response and freshness.
+                    "active": None,
                     "description": description[:2000],
                     "company_size": company_size,
                     "employee_count": employee_count,
