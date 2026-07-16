@@ -222,6 +222,21 @@ def _geography_matches_target(lead: Dict[str, Any], canonical_plan: Dict[str, An
     geographies = [str(item).strip().lower() for item in target.get("geographies") or [] if str(item).strip()]
     if not geographies:
         return True
+    if str(lead.get("source_adapter_id") or "") == "structured_hiring_v1":
+        try:
+            from source_adapters.hiring_qualification import evaluate_vacancy_geography
+        except ImportError:  # package-mode tests
+            from backend_mirror.source_adapters.hiring_qualification import evaluate_vacancy_geography
+        return bool(evaluate_vacancy_geography(
+            location=str(lead.get("citta") or lead.get("location") or ""),
+            title=str(lead.get("vacancy_title") or lead.get("hiring_title") or ""),
+            address_locality=str(lead.get("address_locality") or ""),
+            address_region=str(lead.get("address_region") or ""),
+            address_country=str(lead.get("address_country") or ""),
+            additional_locations=lead.get("additional_locations") or (),
+            source_url=str(lead.get("vacancy_url") or ""),
+            geographies=geographies,
+        ))
     lead_geo = str(lead.get("citta") or lead.get("city") or "").strip().lower()
     location_blob = " ".join(
         str(lead.get(key) or "") for key in ("citta", "city", "indirizzo", "address")
@@ -609,6 +624,8 @@ def evaluate_publication_gate(
         "no_critical_contradictions": not unresolved_contradictions,
         "cost_within_budget": cost_within_budget,
     }
+    if str(lead.get("source_adapter_id") or "") == "structured_hiring_v1":
+        gates["geography_matches_target"] = _geography_matches_target(lead, canonical_plan)
     failures = [key for key, passed in gates.items() if not passed]
     reason_codes = {
         "official_domain_verified": "OFFICIAL_DOMAIN_UNRESOLVED",
@@ -624,6 +641,7 @@ def evaluate_publication_gate(
         "audit_completed": "SOURCE_NOT_VERIFIABLE",
         "no_critical_contradictions": "CRITICAL_CONTRADICTION",
         "cost_within_budget": "COST_GATE_FAILED",
+        "geography_matches_target": "GEO_OUT_OF_SCOPE",
     }
     rejection_codes = list(dict.fromkeys(reason_codes[key] for key in failures))
     buyer_fit_detail = {

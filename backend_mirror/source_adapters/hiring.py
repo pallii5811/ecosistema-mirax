@@ -35,6 +35,7 @@ from .hiring_qualification import (
     bootstrap_parsed_and_revalidation_queues,
     dedupe_key,
     employer_key_from_record,
+    evaluate_vacancy_geography,
     outcome_to_record,
     requires_sme_size_gate,
     resolve_employer_identity,
@@ -121,15 +122,6 @@ _LOMBARDIA_GEO_TERMS = (
     "Lombardia", "Milano", "Bergamo", "Brescia", "Monza", "Brianza", "Varese", "Como",
     "Lecco", "Pavia", "Cremona", "Mantova", "Lodi", "Sondrio",
 )
-_LOMBARDIA_LOCATION_ALIASES = frozenset({
-    "lombardia", "lombardy", "milano", "milan", "bergamo", "brescia", "monza", "brianza",
-    "varese", "como", "lecco", "pavia", "cremona", "mantova", "lodi", "sondrio",
-    "sesto san giovanni", "rho", "legnano", "desio", "vimercate", "lissone",
-})
-_REGION_LOCATION_ALIASES = {
-    "lombardia": _LOMBARDIA_LOCATION_ALIASES,
-    "lombardy": _LOMBARDIA_LOCATION_ALIASES,
-}
 _RECRUITER_NAME_RE = re.compile(
     r"\b(?:agenzia di selezione|headhunter|recruiter|staffing|consulting group|human resources agency)\b",
     re.I,
@@ -1064,17 +1056,7 @@ def _requires_sme(request: AdapterDiscoveryRequest) -> bool:
 
 
 def _location_matches(record_location: str, geographies: Sequence[str]) -> bool:
-    requested = [item.casefold() for item in geographies if item.casefold() not in {"italy", "italia"}]
-    if not requested:
-        return bool(record_location)
-    location = record_location.casefold()
-    for item in requested:
-        if item in location or location in item:
-            return True
-        aliases = _REGION_LOCATION_ALIASES.get(item)
-        if aliases and any(alias in location for alias in aliases):
-            return True
-    return False
+    return vacancy_geography_matches(location=record_location, geographies=geographies)
 
 
 def _employer_official_domain(record: Mapping[str, Any]) -> str:
@@ -1109,14 +1091,20 @@ def _validate_record(
     location = _text(record.get("location")) or ""
     if not location and not title:
         return False, "VACANCY_LOCATION_MISSING"
-    if not vacancy_geography_matches(
+    geography = evaluate_vacancy_geography(
         location=location,
         title=title,
         address_locality=_text(record.get("address_locality")),
         address_region=_text(record.get("address_region")),
+        address_country=_text(record.get("address_country")),
+        additional_locations=record.get("additional_locations") or (),
+        source_url=source_url,
         geographies=request.geographies,
-    ):
-        return False, "GEOGRAPHY_MISMATCH"
+    )
+    if isinstance(record, dict):
+        record.update(geography.to_dict())
+    if not geography:
+        return False, geography.geography_rejection_code or "GEO_OUT_OF_SCOPE"
     published = _iso_date(record.get("published_at") or record.get("evidence_date") or record.get("date_posted"))
     if not published:
         return False, "VACANCY_DATE_MISSING"
@@ -1332,6 +1320,13 @@ class HiringAdapter:
                         "source_subtype": source_subtype,
                         "ats_vendor": ats_vendor,
                         "workday_tenant": record.get("workday_tenant"),
+                        "geography_match": record.get("geography_match"),
+                        "requested_geographies": record.get("requested_geographies"),
+                        "normalized_country": record.get("normalized_country"),
+                        "matched_geography": record.get("matched_geography"),
+                        "geography_match_method": record.get("geography_match_method"),
+                        "geography_match_evidence": record.get("geography_match_evidence"),
+                        "geography_rejection_code": record.get("geography_rejection_code"),
                     },
                 )
                 candidates.append(OpportunityCandidate(
@@ -1363,6 +1358,19 @@ class HiringAdapter:
                         "final_employer_domain": record.get("final_employer_domain"),
                         "employer_resolution_method": record.get("employer_resolution_method"),
                         "publisher": publisher,
+                        "vacancy_title": title,
+                        "location": record.get("location"),
+                        "address_locality": record.get("address_locality"),
+                        "address_region": record.get("address_region"),
+                        "address_country": record.get("address_country"),
+                        "additional_locations": record.get("additional_locations") or [],
+                        "geography_match": record.get("geography_match"),
+                        "requested_geographies": record.get("requested_geographies") or [],
+                        "normalized_country": record.get("normalized_country"),
+                        "matched_geography": record.get("matched_geography"),
+                        "geography_match_method": record.get("geography_match_method"),
+                        "geography_match_evidence": record.get("geography_match_evidence"),
+                        "geography_rejection_code": record.get("geography_rejection_code"),
                         "domain_verification": {
                             "status": "verified", "confidence": 0.96 if source_class == "company_careers" else 0.86,
                             "score": 96 if source_class == "company_careers" else 86,

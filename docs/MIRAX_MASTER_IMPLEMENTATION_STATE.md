@@ -83,4 +83,11 @@ Ultimo aggiornamento verificato: 2026-07-15 Europe/Rome.
 - Suite Source Adapter `91 passed`; lifecycle/costi/lease `63 passed`; nessun canary o costo live ancora eseguito.
 
 ## Prossimo passo sicuro
-- Commit/push e redeploy staging del governor fix; poi un solo canary Procurement one-shot entro `EUR 0,125`.
+- Checkpoint Hiring Marketing: costo storico `EUR 0,05`, coda esistente `77 pending / 37 retryable`, zero nuova discovery autorizzata.
+- Root cause P0 confermata: il country scope Italia veniva eliminato e il lifecycle Hiring non applicava il gate geografico.
+- Fix locale: unico validatore vacancy-scoped, provenance geografica canonica, filtro adapter/shadow/lifecycle e resume depurato.
+- Rivalidazione offline reale: Red Bull passa; DuPont, Flexera, LivaNova e Viatris respinte `GEO_OUT_OF_SCOPE`.
+- Accepted prima/dopo: `5 -> 1`; remaining target: `4`.
+- Regressioni mirate: `62 passed`; suite Hiring/lifecycle allargata: `178 passed`; compile e diff check verdi.
+- Nessuna discovery/provider call eseguita durante la correzione e rivalidazione offline.
+- Prossimo passo: commit/push, staging immutabile, massimo due one-shot sulla coda esistente entro cap cumulativo `EUR 0,125`.

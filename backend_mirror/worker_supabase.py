@@ -5101,11 +5101,12 @@ def main() -> None:
             # invokes graph/customer publication. Qualified shadow payloads may
             # be returned in the owning staging search row for live UI review.
             if _source_adapter_shadow_is_requested(intent):
-                from commercial_lifecycle import persist_and_publish_candidates
+                from commercial_lifecycle import canonical_domain, persist_and_publish_candidates
                 from source_adapters.shadow_runtime import (
                     build_shadow_resume_state,
                     execute_source_adapter_shadow,
                     merge_shadow_qualified_payloads,
+                    revalidate_hiring_payload_geographies,
                     serialize_shadow_qualified_leads,
                     source_adapter_shadow_decision,
                 )
@@ -5113,9 +5114,41 @@ def main() -> None:
 
                 shadow_decision = source_adapter_shadow_decision(intent)
                 prior_shadow_resume = _shadow_resume_state_from_progress(job.get("progress"))
-                prior_qualified_payloads = _load_prior_shadow_qualified_payloads(job, supabase=supabase)
+                loaded_prior_payloads = _load_prior_shadow_qualified_payloads(job, supabase=supabase)
+                canonical_shadow_plan = _canonical_plan_from_intent(intent)
+                if canonical_shadow_plan is None:
+                    raise RuntimeError("CANONICAL_PLAN_MISSING_BEFORE_GEOGRAPHY_REVALIDATION")
+                target_geographies = tuple(
+                    str(item) for item in canonical_shadow_plan.get("target", {}).get("geographies") or ()
+                )
+                prior_qualified_payloads, geography_rejected_payloads = revalidate_hiring_payload_geographies(
+                    loaded_prior_payloads,
+                    target_geographies,
+                )
+                for rejected_payload in geography_rejected_payloads:
+                    rejected_domain = canonical_domain(rejected_payload.get("sito") or rejected_payload.get("website"))
+                    if not rejected_domain:
+                        continue
+                    supabase.table("search_candidates").update({
+                        "stage": "rejected",
+                        "target_fit_verified": False,
+                        "rejection_code": "GEO_OUT_OF_SCOPE",
+                        "rejection_detail": {
+                            "failed_gates": ["geography_matches_target"],
+                            "reason_codes": ["GEO_OUT_OF_SCOPE"],
+                            "geography": {
+                                key: rejected_payload.get(key)
+                                for key in (
+                                    "requested_geographies", "normalized_country", "matched_geography",
+                                    "geography_match_method", "geography_match_evidence",
+                                )
+                            },
+                        },
+                        "payload": rejected_payload,
+                        "updated_at": _utc_now_iso(),
+                    }).eq("search_id", job_id).eq("canonical_domain", rejected_domain).execute()
                 processed_employer_keys = collect_processed_employer_keys(
-                    prior_shadow_resume.get("processed_employer_keys") or (),
+                    (),
                     prior_qualified_payloads,
                 )
                 unique_prior_count = len(processed_employer_keys)
@@ -5123,8 +5156,13 @@ def main() -> None:
                 prior_shadow_resume = {
                     **prior_shadow_resume,
                     "processed_employer_keys": list(processed_employer_keys),
+                    "processed_domains": [
+                        domain for payload in prior_qualified_payloads
+                        if (domain := canonical_domain(payload.get("sito") or payload.get("website")))
+                    ],
                     "total_unique_employer_target": int(job_max),
-                    "qualified_lead_payloads": prior_qualified_payloads or list(prior_shadow_resume.get("qualified_lead_payloads") or ()),
+                    "qualified_lead_payloads": prior_qualified_payloads,
+                    "geography_revalidation_rejections": geography_rejected_payloads,
                 }
                 if not shadow_decision.enabled:
                     _heartbeat_stop.set()
@@ -5186,9 +5224,6 @@ def main() -> None:
                     ))
                     new_shadow_leads = serialize_shadow_qualified_leads(shadow_result)
                     shadow_leads = merge_shadow_qualified_payloads(prior_qualified_payloads, new_shadow_leads)
-                    canonical_shadow_plan = _canonical_plan_from_intent(intent)
-                    if canonical_shadow_plan is None:
-                        raise RuntimeError("CANONICAL_PLAN_MISSING_AFTER_VALIDATION")
                     lifecycle_accepted = persist_and_publish_candidates(
                         supabase,
                         search_id=str(job_id),
@@ -5234,7 +5269,10 @@ def main() -> None:
                         "qualified": unique_shadow_count,
                         "lifecycle_qualified": len(unique_lifecycle_keys),
                         "rejected": shadow_result.progress.rejected_count,
-                        "rejection_codes": dict(shadow_result.rejection_codes),
+                        "rejection_codes": {
+                            **dict(shadow_result.rejection_codes),
+                            **({"GEO_OUT_OF_SCOPE": len(geography_rejected_payloads)} if geography_rejected_payloads else {}),
+                        },
                         "coverage_status": shadow_result.coverage.status,
                         "selected_adapters": list(shadow_result.coverage.adapter_ids),
                         "missing_signals": list(shadow_result.coverage.missing_signals),

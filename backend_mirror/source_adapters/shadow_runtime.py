@@ -15,11 +15,50 @@ from .hiring_qualification import (
     employer_key_from_payload,
     merge_related_opportunity,
     related_opportunity_from_payload,
+    evaluate_vacancy_geography,
 )
 from .orchestrator import OrchestrationResult, ProgressCallback, UniversalSourceOrchestrator, request_from_plan
 
 
 _MAX_SHADOW_CAP_EUR = 0.125
+
+
+def revalidate_hiring_payload_geographies(
+    payloads: Sequence[Mapping[str, Any]],
+    geographies: Sequence[str],
+) -> tuple[list[MutableMapping[str, Any]], list[MutableMapping[str, Any]]]:
+    """Remove out-of-scope Hiring payloads from resume counting while retaining forensic outcomes."""
+    accepted: list[MutableMapping[str, Any]] = []
+    rejected: list[MutableMapping[str, Any]] = []
+    for item in payloads:
+        if not isinstance(item, Mapping):
+            continue
+        payload = dict(item)
+        signals = {str(value) for value in payload.get("matched_signals") or ()}
+        is_hiring = payload.get("source_adapter_id") == "structured_hiring_v1" or any(
+            value.startswith("hiring") for value in signals
+        )
+        if not is_hiring:
+            accepted.append(payload)
+            continue
+        assessment = evaluate_vacancy_geography(
+            location=str(payload.get("citta") or payload.get("location") or ""),
+            title=str(payload.get("vacancy_title") or payload.get("hiring_title") or ""),
+            address_locality=str(payload.get("address_locality") or ""),
+            address_region=str(payload.get("address_region") or ""),
+            address_country=str(payload.get("address_country") or ""),
+            additional_locations=payload.get("additional_locations") or (),
+            source_url=str(payload.get("vacancy_url") or ""),
+            geographies=geographies,
+        )
+        payload.update(assessment.to_dict())
+        if assessment:
+            accepted.append(payload)
+        else:
+            payload["rejection_code"] = assessment.geography_rejection_code
+            payload["geography_revalidated"] = True
+            rejected.append(payload)
+    return accepted, rejected
 def _truthy(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -122,12 +161,23 @@ async def execute_source_adapter_shadow(
         raise ValueError("persistent_client and search_id must be provided together")
     resume = dict(resume_state or intent.get("shadow_resume") or {})
     prior_cost_eur = float(resume.get("prior_cost_eur") or 0.0)
-    prior_payloads = [
+    prior_payloads_raw = [
         item for item in (resume.get("qualified_lead_payloads") or ())
         if isinstance(item, Mapping)
     ]
+    prior_payloads, geography_rejected = revalidate_hiring_payload_geographies(
+        prior_payloads_raw,
+        tuple(str(item) for item in plan.get("target", {}).get("geographies") or ()),
+    )
+    if geography_rejected:
+        resume["geography_revalidation_rejections"] = geography_rejected
+        resume["qualified_lead_payloads"] = prior_payloads
+    hiring_revalidated = any(
+        item.get("source_adapter_id") == "structured_hiring_v1"
+        for item in prior_payloads_raw
+    )
     processed_employer_keys = collect_processed_employer_keys(
-        resume.get("processed_employer_keys") or (),
+        () if hiring_revalidated else (resume.get("processed_employer_keys") or ()),
         prior_payloads,
     )
     total_unique_target = int(resume.get("total_unique_employer_target") or 0)
@@ -333,7 +383,20 @@ def candidate_to_lifecycle_shadow_payload(
         **({"employee_count": employee_count} if employee_count is not None else {}),
         "employer_is_direct": candidate.provenance.get("employer_is_direct") is True,
         "vacancy_url": candidate.provenance.get("vacancy_url"),
+        "vacancy_title": candidate.provenance.get("vacancy_title"),
         "vacancy_source_domain": candidate.provenance.get("vacancy_source_domain"),
+        "location": candidate.provenance.get("location") or geography,
+        "address_locality": candidate.provenance.get("address_locality"),
+        "address_region": candidate.provenance.get("address_region"),
+        "address_country": candidate.provenance.get("address_country"),
+        "additional_locations": list(candidate.provenance.get("additional_locations") or ()),
+        "geography_match": candidate.provenance.get("geography_match") is True,
+        "requested_geographies": list(candidate.provenance.get("requested_geographies") or ()),
+        "normalized_country": candidate.provenance.get("normalized_country"),
+        "matched_geography": candidate.provenance.get("matched_geography"),
+        "geography_match_method": candidate.provenance.get("geography_match_method"),
+        "geography_match_evidence": candidate.provenance.get("geography_match_evidence"),
+        "geography_rejection_code": candidate.provenance.get("geography_rejection_code"),
         "employer_official_domain": employer_domain or None,
         "operating_company_probability": 0.95 if candidate.entity_class == "operating_company" else 0.0,
         "source_adapter_id": candidate.adapter_id,
@@ -357,6 +420,15 @@ def candidate_to_lifecycle_shadow_payload(
             "source_adapter_id": candidate.adapter_id,
             "source_adapter_version": candidate.adapter_version,
             "domain_verification": dict(verification),
+            "geography": {
+                "geography_match": candidate.provenance.get("geography_match") is True,
+                "requested_geographies": list(candidate.provenance.get("requested_geographies") or ()),
+                "normalized_country": candidate.provenance.get("normalized_country"),
+                "matched_geography": candidate.provenance.get("matched_geography"),
+                "geography_match_method": candidate.provenance.get("geography_match_method"),
+                "geography_match_evidence": candidate.provenance.get("geography_match_evidence"),
+                "geography_rejection_code": candidate.provenance.get("geography_rejection_code"),
+            },
         },
         "contradiction_flags": list(candidate.contradiction_flags),
         "source": "v5_source_adapter_shadow",

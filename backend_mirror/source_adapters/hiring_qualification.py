@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence, Tuple
 from urllib.parse import urlparse
@@ -9,7 +10,7 @@ from urllib.parse import urlparse
 from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, normalize_domain
 from backend_mirror.source_adapters.hiring_ats_parsers import detect_ats_vendor
 
-QUALIFICATION_VALIDATOR_EPOCH = 4
+QUALIFICATION_VALIDATOR_EPOCH = 5
 _EXPLICIT_SIZE_CONSTRAINT_RE = re.compile(
     r"\b(?:"
     r"pmi|sme|microimprese?|"
@@ -28,9 +29,36 @@ _LOMBARDIA_ALIASES = frozenset({
     "lombardia", "lombardy", "lombardia nord", "milano", "milan", "bergamo", "brescia",
     "monza", "brianza", "varese", "como", "lecco", "pavia", "cremona", "mantova", "lodi",
     "sondrio", "sesto san giovanni", "arese", "trezzano sul naviglio", "trezzano",
-    "moncalieri",
 })
 _PROVINCE_CODES = frozenset({"mi", "mb", "bg", "bs", "va", "co", "lc", "pv", "cr", "mn", "lo", "so"})
+_ITALY_ALIASES = frozenset({"italia", "italy"})
+_ITALY_STRUCTURED_COUNTRY_CODES = frozenset({"it", "ita", "italia", "italy"})
+_ITALIAN_REGIONS_AND_LOCALITIES = frozenset({
+    "abruzzo", "basilicata", "calabria", "campania", "emilia romagna", "friuli venezia giulia",
+    "lazio", "liguria", "lombardia", "marche", "molise", "piemonte", "puglia", "sardegna",
+    "sicilia", "toscana", "trentino alto adige", "umbria", "valle d aosta", "veneto",
+    "agrigento", "alessandria", "ancona", "aosta", "arezzo", "ascoli piceno", "asti",
+    "avellino", "bari", "barletta", "belluno", "benevento", "bergamo", "biella", "bologna",
+    "bolzano", "brescia", "brindisi", "cagliari", "caltanissetta", "campobasso", "caserta",
+    "catania", "catanzaro", "chieti", "como", "cosenza", "cremona", "crotone", "cuneo",
+    "enna", "fermo", "ferrara", "firenze", "florence", "foggia", "forli", "frosinone",
+    "genova", "genoa", "gorizia", "grosseto", "imperia", "isernia", "la spezia", "l aquila",
+    "latina", "lecce", "lecco", "livorno", "lodi", "lucca", "macerata", "mantova",
+    "massa", "matera", "messina", "milano", "milan", "modena", "monza", "napoli", "naples",
+    "novara", "nuoro", "oristano", "padova", "palermo", "parma", "pavia", "perugia",
+    "pesaro", "pescara", "piacenza", "pisa", "pistoia", "pordenone", "potenza", "prato",
+    "ragusa", "ravenna", "reggio calabria", "reggio emilia", "rieti", "rimini", "roma", "rome",
+    "rovigo", "salerno", "sassari", "savona", "siena", "siracusa", "sondrio", "taranto",
+    "teramo", "terni", "torino", "turin", "trapani", "trento", "treviso", "trieste", "udine",
+    "varese", "venezia", "venice", "verbania", "vercelli", "verona", "vibo valentia",
+    "vicenza", "viterbo", "sesto san giovanni", "trezzano sul naviglio", "arese",
+})
+_NON_ITALIAN_COUNTRY_MARKERS = frozenset({
+    "united states", "usa", "u s a", "australia", "mexico", "mexico city", "canada", "india",
+    "united kingdom", "uk", "great britain", "france", "germany", "spain", "portugal", "brazil",
+    "argentina", "japan", "china", "singapore", "netherlands", "belgium", "switzerland",
+    "austria", "poland", "sweden", "norway", "denmark", "finland", "ireland",
+})
 _CAREERS_PREFIXES = frozenset({"careers", "jobs", "job", "lavora", "work", "join", "recruiting"})
 _ATS_HOSTS = (
     "boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co",
@@ -116,37 +144,147 @@ def _corporate_from_careers_host(host: str) -> str:
     return ""
 
 
-def vacancy_geography_matches(
+def _normalized_geo_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", _text(value)).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+
+
+def _location_values(value: Any) -> Tuple[str, ...]:
+    if isinstance(value, Mapping):
+        parts = [value.get(key) for key in ("addressLocality", "addressRegion", "addressCountry", "name")]
+        return tuple(item for raw in parts if (item := _normalized_geo_text(raw)))
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        values: list[str] = []
+        for item in value:
+            values.extend(_location_values(item))
+        return tuple(dict.fromkeys(values))
+    text = _normalized_geo_text(value)
+    return (text,) if text else ()
+
+
+def _contains_term(blob: str, term: str) -> bool:
+    return bool(re.search(rf"(?:^|\s){re.escape(term)}(?:$|\s)", blob))
+
+
+@dataclass(frozen=True)
+class VacancyGeographyAssessment:
+    geography_match: bool
+    requested_geographies: Tuple[str, ...]
+    normalized_country: str
+    matched_geography: str
+    geography_match_method: str
+    geography_match_evidence: str
+    geography_rejection_code: str
+
+    def __bool__(self) -> bool:
+        return self.geography_match
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "geography_match": self.geography_match,
+            "requested_geographies": list(self.requested_geographies),
+            "normalized_country": self.normalized_country,
+            "matched_geography": self.matched_geography,
+            "geography_match_method": self.geography_match_method,
+            "geography_match_evidence": self.geography_match_evidence,
+            "geography_rejection_code": self.geography_rejection_code,
+        }
+
+
+def evaluate_vacancy_geography(
     *,
     location: str,
     title: str = "",
     address_locality: str = "",
     address_region: str = "",
+    address_country: str = "",
+    additional_locations: Any = (),
+    source_url: str = "",
     geographies: Sequence[str],
-) -> bool:
-    """Match Lombardia using vacancy fields only (title/location/structured), not page body."""
-    requested = [item.casefold() for item in geographies if item.casefold() not in {"italy", "italia"}]
+) -> VacancyGeographyAssessment:
+    """Canonical vacancy-scoped geography gate; URL locale and page language are never evidence."""
+    del source_url  # Explicitly excluded from country inference (for example Workday /it-it/).
+    requested = tuple(dict.fromkeys(_normalized_geo_text(item) for item in geographies if _normalized_geo_text(item)))
     if not requested:
-        return bool(location or title)
-    scoped = " | ".join(filter(None, (
-        _text(location).casefold(),
-        _text(title).casefold(),
-        _text(address_locality).casefold(),
-        _text(address_region).casefold(),
-    )))
-    if not scoped.strip():
-        return False
-    for item in requested:
-        if item in scoped:
-            return True
-        if item == "lombardia" and "lombardia nord" in scoped:
-            return True
-        if any(alias in scoped for alias in _LOMBARDIA_ALIASES):
-            return True
-        tokens = re.findall(r"\b[a-z]{2}\b", scoped)
-        if item == "lombardia" and any(token in _PROVINCE_CODES for token in tokens):
-            return True
-    return False
+        return VacancyGeographyAssessment(True, (), "", "", "unconstrained", "no geography requested", "")
+
+    location_text = _normalized_geo_text(location)
+    locality = _normalized_geo_text(address_locality)
+    region = _normalized_geo_text(address_region)
+    country = _normalized_geo_text(address_country)
+    title_text = _normalized_geo_text(title)
+    additional = _location_values(additional_locations)
+    vacancy_fields = tuple(filter(None, (location_text, locality, region, *additional)))
+
+    def passed(normalized_country: str, matched: str, method: str, evidence: str) -> VacancyGeographyAssessment:
+        return VacancyGeographyAssessment(True, requested, normalized_country, matched, method, evidence, "")
+
+    def failed(normalized_country: str = "") -> VacancyGeographyAssessment:
+        evidence = " | ".join(vacancy_fields) or "no vacancy-scoped geography evidence"
+        return VacancyGeographyAssessment(False, requested, normalized_country, "", "no_match", evidence, "GEO_OUT_OF_SCOPE")
+
+    wants_lombardia = any(item in {"lombardia", "lombardy"} for item in requested)
+    wants_italy = wants_lombardia or any(item in _ITALY_ALIASES for item in requested)
+
+    if wants_lombardia:
+        for item in additional:
+            if any(_contains_term(item, marker) for marker in _NON_ITALIAN_COUNTRY_MARKERS):
+                continue
+            for alias in sorted(_LOMBARDIA_ALIASES, key=len, reverse=True):
+                if _contains_term(item, alias):
+                    return passed("IT", alias, "additional_location_mapping", alias)
+        if country and country not in _ITALY_STRUCTURED_COUNTRY_CODES:
+            return failed(country.upper())
+        primary_location = " | ".join(filter(None, (location_text, locality, region)))
+        has_foreign_primary = any(_contains_term(primary_location, marker) for marker in _NON_ITALIAN_COUNTRY_MARKERS)
+        has_explicit_italy = any(_contains_term(primary_location, alias) for alias in _ITALY_ALIASES)
+        if has_foreign_primary and not has_explicit_italy:
+            detected = next(marker for marker in _NON_ITALIAN_COUNTRY_MARKERS if _contains_term(primary_location, marker))
+            return failed(detected.upper())
+        scoped = " | ".join(filter(None, (primary_location, title_text)))
+        for alias in sorted(_LOMBARDIA_ALIASES, key=len, reverse=True):
+            if _contains_term(scoped, alias):
+                return passed("IT", alias, "lombardia_location_mapping", alias)
+        if any(token in _PROVINCE_CODES for token in re.findall(r"\b[a-z]{2}\b", " ".join((locality, region)))):
+            return passed("IT", "lombardia", "structured_province_code", "structured locality/region province code")
+        return failed("IT" if country in _ITALY_STRUCTURED_COUNTRY_CODES else "")
+
+    if wants_italy:
+        if country in _ITALY_STRUCTURED_COUNTRY_CODES:
+            return passed("IT", "Italia", "structured_address_country", address_country)
+        for item in additional:
+            if any(_contains_term(item, alias) for alias in _ITALY_ALIASES):
+                return passed("IT", "Italia", "additional_location_explicit_country", item)
+            if any(_contains_term(item, marker) for marker in _NON_ITALIAN_COUNTRY_MARKERS):
+                continue
+            for locality_name in sorted(_ITALIAN_REGIONS_AND_LOCALITIES, key=len, reverse=True):
+                if _contains_term(item, locality_name):
+                    return passed("IT", locality_name, "additional_location_mapping", locality_name)
+        if country:
+            return failed(country.upper())
+        for item in filter(None, (location_text, locality, region)):
+            if any(_contains_term(item, alias) for alias in _ITALY_ALIASES):
+                return passed("IT", "Italia", "explicit_country_location", item)
+            if any(_contains_term(item, marker) for marker in _NON_ITALIAN_COUNTRY_MARKERS):
+                continue
+            for locality_name in sorted(_ITALIAN_REGIONS_AND_LOCALITIES, key=len, reverse=True):
+                if _contains_term(item, locality_name):
+                    return passed("IT", locality_name, "italian_locality_mapping", locality_name)
+        if re.search(r"\bremote\s+(?:in\s+)?italy\b|\bitaly\s+remote\b", title_text):
+            return passed("IT", "Italia", "explicit_remote_country", title)
+        detected_foreign = next((marker for marker in _NON_ITALIAN_COUNTRY_MARKERS if any(_contains_term(item, marker) for item in vacancy_fields)), "")
+        return failed(detected_foreign.upper())
+
+    scoped = " | ".join(filter(None, (location_text, locality, region, title_text, *additional)))
+    for requested_item in requested:
+        if _contains_term(scoped, requested_item):
+            return passed(country.upper(), requested_item, "explicit_vacancy_field", requested_item)
+    return failed(country.upper())
+
+
+def vacancy_geography_matches(**kwargs: Any) -> bool:
+    """Compatibility boolean delegating to the single canonical assessment."""
+    return bool(evaluate_vacancy_geography(**kwargs))
 
 
 def vacancy_role_matches_sales(*, title: str, description: str = "") -> Tuple[bool, str]:
@@ -591,15 +729,21 @@ def replay_parsed_candidates(
         record = resolve_employer_identity(outcome_to_record(outcome))
         title = _text(record.get("vacancy_title"))
         location = _text(record.get("location"))
-        if not vacancy_geography_matches(
+        geography = evaluate_vacancy_geography(
             location=location,
             title=title,
             address_locality=_text(record.get("address_locality")),
             address_region=_text(record.get("address_region")),
+            address_country=_text(record.get("address_country")),
+            additional_locations=record.get("additional_locations") or (),
+            source_url=_text(record.get("source_url")),
             geographies=geographies,
-        ):
+        )
+        record.update(geography.to_dict())
+        if not geography:
             result.geography_fail += 1
-            result.rejection_counts["GEOGRAPHY_MISMATCH"] = result.rejection_counts.get("GEOGRAPHY_MISMATCH", 0) + 1
+            code = geography.geography_rejection_code or "GEO_OUT_OF_SCOPE"
+            result.rejection_counts[code] = result.rejection_counts.get(code, 0) + 1
             continue
         result.geography_pass += 1
         if "hiring_marketing" in signal_ids:

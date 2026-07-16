@@ -45,6 +45,36 @@ def _job_location(value: Any) -> str:
     return ", ".join(parts)[:200]
 
 
+def _job_location_fields(value: Any) -> Dict[str, Any]:
+    values = value if isinstance(value, list) else [value]
+    localities: List[str] = []
+    regions: List[str] = []
+    countries: List[str] = []
+    additional: List[str] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        address = item.get("address") if isinstance(item.get("address"), dict) else item
+        extracted: List[str] = []
+        for key, target in (("addressLocality", localities), ("addressRegion", regions), ("addressCountry", countries)):
+            raw = address.get(key)
+            if isinstance(raw, dict):
+                raw = raw.get("name")
+            text = str(raw or "").strip()
+            if text and text not in target:
+                target.append(text)
+            if text:
+                extracted.append(text)
+        if extracted:
+            additional.append(", ".join(extracted))
+    return {
+        "address_locality": localities[0] if localities else "",
+        "address_region": regions[0] if regions else "",
+        "address_country": countries[0] if countries else "",
+        "additional_locations": additional[1:] if len(additional) > 1 else [],
+    }
+
+
 def _organization_size(organization: Dict[str, Any]) -> tuple[str, Optional[int]]:
     raw = organization.get("numberOfEmployees")
     if isinstance(raw, dict):
@@ -182,6 +212,7 @@ def extract_jobposting_leads(html: str, source_url: str) -> List[Dict[str, Any]]
             valid_through = str(obj.get("validThrough") or "").strip()
             vacancy_url = str(obj.get("url") or source_url).strip()
             location = _job_location(obj.get("jobLocation") or obj.get("applicantLocationRequirements"))
+            location_fields = _job_location_fields(obj.get("jobLocation") or obj.get("applicantLocationRequirements"))
             source_host = normalize_domain(urlparse(source_url).hostname or "")
             resolved = resolve_hiring_employer_domains(
                 employer_name=name,
@@ -231,6 +262,7 @@ def extract_jobposting_leads(html: str, source_url: str) -> List[Dict[str, Any]]
                     "published_at": date_posted[:40],
                     "valid_through": valid_through[:40],
                     "location": location,
+                    **location_fields,
                     "source_url": vacancy_url[:1000],
                     "source_publisher": vacancy_source_domain or source_host,
                     "source_class": source_class,

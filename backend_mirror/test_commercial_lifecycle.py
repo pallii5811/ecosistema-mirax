@@ -179,6 +179,8 @@ def test_verified_label_without_positive_resolution_proof_is_rejected():
 def test_trusted_hiring_adapter_identity_is_accepted_with_exact_proof_contract():
     lead = valid_lead()
     lead["source_adapter_id"] = "structured_hiring_v1"
+    lead["citta"] = "Milano, Lombardia, Italia"
+    lead["vacancy_title"] = "Autista"
     lead["domain_verification"].update({
         "adapter_id": "structured_hiring_v1",
         "resolution_source": "source_adapter",
