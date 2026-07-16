@@ -282,9 +282,10 @@ def parse_workday_json(payload: Mapping[str, Any], source_url: str) -> List[Dict
         organization = payload["hiringOrganization"]
     employer_name = _text(organization.get("name") or info.get("company") or payload.get("company"))
     corporate = _workday_corporate_guess(source_url)
+    meta = inspect_workday_url(source_url)
+    tenant = str(meta.get("tenant") or "").lower()
     if not employer_name:
         # Deterministic fallback from Workday tenant map only (never invent names).
-        tenant = str(inspect_workday_url(source_url).get("tenant") or "").lower()
         name_map = {
             "airliquidehr": "Air Liquide",
             "airliquide": "Air Liquide",
@@ -297,6 +298,20 @@ def parse_workday_json(payload: Mapping[str, Any], source_url: str) -> List[Dict
             "moog": "Moog",
             "otis": "Otis",
             "jj": "Johnson & Johnson",
+            "bakerhughes": "Baker Hughes",
+            "bdx": "BD",
+            "diageo": "Diageo",
+            "cognex": "Cognex",
+            "dupont": "DuPont",
+            "sensata": "Sensata",
+            "viatris": "Viatris",
+            "livanova": "LivaNova",
+            "condenast": "Condé Nast",
+            "flexerasoftware": "Flexera",
+            "dentsuaegis": "Dentsu",
+            "columbiasportswearcompany": "Columbia Sportswear",
+            "movadogroup": "Movado",
+            "scj": "SC Johnson",
         }
         employer_name = name_map.get(tenant, "")
     if not employer_name:
@@ -321,18 +336,24 @@ def parse_workday_json(payload: Mapping[str, Any], source_url: str) -> List[Dict
         or organization.get("url")
         or ""
     )
-    if corporate and (not organization_website or "myworkdayjobs.com" in organization_website.lower()):
+    resolution_method = ""
+    if organization_website and "myworkdayjobs.com" not in organization_website.lower():
+        resolution_method = "hiring_organization_same_as"
+    elif corporate:
         organization_website = f"https://{corporate}"
+        resolution_method = "workday_tenant_corporate_map"
     valid_through = _text(info.get("validThrough") or payload.get("validThrough"))
     requisition_id = _text(info.get("jobReqId") or info.get("id") or payload.get("jobReqId"))
     active = info.get("canApply")
     external_url = _text(info.get("externalUrl") or payload.get("externalUrl") or source_url)
+    # Keep vacancy URL as the Workday job URL (never promote ATS host to official domain).
+    vacancy_url = source_url if "myworkdayjobs.com" in source_url.lower() else (external_url or source_url)
     record = _normalize_record(
         employer_name=employer_name,
         title=title,
         location=location,
         published_at=published_at,
-        source_url=external_url or source_url,
+        source_url=vacancy_url,
         extraction_method="workday_cxs_json",
         description=description,
         organization_website=organization_website,
@@ -340,26 +361,36 @@ def parse_workday_json(payload: Mapping[str, Any], source_url: str) -> List[Dict
     )
     record["requisition_id"] = requisition_id
     record["external_url"] = external_url
+    record["workday_tenant"] = tenant
+    record["workday_career_site"] = str(meta.get("career_site") or "")
+    record["hiring_organization_name"] = employer_name
     record["additional_locations"] = list(additional) if isinstance(additional, list) else []
     record["start_date"] = _text(info.get("startDate") or published_at)
     if active is not None:
         record["active"] = bool(active)
-    if record.get("employer_official_domain") and "myworkdayjobs.com" in str(record.get("employer_official_domain") or "").lower():
-        if corporate:
-            record["employer_official_domain"] = corporate
-            record["website"] = f"https://{corporate}"
-            record["official_domain_verified"] = True
-            record["domain_verification_evidence"] = list(dict.fromkeys([
-                *(record.get("domain_verification_evidence") or []),
-                "workday_tenant_corporate_map",
-            ]))
-        else:
-            record["employer_official_domain"] = ""
-            record["official_domain_verified"] = False
-    record["employer_resolution_method"] = (
-        "hiring_organization_same_as"
-        if organization.get("sameAs")
-        else ("workday_tenant_corporate_map" if corporate else "hiring_organization_name")
+    official = str(record.get("employer_official_domain") or "")
+    if official and "myworkdayjobs.com" in official.lower():
+        official = ""
+        record["employer_official_domain"] = ""
+        record["official_domain_verified"] = False
+    if corporate and (not official or official == corporate):
+        record["employer_official_domain"] = corporate
+        record["website"] = f"https://{corporate}"
+        record["official_domain_verified"] = True
+        record["employer_is_direct"] = True
+        record["domain_verification_evidence"] = list(dict.fromkeys([
+            *(record.get("domain_verification_evidence") or []),
+            "workday_tenant_corporate_map",
+            f"workday_tenant:{tenant}",
+            f"corporate_domain:{corporate}",
+        ]))
+        resolution_method = resolution_method or "workday_tenant_corporate_map"
+        # First-party ATS: deterministic tenant↔employer↔corporate link.
+        record["source_class"] = "first_party_ats"
+    elif record.get("employer_official_domain") and detect_ats_vendor(vacancy_url) == "workday":
+        record["source_class"] = "first_party_ats"
+    record["employer_resolution_method"] = resolution_method or (
+        "hiring_organization_name" if employer_name else ""
     )
     return [record]
 

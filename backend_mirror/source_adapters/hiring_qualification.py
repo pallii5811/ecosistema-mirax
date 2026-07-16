@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, normalize_domain
 
-QUALIFICATION_VALIDATOR_EPOCH = 2
+QUALIFICATION_VALIDATOR_EPOCH = 3
 MAX_DOMAIN_LOOKUPS = 5
 DOMAIN_LOOKUP_COST_EUR = 0.005
 
@@ -42,7 +42,8 @@ _MARKETING_ROLE_RE = re.compile(
     r"\b(?:"
     r"marketing manager|head of marketing|chief marketing officer|\bcmo\b|"
     r"digital marketing(?:\s+manager|\s+specialist)?|"
-    r"growth(?:\s+marketing)?\s+manager|growth manager|"
+    # growth manager only when not product/revenue/business/services growth
+    r"(?<!product\s)(?<!revenue\s)(?<!business\s)(?<!services\s)growth(?:\s+marketing)?\s+manager|"
     r"performance marketing(?:\s+manager|\s+specialist)?|"
     r"paid media(?:\s+manager|\s+specialist)?|"
     r"acquisition manager|demand generation(?:\s+manager)?|"
@@ -60,7 +61,9 @@ _NON_MARKETING_ROLE_RE = re.compile(
     r"graphic designer|visual merchandiser|art director|"
     r"communication intern|customer service|customer care|"
     r"software engineer|backend developer|frontend developer|"
-    r"project manager|product manager(?!\s+marketing)"
+    r"project manager|product manager(?!\s+marketing)|"
+    r"product growth manager|revenue growth manager|business growth manager|"
+    r"digital services product growth"
     r")\b",
     re.I,
 )
@@ -172,19 +175,33 @@ def vacancy_role_matches_marketing(
 
 def resolve_employer_identity(record: Mapping[str, Any]) -> dict[str, Any]:
     """Enrich employer fields from persisted parse data without refetch."""
+    from backend_mirror.source_adapters.hiring_ats_parsers import (
+        _workday_corporate_guess,
+        detect_ats_vendor,
+        inspect_workday_url,
+    )
+
     enriched = dict(record)
     displayed = _text(record.get("displayed_employer_name") or record.get("company_name") or record.get("name") or record.get("employer"))
     source_url = _text(record.get("source_url") or record.get("vacancy_url"))
     vacancy_source = _host(record.get("vacancy_source_domain") or source_url)
     org_url = _text(record.get("organization_website") or record.get("hiring_organization_url") or record.get("website"))
     official = _host(record.get("employer_official_domain") or record.get("official_domain") or org_url)
-    resolution_method = _text(record.get("resolution_method"))
+    resolution_method = _text(record.get("resolution_method") or record.get("employer_resolution_method"))
     confidence = float(record.get("confidence") or 0.0)
     evidence = list(record.get("domain_verification_evidence") or record.get("resolution_evidence") or ())
 
+    def _is_ats_host(host: str) -> bool:
+        return bool(host) and any(host == h or host.endswith(f".{h}") for h in _ATS_HOSTS)
+
+    # Never treat ATS/Workday host as employer official domain.
+    if _is_ats_host(official):
+        official = ""
+        evidence.append("rejected_ats_host_as_official_domain")
+
     if org_url:
         org_host = _host(org_url)
-        if org_host and not any(org_host == h or org_host.endswith(f".{h}") for h in _ATS_HOSTS):
+        if org_host and not _is_ats_host(org_host):
             corporate = _corporate_from_careers_host(org_host) or org_host
             if corporate and not is_blacklisted_domain(corporate):
                 official = corporate
@@ -199,14 +216,31 @@ def resolve_employer_identity(record: Mapping[str, Any]) -> dict[str, Any]:
         confidence = max(confidence, 0.9)
         evidence.append("careers_subdomain_corporate_link")
 
+    if (not official or _is_ats_host(official)) and detect_ats_vendor(source_url) == "workday":
+        corporate = _workday_corporate_guess(source_url)
+        if corporate and not is_blacklisted_domain(corporate):
+            official = corporate
+            tenant = str(inspect_workday_url(source_url).get("tenant") or "")
+            resolution_method = resolution_method or "workday_tenant_corporate_map"
+            confidence = max(confidence, 0.93)
+            evidence.extend([
+                "workday_tenant_corporate_map",
+                f"workday_tenant:{tenant}",
+                f"corporate_domain:{corporate}",
+            ])
+            enriched["source_class"] = "first_party_ats"
+            enriched["workday_tenant"] = tenant
+
     for pattern, domain, brand, kind in _EMPLOYER_IDENTITY_HINTS:
-        if pattern.search(displayed):
-            if not official or any(official == h or official.endswith(f".{h}") for h in _ATS_HOSTS):
+        if pattern.search(displayed or ""):
+            if not official or _is_ats_host(official):
                 official = domain
                 resolution_method = resolution_method or "employer_identity_hint"
                 confidence = max(confidence, 0.88)
                 evidence.append(f"employer_identity_hint:{kind}")
             enriched.setdefault("employer_brand", brand)
+            if detect_ats_vendor(source_url) == "workday":
+                enriched["source_class"] = "first_party_ats"
             break
 
     if official and vacancy_source and official == vacancy_source:
@@ -216,27 +250,33 @@ def resolve_employer_identity(record: Mapping[str, Any]) -> dict[str, Any]:
             resolution_method = resolution_method or "careers_subdomain_corporate_link"
             confidence = max(confidence, 0.9)
 
-    verified = bool(displayed and official and not is_blacklisted_domain(official))
-    if verified and not any(official == h or official.endswith(f".{h}") for h in _ATS_HOSTS):
+    verified = bool(displayed and official and not is_blacklisted_domain(official) and not _is_ats_host(official))
+    if verified:
         direct = record.get("employer_is_direct")
         if direct is False:
             employer_is_direct = False
         else:
             employer_is_direct = True
+        source_class = _text(enriched.get("source_class") or record.get("source_class")) or "company_careers"
+        if detect_ats_vendor(source_url) == "workday" and official:
+            source_class = "first_party_ats"
         enriched.update({
             "displayed_employer_name": displayed,
             "legal_or_corporate_employer": _text(record.get("legal_or_corporate_employer")) or displayed,
             "company_name": displayed,
             "employer_official_domain": official,
             "official_domain": official,
+            "website": f"https://{official}",
             "vacancy_source_domain": vacancy_source,
             "official_domain_verified": True,
             "employer_is_direct": employer_is_direct,
             "resolution_method": resolution_method or "persisted_parse_data",
+            "employer_resolution_method": resolution_method or "persisted_parse_data",
             "confidence": round(max(confidence, 0.85), 3),
             "resolution_evidence": tuple(sorted(set(evidence))),
+            "domain_verification_evidence": tuple(sorted(set(evidence))),
             "entity_class": "operating_company",
-            "source_class": _text(record.get("source_class")) or "company_careers",
+            "source_class": source_class,
             "active": True if record.get("active") is not False else False,
         })
     return enriched

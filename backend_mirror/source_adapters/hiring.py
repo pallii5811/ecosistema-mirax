@@ -39,7 +39,14 @@ from .hiring_qualification import (
     vacancy_role_matches_sales,
 )
 from .hiring_recruiter import enrich_record_with_recruiter_fields
-from .hiring_url_queue import build_processing_batch, PENDING_PROGRESS_BATCH_CAP, should_prefer_pending_over_retry
+from .hiring_url_queue import (
+    build_processing_batch,
+    DOMAIN_LIMIT_PER_BATCH,
+    PENDING_PROGRESS_BATCH_CAP,
+    should_prefer_pending_over_retry,
+    URL_FETCH_CONCURRENCY,
+    URL_FETCH_TIMEOUT_S,
+)
 from .hiring_ats_parsers import (
     bootstrap_legacy_retry_urls,
     build_greenhouse_api_url,
@@ -393,7 +400,7 @@ async def _fetch_ats_structured_json(
     for api in candidates:
         attempt: Dict[str, Any] = {"cxs_url": api}
         try:
-            response = await asyncio.wait_for(client.get(api, headers=headers), timeout=10.0)
+            response = await asyncio.wait_for(client.get(api, headers=headers), timeout=6.0)
             attempt["http_status"] = response.status_code
             attempt["content_type"] = str(response.headers.get("content-type") or "")
             attempt["response_bytes"] = len(response.content or b"")
@@ -659,7 +666,8 @@ async def _default_hiring_provider(
         discovery_offset=discovery_offset,
         total_urls=len(urls),
     )
-    queue_pending = discovery_offset < len(urls) or bool(state.retry_urls) or bool(state.revalidation_queue)
+    pending_url_slots = max(0, len(urls) - discovery_offset)
+    queue_pending = pending_url_slots > 0 or bool(state.retry_urls) or bool(state.revalidation_queue)
     if not queue_pending and queries_run == 0:
         exhausted = discovery_locked and state.query_index >= len(query_pairs)
         return HiringProviderResult(
@@ -672,10 +680,12 @@ async def _default_hiring_provider(
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Hiring/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
     processed_employer_keys = _processed_employer_keys(request)
     new_unique_employer_keys: set[str] = set()
+    # ponytail: was max(bool queue_pending, ...) → 1 URL/round; count real pending slots.
+    available_work = pending_url_slots + len(state.retry_urls) + len(state.revalidation_queue)
     batch_cap = min(
         limit,
         PENDING_PROGRESS_BATCH_CAP if prefer_pending else URLS_PER_BATCH,
-        max(queue_pending, len(state.retry_urls) + len(state.revalidation_queue)),
+        max(available_work, 1),
     )
     priority_queue = build_processing_batch(
         urls,
@@ -690,7 +700,24 @@ async def _default_hiring_provider(
     urls_processed = 0
     outcomes_by_url = url_outcomes_map(state)
 
-    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=headers) as client:
+    async with httpx.AsyncClient(timeout=URL_FETCH_TIMEOUT_S, follow_redirects=True, headers=headers) as client:
+        # Parallel CXS/JSON prefetch for ATS URLs (JSON before browser shell).
+        prefetch_structured: Dict[str, Tuple[Optional[Mapping[str, Any]], Dict[str, Any]]] = {}
+        sem = asyncio.Semaphore(URL_FETCH_CONCURRENCY)
+
+        async def _prefetch_ats(item: Mapping[str, Any]) -> None:
+            url = str(item.get("url") or "")
+            if not url or item.get("is_revalidation") or item.get("prefetch_accept") is False:
+                return
+            vendor = detect_ats_vendor(url)
+            if vendor not in {"workday", "greenhouse", "teamtailor"}:
+                return
+            async with sem:
+                structured, forensic = await _fetch_ats_structured_json(client, url, "")
+                prefetch_structured[url] = (structured, forensic)
+
+        await asyncio.gather(*[_prefetch_ats(item) for item in priority_queue])
+
         for item in priority_queue:
             url = str(item.get("url") or "")
             if not url:
@@ -759,7 +786,7 @@ async def _default_hiring_provider(
                 urls_processed += 1
                 continue
             host = str(item.get("source_domain") or _host(url))
-            if domain_active.get(host, 0) >= 2:
+            if domain_active.get(host, 0) >= DOMAIN_LIMIT_PER_BATCH:
                 rejection = "FETCH_TIMEOUT"
                 traces.append({**base_outcome, "rejection_code": rejection, "rejection_function": "domain_rate_limit", "url_state": "retryable_parser_failure"})
                 _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure"})
@@ -771,37 +798,63 @@ async def _default_hiring_provider(
             domain_active[host] = domain_active.get(host, 0) + 1
             query = str(item.get("query") or "")
             query_source = str(item.get("query_source") or "unknown")
+            stage_timings: Dict[str, float] = {}
             try:
-                response = await asyncio.wait_for(client.get(url), timeout=12.0)
-                base_outcome.update({
-                    "http_status": response.status_code,
-                    "content_type": str(response.headers.get("content-type") or ""),
-                    "response_bytes": len(response.content or b""),
-                    "final_url": str(response.url),
-                })
-                if response.status_code != 200:
-                    rejection = "FETCH_HTTP_ERROR"
-                    traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
-                    _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure", "fetch_success": False})
-                    _update_retry_queue(state, url, rejection, is_retry=is_retry)
-                    if not is_retry:
-                        _advance_discovery_offset(state)
-                    urls_processed += 1
-                    continue
-                html = response.text[:2_000_000]
-                structured_json, cxs_forensic = await _fetch_ats_structured_json(client, url, html)
+                t_fetch0 = __import__("time").monotonic()
+                html = ""
+                structured_json: Optional[Mapping[str, Any]] = None
+                cxs_forensic: Dict[str, Any] = {}
+                prefetched = prefetch_structured.get(url)
+                if prefetched and prefetched[0] is not None:
+                    structured_json, cxs_forensic = prefetched
+                    stage_timings["cxs_ms"] = round((__import__("time").monotonic() - t_fetch0) * 1000, 1)
+                    base_outcome.update({
+                        "http_status": int(cxs_forensic.get("cxs_http_status") or 200),
+                        "content_type": str(cxs_forensic.get("cxs_content_type") or "application/json"),
+                        "response_bytes": int(cxs_forensic.get("cxs_response_bytes") or 0),
+                        "final_url": url,
+                        "fetch_path": "cxs_first",
+                    })
+                else:
+                    response = await asyncio.wait_for(client.get(url), timeout=URL_FETCH_TIMEOUT_S)
+                    stage_timings["fetch_ms"] = round((__import__("time").monotonic() - t_fetch0) * 1000, 1)
+                    base_outcome.update({
+                        "http_status": response.status_code,
+                        "content_type": str(response.headers.get("content-type") or ""),
+                        "response_bytes": len(response.content or b""),
+                        "final_url": str(response.url),
+                        "fetch_path": "html",
+                    })
+                    if response.status_code != 200:
+                        rejection = "FETCH_HTTP_ERROR"
+                        traces.append(_trace_url(url=url, query=query, query_source=query_source, rejection=rejection))
+                        _append_url_outcome(state, {**base_outcome, "rejection_code": rejection, "url_state": "retryable_parser_failure", "fetch_success": False, "stage_timings": stage_timings})
+                        _update_retry_queue(state, url, rejection, is_retry=is_retry)
+                        if not is_retry:
+                            _advance_discovery_offset(state)
+                        urls_processed += 1
+                        continue
+                    html = response.text[:2_000_000]
+                    t_cxs0 = __import__("time").monotonic()
+                    structured_json, cxs_forensic = await _fetch_ats_structured_json(client, url, html)
+                    stage_timings["cxs_ms"] = round((__import__("time").monotonic() - t_cxs0) * 1000, 1)
                 base_outcome.update({k: v for k, v in cxs_forensic.items() if k != "cxs_attempts"})
                 if cxs_forensic.get("cxs_attempts"):
                     base_outcome["cxs_attempts"] = list(cxs_forensic["cxs_attempts"])
-                parsed_result = parse_vacancy_html(html, str(response.url), structured_json=structured_json)
+                t_parse0 = __import__("time").monotonic()
+                parsed_result = parse_vacancy_html(html, str(base_outcome.get("final_url") or url), structured_json=structured_json)
+                stage_timings["parse_ms"] = round((__import__("time").monotonic() - t_parse0) * 1000, 1)
                 base_outcome.update({
                     "fetch_success": True,
                     "javascript_shell": parsed_result.javascript_shell,
                     "jsonld_jobposting_count": parsed_result.jsonld_count,
                     "parser_selected": parsed_result.parser_id,
                     "cxs_used": bool(structured_json),
+                    "stage_timings": stage_timings,
                 })
+                t_res0 = __import__("time").monotonic()
                 parsed = [resolve_employer_identity(enrich_record_with_recruiter_fields(row)) for row in parsed_result.records]
+                stage_timings["resolve_ms"] = round((__import__("time").monotonic() - t_res0) * 1000, 1)
                 if not parsed:
                     rejection = _normalize_rejection_code(
                         _workday_parse_failure_code(cxs_forensic, parsed_result.failure_code or "PARSE_FAILED")
@@ -1027,7 +1080,7 @@ def _validate_record(
     if record.get("official_domain_verified") is not True:
         return False, "OFFICIAL_DOMAIN_UNVERIFIED"
     source_class = _text(record.get("source_class")) or ""
-    if source_class not in {"company_careers", "job_board"}:
+    if source_class not in {"company_careers", "first_party_ats", "job_board"}:
         return False, "HIRING_SOURCE_CLASS_INVALID"
     if source_class == "job_board" and record.get("corroborated") is not True:
         return False, "SECONDARY_SOURCE_NOT_CORROBORATED"

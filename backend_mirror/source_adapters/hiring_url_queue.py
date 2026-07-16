@@ -9,7 +9,10 @@ from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, normal
 
 from .hiring_recruiter import STAFFING_BRAND_ALIASES
 
-PENDING_PROGRESS_BATCH_CAP = 12
+PENDING_PROGRESS_BATCH_CAP = 20
+URL_FETCH_CONCURRENCY = 4
+URL_FETCH_TIMEOUT_S = 6.0
+DOMAIN_LIMIT_PER_BATCH = 3
 
 _ATS_HOSTS = (
     "boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co",
