@@ -188,3 +188,40 @@ def test_legacy_success_without_active_is_refetched_once_not_terminal():
     assert first["retryable_urls"] == second["retryable_urls"] == 1
     assert state.url_outcomes[0]["rejection_code"] == "ACTIVE_STATUS_REFETCH_REQUIRED"
     assert state.revalidation_queue == (canonical_url_key(url),)
+
+
+def test_completed_active_check_without_proof_is_not_requeued_forever():
+    url = "https://acme.it/jobs/old-marketing-manager"
+    state = HiringDiscoveryState(
+        seen_urls=(url,),
+        url_outcomes=({
+            **_outcome(url, state="rejected_final", code="VACANCY_DATE_MISSING", parser_result="success"),
+            "active": None,
+            "active_checked_at": "2026-07-16T12:00:00+00:00",
+            "active_verification_method": "jsonld_jobposting_unverified",
+            "active_evidence": "",
+        },),
+    )
+    summary = reconcile_hiring_url_queue(state)
+    assert summary["terminal_urls"] == 1
+    assert state.revalidation_queue == ()
+    assert state.retry_urls == ()
+
+
+def test_failed_active_refetch_moves_from_revalidation_to_technical_retry():
+    url = "https://bdx.wd1.myworkdayjobs.com/it-it/external/job/milano/marketing-manager_r-1"
+    state = HiringDiscoveryState(
+        seen_urls=(url,),
+        revalidation_queue=(url,),
+        url_outcomes=({
+            **_outcome(url, state="retryable_active_refetch", code="ACTIVE_STATUS_REFETCH_REQUIRED", parser_result="success"),
+            "active": None,
+            "cxs_failure_code": "WORKDAY_CXS_HTTP_403",
+            "cxs_attempt_count": 1,
+        },),
+    )
+    summary = reconcile_hiring_url_queue(state)
+    assert summary["retryable_urls"] == 1
+    assert state.revalidation_queue == ()
+    assert state.url_outcomes[0]["rejection_code"] == "WORKDAY_CXS_HTTP_403"
+    assert state.url_outcomes[0]["parser_result"] == "empty"

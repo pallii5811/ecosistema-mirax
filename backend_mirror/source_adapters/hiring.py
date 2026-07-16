@@ -782,6 +782,7 @@ async def _default_hiring_provider(
             prior_outcome = outcomes_by_url.get(canonical) or {}
             is_active_refetch = is_revalidation and str(prior_outcome.get("rejection_code") or "") == "ACTIVE_STATUS_REFETCH_REQUIRED"
             base_outcome: Dict[str, Any] = {
+                **dict(prior_outcome),
                 "url": url,
                 "canonical_url": canonical,
                 "source_domain": item.get("source_domain"),
@@ -789,6 +790,11 @@ async def _default_hiring_provider(
                 "priority": item.get("priority"),
                 "ats_vendor": detect_ats_vendor(url),
             }
+            if is_active_refetch:
+                # Exactly one active-status refetch. Technical failures move to
+                # retry; a completed check with no proof remains fail-closed.
+                _update_revalidation_queue(state, url)
+                base_outcome["active_refetch_attempted_at"] = datetime.now(timezone.utc).isoformat()
             if is_revalidation and not is_active_refetch:
                 record, rejection, _ = _revalidate_from_outcome(
                     state,
@@ -932,8 +938,20 @@ async def _default_hiring_provider(
                 for record in parsed:
                     valid, rejection = _validate_record(record, request, date.today())
                     normalized = _normalize_rejection_code(rejection)
+                    effective_rejection = normalized
+                    if is_active_refetch and normalized == "ACTIVE_STATUS_REFETCH_REQUIRED":
+                        effective_rejection = "VACANCY_ACTIVE_STATUS_UNVERIFIED_AFTER_REFETCH"
+                    effective_state = (
+                        "accepted" if valid else (
+                            "rejected_final" if effective_rejection == "VACANCY_ACTIVE_STATUS_UNVERIFIED_AFTER_REFETCH"
+                            else (
+                                "retryable_active_refetch" if effective_rejection == "ACTIVE_STATUS_REFETCH_REQUIRED"
+                                else ("rejected_final" if not classify_failure_for_retry(effective_rejection) else "retryable_parser_failure")
+                            )
+                        )
+                    )
                     traces.append(_trace_url(
-                        url=url, query=query, query_source=query_source, record=record, rejection=normalized,
+                        url=url, query=query, query_source=query_source, record=record, rejection=effective_rejection,
                     ))
                     _append_url_outcome(state, {
                         **base_outcome,
@@ -954,12 +972,9 @@ async def _default_hiring_provider(
                         "active_evidence": record.get("active_evidence"),
                         "active_checked_at": record.get("active_checked_at"),
                         "active_verification_method": record.get("active_verification_method"),
-                        "validation_result": "accepted" if valid else normalized,
-                        "rejection_code": "ACCEPTED" if valid else normalized,
-                        "url_state": "accepted" if valid else (
-                            "retryable_active_refetch" if normalized == "ACTIVE_STATUS_REFETCH_REQUIRED"
-                            else ("rejected_final" if not classify_failure_for_retry(normalized) else "retryable_parser_failure")
-                        ),
+                        "validation_result": "accepted" if valid else effective_rejection,
+                        "rejection_code": "ACCEPTED" if valid else effective_rejection,
+                        "url_state": effective_state,
                         "parser_result": "success",
                     })
                     if valid:
@@ -998,8 +1013,8 @@ async def _default_hiring_provider(
                             })
                         if _new_unique_target_reached(new_unique_employer_keys, request):
                             break
-                    elif not classify_failure_for_retry(normalized):
-                        _update_retry_queue(state, url, normalized, is_retry=is_retry)
+                    elif not classify_failure_for_retry(effective_rejection):
+                        _update_retry_queue(state, url, effective_rejection, is_retry=is_retry)
                 if not url_accepted:
                     last_code = str(traces[-1].get("rejection_code") or "PARSE_FAILED") if traces else "PARSE_FAILED"
                     _update_retry_queue(state, url, last_code, is_retry=is_retry)

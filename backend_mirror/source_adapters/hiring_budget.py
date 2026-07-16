@@ -202,8 +202,32 @@ def reconcile_hiring_url_queue(state: HiringDiscoveryState) -> dict[str, int]:
             continue
         parser_success = str(row.get("parser_result") or "") == "success"
         has_active = "active" in row or row.get("vacancy_active") is not None
-        has_provenance = bool(row.get("active_evidence") and row.get("active_verification_method"))
-        if parser_success and (not has_active or not has_provenance):
+        legacy_missing_provenance = not row.get("active_checked_at") and not row.get("active_verification_method")
+        technical_refetch_failure = bool(row.get("cxs_failure_code") and row.get("cxs_attempt_count"))
+        if parser_success and technical_refetch_failure and str(row.get("url_state") or "").startswith("retryable_active"):
+            row.update({
+                "parser_result": "empty",
+                "validation_result": str(row.get("cxs_failure_code")),
+                "rejection_code": str(row.get("cxs_failure_code")),
+                "url_state": "retryable_parser_failure",
+            })
+            revalidation.discard(key)
+            retryable.add(key)
+        elif (
+            parser_success
+            and row.get("active") is None
+            and row.get("active_checked_at")
+            and str(row.get("url_state") or "").startswith("retryable_active")
+        ):
+            row.update({
+                "validation_result": "VACANCY_ACTIVE_STATUS_UNVERIFIED_AFTER_REFETCH",
+                "rejection_code": "VACANCY_ACTIVE_STATUS_UNVERIFIED_AFTER_REFETCH",
+                "url_state": "rejected_final",
+            })
+            revalidation.discard(key)
+            retryable.discard(key)
+            terminal.add(key)
+        elif parser_success and (not has_active or legacy_missing_provenance):
             row.update({
                 "canonical_url": key,
                 "active": None,
