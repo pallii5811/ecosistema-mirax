@@ -127,6 +127,45 @@ def _iso_date(value: Any) -> Optional[str]:
     return None
 
 
+_IT_MONTHS = {
+    "gennaio": 1, "febbraio": 2, "marzo": 3, "aprile": 4, "maggio": 5, "giugno": 6,
+    "luglio": 7, "agosto": 8, "settembre": 9, "ottobre": 10, "novembre": 11, "dicembre": 12,
+}
+
+
+def _parse_date_in_text(text: str) -> Optional[str]:
+    blob = _text(text) or ""
+    if not blob:
+        return None
+    month_names = "|".join(_IT_MONTHS)
+    patterns = (
+        rf"\b(\d{{1,2}})\s+({month_names})\s+(\d{{4}})\b",
+        r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b",
+        r"\b(\d{4})-(\d{2})-(\d{2})\b",
+    )
+    for index, pattern in enumerate(patterns):
+        found = re.search(pattern, blob, re.I)
+        if not found:
+            continue
+        try:
+            if index == 0:
+                day, month_name, year = found.group(1), found.group(2).casefold(), found.group(3)
+                parsed = date(int(year), _IT_MONTHS[month_name], int(day))
+            elif index == 1:
+                parsed = date(int(found.group(3)), int(found.group(2)), int(found.group(1)))
+            else:
+                parsed = date(int(found.group(1)), int(found.group(2)), int(found.group(3)))
+            return parsed.isoformat()
+        except (ValueError, KeyError):
+            continue
+    return None
+
+
+def _event_date_near_match(blob: str, match: re.Match[str]) -> Optional[str]:
+    window = blob[max(0, match.start() - 100): match.end() + 160]
+    return _parse_date_in_text(window)
+
+
 def _iter_json(value: Any) -> Iterable[Mapping[str, Any]]:
     if isinstance(value, Mapping):
         yield value
@@ -282,15 +321,17 @@ def parse_growth_page(
         return []
     if company.casefold() == publisher.casefold() and _looks_like_news_host(host):
         return []
-    published = None
+    page_published = None
     for attrs in ({"property": "article:published_time"}, {"name": "date"}, {"itemprop": "datePublished"}):
         node = soup.find("meta", attrs=attrs)
-        published = _iso_date(node.get("content") if node else None)
-        if published:
+        page_published = _iso_date(node.get("content") if node else None)
+        if page_published:
             break
-    if not published:
+    if not page_published:
         node = soup.find("time")
-        published = _iso_date(node.get("datetime") if node else None)
+        page_published = _iso_date(node.get("datetime") if node else None)
+    # Event date near the expansion match beats hub/newsroom page timestamps.
+    published = _event_date_near_match(blob, match) or page_published
     if not published:
         return []
     geography = next((item for item in geographies if item.casefold() in blob.casefold()), "")
@@ -347,6 +388,10 @@ async def _default_growth_provider(request: AdapterDiscoveryRequest, offset: int
             f'(inaugura OR "ha aperto" OR annuncia OR apertura) {location} {sector}'.strip(),
             f'("comunicato stampa" OR newsroom OR "ufficio stampa") '
             f'("nuova sede" OR "nuovo stabilimento" OR ampliamento OR "capacità produttiva") {location} {sector}'.strip(),
+            f'(2025 OR 2026) (inaugura OR "ha aperto" OR "apertura della") '
+            f'("nuova sede" OR "nuovo negozio" OR "nuovo stabilimento") Italia {sector}'.strip(),
+            f'site:.it "comunicato stampa" ("nuova sede" OR "nuovo stabilimento" OR "nuovo punto vendita") '
+            f'(2025 OR 2026) {sector}'.strip(),
         ))
     max_queries = min(len(queries), math.floor((request.budget_eur + 1e-9) / _QUERY_COST_EUR))
     if max_queries <= 0:

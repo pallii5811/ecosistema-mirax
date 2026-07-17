@@ -259,6 +259,30 @@ def test_schema_less_company_newsroom_uses_source_host_as_domain() -> None:
     assert result.candidates[0].official_domain == "schema-free-growth.test"
 
 
+def test_event_date_near_match_beats_stale_newsroom_hub_timestamp() -> None:
+    today = date.today().isoformat()
+    html = f"""
+      <meta property="article:published_time" content="{today}">
+      <meta property="og:site_name" content="Stale Hub Growth Srl">
+      <article>
+        Stale Hub Growth Srl inaugura la sede ampliata a Milano 26 ottobre 2022.
+      </article>
+    """
+    rows = parse_growth_page(
+        html, "https://stale-hub-growth.test/newsroom",
+        ("expansion",), ("Italia",),
+    )
+    assert rows and rows[0]["published_at"] == "2022-10-26"
+    italy = replace(
+        request("expansion", count=1),
+        geographies=("Italia",),
+        freshness_max_age_days=180,
+    )
+    result = asyncio.run(GrowthSignalsAdapter((lambda *_: _async_result(rows),)).discover(italy))
+    assert result.candidates == ()
+    assert "SIGNAL_STALE" in result.warnings
+
+
 def test_unknown_news_host_without_company_domain_is_rejected() -> None:
     today = date.today().isoformat()
     html = f"""
