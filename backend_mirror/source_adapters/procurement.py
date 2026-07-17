@@ -45,7 +45,9 @@ class DomainResolutionResult:
 
 
 DomainResolver = Callable[[str, str, str, float], Awaitable[Optional[DomainResolutionResult]]]
-_OWNERSHIP_EVIDENCE = frozenset({"company_tokens_in_host", "schema_org_identity_match"})
+# Directory portals often embed company schema.org; host tokens are required.
+_OWNERSHIP_EVIDENCE = frozenset({"company_tokens_in_host"})
+_MAX_SOURCE_RECORDS = 30
 
 
 async def _default_domain_resolver(
@@ -310,7 +312,30 @@ class ProcurementAdapter:
         # Empty sectors are valid for country-wide recent-award discovery; ANAC
         # then uses date-first indexing instead of inventing sector keywords.
         offset = _cursor_offset(request.cursor)
-        per_provider = min(100, max(request.requested_count * 2, 20))
+        max_source_records = min(
+            _MAX_SOURCE_RECORDS,
+            int(request.technical_filters.get("max_source_records") or _MAX_SOURCE_RECORDS),
+        )
+        if offset >= max_source_records:
+            now = datetime.now(timezone.utc).isoformat()
+            return AdapterExecutionResult(
+                adapter_id=self.capability.adapter_id,
+                adapter_version=self.capability.adapter_version,
+                candidates=(),
+                exhaustion=SourceExhaustion(
+                    exhausted=True,
+                    scope="source",
+                    reason="max_source_records_reached",
+                    authoritative=True,
+                    next_cursor=None,
+                ),
+                operations=0,
+                cost_eur=0.0,
+                started_at=now,
+                completed_at=now,
+                warnings=("SOURCE_RECORD_CAP_REACHED",),
+            )
+        per_provider = min(max_source_records - offset, max(request.requested_count * 2, 10))
         started = datetime.now(timezone.utc).isoformat()
         provider_results: List[ProcurementProviderResult] = []
         provider_warnings: List[str] = []
@@ -338,8 +363,12 @@ class ProcurementAdapter:
         seen_entities: set[str] = set()
         seen_awards: set[str] = set()
         rejection_codes: List[str] = list(provider_warnings)
+        source_attempts = 0
         for provider_result in provider_results:
             for record in provider_result.records:
+                if source_attempts >= max_source_records:
+                    break
+                source_attempts += 1
                 valid, rejection = _record_is_valid(record, request, date.today())
                 if not valid:
                     rejection_codes.append(rejection)
@@ -384,6 +413,9 @@ class ProcurementAdapter:
                 if not presented_domain and remaining_budget + 1e-9 < _DOMAIN_SEARCH_COST_EUR:
                     rejection_codes.append("DOMAIN_RESOLUTION_BUDGET_EXHAUSTED")
                     continue
+                # Charge attempt up-front: SERP spend hits the governor even on miss.
+                if not presented_domain:
+                    spent += _DOMAIN_SEARCH_COST_EUR
                 resolution = await self._domain_resolver(
                     name,
                     presented_domain,
@@ -393,9 +425,10 @@ class ProcurementAdapter:
                 if resolution is None:
                     rejection_codes.append("OFFICIAL_DOMAIN_UNRESOLVED")
                     continue
-                if resolution.cost_eur > remaining_budget + 1e-9:
-                    raise RuntimeError("PROCUREMENT_DOMAIN_RESOLVER_EXCEEDED_HARD_COST_CAP")
-                spent += resolution.cost_eur
+                if presented_domain:
+                    if resolution.cost_eur > remaining_budget + 1e-9:
+                        raise RuntimeError("PROCUREMENT_DOMAIN_RESOLVER_EXCEEDED_HARD_COST_CAP")
+                    spent += resolution.cost_eur
                 official_domain = _domain(resolution.url)
                 if not official_domain:
                     rejection_codes.append("OFFICIAL_DOMAIN_UNRESOLVED")
@@ -454,7 +487,7 @@ class ProcurementAdapter:
                 ))
                 if len(candidates) >= request.requested_count:
                     break
-            if len(candidates) >= request.requested_count:
+            if len(candidates) >= request.requested_count or source_attempts >= max_source_records:
                 break
         target_reached = len(candidates) >= request.requested_count
         # Provider failures are warnings; they must not keep paging forever when
@@ -463,16 +496,24 @@ class ProcurementAdapter:
             all_exhausted = True
         else:
             all_exhausted = all(result.exhausted for result in provider_results)
-        next_cursor = None if all_exhausted else DiscoveryCursor(f"procurement:v1:{offset + per_provider}", partition="anac_ted")
+        capped = source_attempts >= max_source_records or offset + per_provider >= max_source_records
+        next_cursor = None if (all_exhausted or capped or target_reached) else DiscoveryCursor(
+            f"procurement:v1:{offset + per_provider}", partition="anac_ted"
+        )
         return AdapterExecutionResult(
             adapter_id=self.capability.adapter_id,
             adapter_version=self.capability.adapter_version,
             candidates=tuple(candidates),
             exhaustion=SourceExhaustion(
-                exhausted=all_exhausted and not target_reached,
-                scope="source" if all_exhausted else "partition",
-                reason="requested_count_reached" if target_reached else "all_procurement_sources_exhausted" if all_exhausted else "next_partition_available",
-                authoritative=all_exhausted,
+                exhausted=(all_exhausted or capped) and not target_reached,
+                scope="source" if (all_exhausted or capped) else "partition",
+                reason=(
+                    "requested_count_reached" if target_reached
+                    else "max_source_records_reached" if capped
+                    else "all_procurement_sources_exhausted" if all_exhausted
+                    else "next_partition_available"
+                ),
+                authoritative=bool(all_exhausted or capped),
                 next_cursor=next_cursor,
             ),
             operations=sum(len(result.records) for result in provider_results),

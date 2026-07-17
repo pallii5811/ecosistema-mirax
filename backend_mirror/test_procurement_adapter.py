@@ -104,7 +104,7 @@ def test_cursor_and_exhaustion_are_explicit() -> None:
     first = asyncio.run(adapter((one_page,)).discover(request(count=5)))
     assert first.exhaustion.exhausted is False
     assert first.exhaustion.next_cursor is not None
-    assert first.exhaustion.next_cursor.value == "procurement:v1:20"
+    assert first.exhaustion.next_cursor.value == "procurement:v1:10"
 
     with pytest.raises(ValueError, match="invalid procurement cursor"):
         asyncio.run(adapter((one_page,)).discover(request(count=5, cursor=DiscoveryCursor("bad"))))
@@ -356,7 +356,7 @@ def test_directory_portal_domain_is_rejected_and_resolved_at_is_persisted() -> N
             url=presented_url,
             confidence=0.95,
             score=95,
-            evidence=("legal_name_in_page", "schema_org_identity_match"),
+            evidence=("company_tokens_in_host", "legal_name_in_page"),
             resolution_source="serp_identity",
             resolution_method="positive_page_identity",
             resolved_at="2026-07-17T16:00:00+00:00",
