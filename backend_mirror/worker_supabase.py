@@ -14,7 +14,7 @@ import threading
 import types
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set
 from urllib.parse import parse_qs, quote, unquote, urlparse, urljoin
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -4201,6 +4201,133 @@ def _load_prior_shadow_qualified_payloads(job: Dict[str, Any], *, supabase: Any 
     return []
 
 
+def _upgrade_legacy_digital_audit_resume_geography(
+    payloads: Sequence[Mapping[str, Any]],
+    *,
+    search_id: str,
+    canonical_plan: Mapping[str, Any],
+    resume_state: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    """Hydrate pre-provenance regional DA payloads from the same checkpoint.
+
+    This is deliberately not a geographic resolver.  A legacy payload is
+    upgraded only when it is a member of the persisted qualified checkpoint
+    and its structured locality equals the persisted controlled partition.
+    """
+    from source_adapters.digital_audit_partition_policy import controlled_geography_partitions
+    from source_adapters.hiring_qualification import employer_key_from_payload
+
+    target = canonical_plan.get("target") if isinstance(canonical_plan.get("target"), Mapping) else {}
+    requested = tuple(str(item).strip() for item in target.get("geographies") or () if str(item).strip())
+    plan_search_id = str(canonical_plan.get("search_id") or "").strip()
+    acquisition = resume_state.get("acquisition") if isinstance(resume_state.get("acquisition"), Mapping) else {}
+    partition_location = str(acquisition.get("partition_location") or "").strip()
+    resume_cursors = resume_state.get("resume_cursors") if isinstance(resume_state.get("resume_cursors"), Mapping) else {}
+    processed_keys = {str(item) for item in resume_state.get("processed_employer_keys") or () if str(item)}
+    checkpoint_payloads = resume_state.get("qualified_lead_payloads")
+    checkpoint_keys = {
+        employer_key_from_payload(item)
+        for item in checkpoint_payloads or ()
+        if isinstance(item, Mapping) and employer_key_from_payload(item)
+    }
+
+    def norm(value: Any) -> str:
+        return " ".join(str(value or "").casefold().split())
+
+    partition_norm = norm(partition_location)
+    matching_plan_geography = next((
+        geography for geography in requested
+        if partition_norm in {norm(item) for item in controlled_geography_partitions(geography)}
+    ), "")
+    checkpoint_provenance_valid = bool(
+        str(search_id).strip()
+        and plan_search_id == str(search_id).strip()
+        and requested
+        and matching_plan_geography
+        and partition_location
+        and int(acquisition.get("partition_count") or 0) > 0
+        and acquisition.get("partition_index") is not None
+        and resume_cursors.get("legacy_digital_audit_v1")
+        and checkpoint_keys
+    )
+
+    upgraded: List[Dict[str, Any]] = []
+    for item in payloads:
+        payload = dict(item)
+        if str(payload.get("source_adapter_id") or "") != "legacy_digital_audit_v1":
+            upgraded.append(payload)
+            continue
+        if payload.get("geography_match") is True or payload.get("geography_match_method"):
+            upgraded.append(payload)
+            continue
+
+        locality = str(
+            payload.get("address_locality") or payload.get("municipality")
+            or payload.get("citta") or payload.get("city") or payload.get("location") or ""
+        ).strip()
+        # Exact-locality payloads already have sufficient evidence and must
+        # retain the existing lifecycle behavior without compatibility data.
+        if norm(locality) in {norm(item) for item in requested}:
+            upgraded.append(payload)
+            continue
+
+        nested_geography = (
+            payload.get("technical_report", {}).get("geography", {})
+            if isinstance(payload.get("technical_report"), Mapping)
+            and isinstance(payload.get("technical_report", {}).get("geography"), Mapping)
+            else {}
+        )
+        explicit_region = str(
+            payload.get("address_region") or payload.get("region")
+            or nested_geography.get("provider_region") or ""
+        ).strip()
+        explicit_country = str(
+            payload.get("address_country") or payload.get("country")
+            or nested_geography.get("normalized_country") or ""
+        ).strip()
+        region_contradiction = bool(explicit_region and norm(explicit_region) not in {norm(item) for item in requested})
+        country_contradiction = bool(explicit_country and norm(explicit_country) not in {"it", "italia", "italy"})
+        if region_contradiction or country_contradiction:
+            payload.update({
+                "requested_geographies": list(requested),
+                "geography_match": False,
+                "geography_rejection_code": "GEO_OUT_OF_SCOPE",
+            })
+            upgraded.append(payload)
+            continue
+
+        employer_key = employer_key_from_payload(payload)
+        can_restore = bool(
+            checkpoint_provenance_valid
+            and employer_key
+            and employer_key in checkpoint_keys
+            and employer_key in processed_keys
+            and norm(locality) == partition_norm
+        )
+        if can_restore:
+            payload.update({
+                "requested_geographies": list(requested),
+                "geography_match": True,
+                "matched_geography": matching_plan_geography,
+                "geography_match_method": "legacy_resume_partition_provenance",
+                "geography_match_evidence": {
+                    "search_id": str(search_id),
+                    "original_plan_geography": matching_plan_geography,
+                    "persisted_partition_or_checkpoint_evidence": {
+                        "partition_location": partition_location,
+                        "partition_index": acquisition.get("partition_index"),
+                        "partition_count": acquisition.get("partition_count"),
+                        "processed_employer_key": employer_key,
+                        "processed_place_ids_ref": resume_state.get("processed_place_ids_ref"),
+                    },
+                },
+            })
+            if payload.get("geography_rejection_code") == "GEO_UNVERIFIED":
+                payload.pop("geography_rejection_code", None)
+        upgraded.append(payload)
+    return upgraded
+
+
 def _bootstrap_shadow_resume_from_progress(job: Dict[str, Any], *, supabase: Any = None) -> Dict[str, Any]:
     progress = job.get("progress") if isinstance(job.get("progress"), dict) else {}
     if progress.get("shadow_resume"):
@@ -5128,6 +5255,12 @@ def main() -> None:
                 canonical_shadow_plan = _canonical_plan_from_intent(intent)
                 if canonical_shadow_plan is None:
                     raise RuntimeError("CANONICAL_PLAN_MISSING_BEFORE_GEOGRAPHY_REVALIDATION")
+                loaded_prior_payloads = _upgrade_legacy_digital_audit_resume_geography(
+                    loaded_prior_payloads,
+                    search_id=str(job_id),
+                    canonical_plan=canonical_shadow_plan,
+                    resume_state=prior_shadow_resume,
+                )
                 target_geographies = tuple(
                     str(item) for item in canonical_shadow_plan.get("target", {}).get("geographies") or ()
                 )
