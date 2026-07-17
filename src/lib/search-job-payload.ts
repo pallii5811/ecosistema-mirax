@@ -55,3 +55,19 @@ export function buildPendingSearchInsert(opts: {
   if (opts.intent) row.intent = opts.intent
   return row
 }
+
+/** Prod Stage 1 schema may lack optional columns (intent/zone/progress). */
+export function toMinimalPendingSearchInsert(row: PendingSearchInsert): PendingSearchInsert {
+  return {
+    category: row.category,
+    location: row.location,
+    status: row.status,
+    results: row.results,
+    created_at: row.created_at,
+    ...(row.user_id ? { user_id: row.user_id } : {}),
+  }
+}
+
+export function isMissingSearchesColumnError(message: string | undefined | null): boolean {
+  return /Could not find the '[^']+' column of 'searches'/i.test(String(message || ''))
+}

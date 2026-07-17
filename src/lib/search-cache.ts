@@ -8,7 +8,9 @@ import {
   buildPendingSearchInsert,
   clampSearchMaxLeads,
   encodeMaxLeadsZone,
+  isMissingSearchesColumnError,
   MAX_LEADS_PER_SEARCH,
+  toMinimalPendingSearchInsert,
 } from './search-job-payload.ts'
 import { hasLeadContact } from './search-contact-quality.ts'
 import { isCacheRelevantEnough } from './lead-relevance.ts'
@@ -264,7 +266,13 @@ export async function requestIncrementalScrape(
     if (intentWithTarget) updatePayload.intent = intentWithTarget
 
     if (isActive) {
-      await supabase.from('searches').update(updatePayload).eq('id', cache.canonicalJobId)
+      const updated = await supabase.from('searches').update(updatePayload).eq('id', cache.canonicalJobId)
+      if (updated.error && isMissingSearchesColumnError(updated.error.message)) {
+        await supabase
+          .from('searches')
+          .update({ status: 'pending', category, location })
+          .eq('id', cache.canonicalJobId)
+      }
       return {
         jobId: cache.canonicalJobId,
         reused: true,
@@ -273,7 +281,15 @@ export async function requestIncrementalScrape(
       }
     }
 
-    await supabase.from('searches').update(updatePayload).eq('id', cache.canonicalJobId)
+    {
+      const updated = await supabase.from('searches').update(updatePayload).eq('id', cache.canonicalJobId)
+      if (updated.error && isMissingSearchesColumnError(updated.error.message)) {
+        await supabase
+          .from('searches')
+          .update({ status: 'pending', category, location })
+          .eq('id', cache.canonicalJobId)
+      }
+    }
 
     return {
       jobId: cache.canonicalJobId,
@@ -283,19 +299,30 @@ export async function requestIncrementalScrape(
     }
   }
 
-  const { data: insertData, error: insertError } = await supabase
-    .from('searches')
-    .insert(
-      buildPendingSearchInsert({
-        userId: opts.userId,
-        category,
-        location,
-        maxLeads,
-        intent: intentWithTarget,
-      }),
-    )
-    .select('id')
-    .single()
+  const pendingRow = buildPendingSearchInsert({
+    userId: opts.userId,
+    category,
+    location,
+    maxLeads,
+    intent: intentWithTarget,
+  })
+  let insertData: { id: string } | null = null
+  let insertError: { message?: string; code?: string } | null = null
+  {
+    const first = await supabase.from('searches').insert(pendingRow).select('id').single()
+    insertData = first.data
+    insertError = first.error
+    if (insertError && isMissingSearchesColumnError(insertError.message)) {
+      // ponytail: Stage1 prod schema is minimal; retry without intent/zone.
+      const retry = await supabase
+        .from('searches')
+        .insert(toMinimalPendingSearchInsert(pendingRow))
+        .select('id')
+        .single()
+      insertData = retry.data
+      insertError = retry.error
+    }
+  }
 
   if (!insertError && insertData?.id) {
     return {
@@ -320,7 +347,7 @@ export async function requestIncrementalScrape(
       const dupStatus = String(dupRow.status ?? '').toLowerCase()
       const dupActive = dupStatus === 'processing' || dupStatus === 'pending' || dupStatus === 'pending_user'
       if (!dupActive) {
-        await supabase
+        const rich = await supabase
           .from('searches')
           .update({
             status: 'pending',
@@ -328,14 +355,21 @@ export async function requestIncrementalScrape(
             ...(intentWithTarget ? { intent: intentWithTarget } : {}),
           })
           .eq('id', dupRow.id)
+        if (rich.error && isMissingSearchesColumnError(rich.error.message)) {
+          await supabase.from('searches').update({ status: 'pending' }).eq('id', dupRow.id)
+        }
       } else if (zone || intentWithTarget) {
-        await supabase
+        const rich = await supabase
           .from('searches')
           .update({
             ...(zone ? { zone } : {}),
             ...(intentWithTarget ? { intent: intentWithTarget } : {}),
           })
           .eq('id', dupRow.id)
+        // Ignore missing optional columns on active reuse.
+        if (rich.error && !isMissingSearchesColumnError(rich.error.message)) {
+          /* keep existing job */
+        }
       }
 
       const parsed = parseSearchResults(dupRow.results)
@@ -362,27 +396,35 @@ export async function createAgenticPlanningJob(
   opts: { query: string; maxLeads: number; userId?: string | null },
 ): Promise<string> {
   const maxLeads = clampSearchMaxLeads(opts.maxLeads)
-  const { data, error } = await supabase
-    .from('searches')
-    .insert({
-      category: 'Planning',
-      location: 'Italia',
-      status: 'planning',
-      results: [],
-      created_at: new Date().toISOString(),
+  const richRow = {
+    category: 'Planning',
+    location: 'Italia',
+    status: 'planning',
+    results: [] as unknown[],
+    created_at: new Date().toISOString(),
+    ...(opts.userId ? { user_id: opts.userId } : {}),
+    zone: encodeMaxLeadsZone(maxLeads),
+    intent: {
+      original_query: String(opts.query || '').trim(),
+      query: String(opts.query || '').trim(),
+      requested_leads: maxLeads,
+      max_leads: maxLeads,
+      lead_target: maxLeads,
+      lifecycle_stage: 'planning',
+    },
+  }
+  let { data, error } = await supabase.from('searches').insert(richRow).select('id').single()
+  if (error && isMissingSearchesColumnError(error.message)) {
+    const minimal = {
+      category: richRow.category,
+      location: richRow.location,
+      status: richRow.status,
+      results: richRow.results,
+      created_at: richRow.created_at,
       ...(opts.userId ? { user_id: opts.userId } : {}),
-      zone: encodeMaxLeadsZone(maxLeads),
-      intent: {
-        original_query: String(opts.query || '').trim(),
-        query: String(opts.query || '').trim(),
-        requested_leads: maxLeads,
-        max_leads: maxLeads,
-        lead_target: maxLeads,
-        lifecycle_stage: 'planning',
-      },
-    })
-    .select('id')
-    .single()
+    }
+    ;({ data, error } = await supabase.from('searches').insert(minimal).select('id').single())
+  }
   if (error || !data?.id) throw new Error(error?.message || 'Impossibile inizializzare la ricerca')
   return String(data.id)
 }
@@ -443,7 +485,14 @@ export async function requestAgenticWorkerJob(
   const mutation = opts.existingSearchId
     ? supabase.from('searches').update(pendingRow).eq('id', opts.existingSearchId).eq('status', 'planning')
     : supabase.from('searches').insert(pendingRow)
-  const { data: insertData, error: insertError } = await mutation.select('id').single()
+  let { data: insertData, error: insertError } = await mutation.select('id').single()
+  if (insertError && isMissingSearchesColumnError(insertError.message)) {
+    const minimal = toMinimalPendingSearchInsert(pendingRow)
+    const retry = opts.existingSearchId
+      ? supabase.from('searches').update(minimal).eq('id', opts.existingSearchId).eq('status', 'planning')
+      : supabase.from('searches').insert(minimal)
+    ;({ data: insertData, error: insertError } = await retry.select('id').single())
+  }
 
   if (!insertError && insertData?.id) {
     return {

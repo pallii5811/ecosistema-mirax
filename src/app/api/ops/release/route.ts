@@ -8,7 +8,7 @@ import { STAGE1_CAPABILITY_MATRIX } from '@/lib/stage1-capabilities'
 
 export const dynamic = 'force-dynamic'
 
-export const MIRAX_RELEASE_ID = '20260717_stage1_capability_truthfulness' as const
+export const MIRAX_RELEASE_ID = '20260717_stage1_schema_insert_fallback' as const
 
 function enabledFlag(value: string | undefined): boolean {
   return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase())
