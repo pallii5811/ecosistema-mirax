@@ -11,21 +11,9 @@ from typing import Any, Dict, List
 
 
 TED_SEARCH_URL = "https://api.ted.europa.eu/v3/notices/search"
-_TED_FIELDS = [
-    "publication-number",
-    "notice-type",
-    "title-proc",
-    "title-lot",
-    "buyer-name",
-    "buyer-country",
-    "organisation-name-winner",
-    "winner-name",
-    "publication-date",
-    "place-of-performance",
-    "estimated-value-proc",
-    "total-value",
-    "links",
-]
+# TED Search v3 rejects friendly aliases in `fields`; omit the parameter and
+# parse whatever notice payload the API returns by default.
+_TED_FIELDS: list[str] = []
 
 
 def _first(record: Dict[str, Any], *keys: str) -> Any:
@@ -147,8 +135,9 @@ async def discover_ted_awards(keywords: List[str], *, location: str, page: int, 
         "scope": "ACTIVE",
         "checkQuerySyntax": True,
         "paginationMode": "PAGE_NUMBER",
-        "fields": _TED_FIELDS,
     }
+    if _TED_FIELDS:
+        payload["fields"] = _TED_FIELDS
     async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
             TED_SEARCH_URL,

@@ -41,9 +41,11 @@ class DomainResolutionResult:
     resolution_source: str
     resolution_method: str
     cost_eur: float = 0.0
+    resolved_at: Optional[str] = None
 
 
 DomainResolver = Callable[[str, str, str, float], Awaitable[Optional[DomainResolutionResult]]]
+_OWNERSHIP_EVIDENCE = frozenset({"company_tokens_in_host", "schema_org_identity_match"})
 
 
 async def _default_domain_resolver(
@@ -54,6 +56,7 @@ async def _default_domain_resolver(
 ) -> Optional[DomainResolutionResult]:
     """Resolve and positively verify ownership; probable/dead domains fail closed."""
     from backend_mirror.agents.domain_resolver import resolve_official_identity, verify_company_domain
+    from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, normalize_domain
 
     if presented_url:
         raw = await asyncio.to_thread(verify_company_domain, company_name, presented_url, location)
@@ -72,11 +75,17 @@ async def _default_domain_resolver(
     evidence = tuple(str(item) for item in raw.get("evidence") or () if str(item))
     if confidence < 0.70 or score < 70 or not evidence:
         return None
+    if not _OWNERSHIP_EVIDENCE.intersection(evidence):
+        return None
+    url = str(raw.get("url") or "")
+    if not url or is_blacklisted_domain(normalize_domain(url)):
+        return None
     return DomainResolutionResult(
-        url=str(raw.get("url") or ""), confidence=confidence, score=score,
+        url=url, confidence=confidence, score=score,
         evidence=evidence, resolution_source=source,
         resolution_method=str(raw.get("resolution_method") or "positive_page_identity"),
         cost_eur=cost,
+        resolved_at=str(raw.get("resolved_at") or "") or datetime.now(timezone.utc).isoformat(),
     )
 
 
@@ -391,6 +400,13 @@ class ProcurementAdapter:
                 if not official_domain:
                     rejection_codes.append("OFFICIAL_DOMAIN_UNRESOLVED")
                     continue
+                from backend_mirror.agents.portal_blacklist import is_blacklisted_domain
+                if is_blacklisted_domain(official_domain):
+                    rejection_codes.append("DIRECTORY_OR_PORTAL_DOMAIN")
+                    continue
+                if not _OWNERSHIP_EVIDENCE.intersection(resolution.evidence):
+                    rejection_codes.append("OFFICIAL_DOMAIN_OWNERSHIP_UNPROVEN")
+                    continue
                 publisher_host = _domain(source_url)
                 if publisher_host and official_domain == publisher_host:
                     rejection_codes.append("PUBLISHER_DOMAIN_AS_COMPANY")
@@ -401,6 +417,7 @@ class ProcurementAdapter:
                     f"({title[:120]}). Recent award creates immediate delivery, "
                     f"subcontracting and compliance demand."
                 )
+                resolved_at = resolution.resolved_at or datetime.now(timezone.utc).isoformat()
                 candidates.append(OpportunityCandidate(
                     canonical_company_name=name,
                     company_identifiers={"fiscal_id": identifier} if identifier else {},
@@ -423,10 +440,11 @@ class ProcurementAdapter:
                             "status": "verified",
                             "confidence": resolution.confidence,
                             "score": resolution.score,
-                            "evidence": resolution.evidence,
+                            "evidence": list(resolution.evidence),
                             "resolution_source": resolution.resolution_source,
                             "resolution_method": resolution.resolution_method,
                             "url": resolution.url,
+                            "resolved_at": resolved_at,
                         },
                     },
                     adapter_id=self.capability.adapter_id,

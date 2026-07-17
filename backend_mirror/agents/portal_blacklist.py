@@ -15,6 +15,10 @@ SOURCE_PORTAL_DOMAINS = frozenset({
     "facebook.com", "instagram.com", "twitter.com", "x.com", "youtube.com",
     "wikipedia.org", "wikidata.org", "paginegialle.it", "paginebianche.it",
     "registroimprese.it", "infocamere.it", "anac.gov.it", "gazzettaufficiale.it",
+    "fatturatoitalia.it", "reportaziende.it", "aziende.it", "informazione-aziende.it",
+    "reteimprese.it", "misterimprese.it", "infoimprese.it", "ufficiocamerale.it",
+    "europages.it", "europages.com", "kompass.com", "kompass.it", "cylex.it",
+    "atoka.io", "cerved.com", "crif.com", "dati.anticorruzione.it", "ted.europa.eu",
     "amazon.com", "amazon.it", "amazonaws.com", "google.com", "google.it",
     "microsoft.com", "microsoft.it", "apple.com", "meta.com", "ibm.com",
     "oracle.com", "sap.com", "nttdata.com", "ntt.com", "accenture.com",
@@ -70,6 +74,9 @@ EVIDENCE_SOURCE_PORTAL_DOMAINS = frozenset({
     "wired.it", "milanofinanza.it", "forbes.it", "fortune.com", "huffingtonpost.it",
     "pmi.com", "registroimprese.it", "infocamere.it", "anac.gov.it",
     "gazzettaufficiale.it", "ted.europa.eu", "paginegialle.it", "paginebianche.it",
+    "fatturatoitalia.it", "reportaziende.it", "aziende.it", "informazione-aziende.it",
+    "reteimprese.it", "misterimprese.it", "infoimprese.it", "ufficiocamerale.it",
+    "dati.anticorruzione.it",
 })
 
 # Evidence sources and lead websites are different trust domains. News, job
@@ -98,6 +105,8 @@ BLACKLIST_DOMAIN_ROOTS = (
     "jobcentre.", "prontopro.",
     "bancadellecase.", "wikicasa.", "immobiliare.", "idealista.",
     "casa.it", "ti-aiuto.", "kitlavoro.", "hackerone.",
+    "fatturatoitalia.", "reportaziende.", "informazione-aziende.",
+    "reteimprese.", "misterimprese.", "infoimprese.", "ufficiocamerale.",
 )
 
 BLACKLIST_NAME_PATTERNS = (

@@ -338,7 +338,44 @@ def test_official_source_url_is_not_used_as_company_domain() -> None:
 
     result = asyncio.run(adapter((one_provider,)).discover(request(count=1)))
     assert result.candidates == ()
-    assert "PUBLISHER_DOMAIN_AS_COMPANY" in result.warnings
+    assert (
+        "PUBLISHER_DOMAIN_AS_COMPANY" in result.warnings
+        or "DIRECTORY_OR_PORTAL_DOMAIN" in result.warnings
+    )
+
+
+def test_directory_portal_domain_is_rejected_and_resolved_at_is_persisted() -> None:
+    row = fixture_rows()[0]
+    row.update({"official_domain": "https://app.fatturatoitalia.it/svr"})
+
+    async def one_provider(_request, _offset, _limit):
+        return ProcurementProviderResult((row,), True, 0.0)
+
+    async def directory_resolver(_name, presented_url, _location, _budget):
+        return DomainResolutionResult(
+            url=presented_url,
+            confidence=0.95,
+            score=95,
+            evidence=("legal_name_in_page", "schema_org_identity_match"),
+            resolution_source="serp_identity",
+            resolution_method="positive_page_identity",
+            resolved_at="2026-07-17T16:00:00+00:00",
+        )
+
+    rejected = asyncio.run(
+        ProcurementAdapter((one_provider,), domain_resolver=directory_resolver).discover(request(count=1))
+    )
+    assert rejected.candidates == ()
+    assert "DIRECTORY_OR_PORTAL_DOMAIN" in rejected.warnings
+
+    row["official_domain"] = "https://svr-progettazione.example"
+    accepted = asyncio.run(
+        ProcurementAdapter((one_provider,), domain_resolver=directory_resolver).discover(request(count=1))
+    )
+    assert len(accepted.candidates) == 1
+    verification = accepted.candidates[0].provenance["domain_verification"]
+    assert verification["resolved_at"] == "2026-07-17T16:00:00+00:00"
+    assert verification["status"] == "verified"
 
 
 def test_provider_failure_does_not_block_exhaustion_when_anac_is_done() -> None:

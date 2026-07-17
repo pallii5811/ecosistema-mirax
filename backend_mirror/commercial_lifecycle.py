@@ -709,7 +709,8 @@ def evaluate_publication_gate(
             "confidence": identity.get("confidence"),
             "positive_signals": sorted(identity_evidence),
             "identity_source_url": identity.get("url"),
-            "resolved_at": identity.get("resolved_at"),
+            # ponytail: adapters must set resolved_at; fallback keeps DB identity gate insertable
+            "resolved_at": identity.get("resolved_at") or (_iso_now() if identity_positive else None),
         },
         "entity_classification": entity_classification,
         "contradiction_resolution": {
