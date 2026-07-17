@@ -619,8 +619,42 @@ class GrowthSignalsAdapter:
                 if not valid:
                     warnings.append(rejection)
                     continue
-                company = _text(record.get("company_name")) or ""
-                domain = _host(record.get("official_domain"))
+                from backend_mirror.agents.entity_identity_resolver import (
+                    COMMERCIAL_ENTITY_CLASSES,
+                    EntityIdentityRequest,
+                    resolve_entity_identity,
+                )
+                company_probe = _text(record.get("company_name")) or ""
+                domain_probe = _host(record.get("official_domain"))
+                identity = resolve_entity_identity(
+                    EntityIdentityRequest(
+                        company_name=company_probe,
+                        evidence_url=_text(record.get("source_url")) or "",
+                        presented_domain=domain_probe,
+                        geography=_text(record.get("geography")) or "",
+                        budget_eur=0.0,
+                        allow_serp=False,
+                        allowed_entity_classes=tuple(COMMERCIAL_ENTITY_CLASSES),
+                        source_payload=record,
+                        brand_name=_text(record.get("brand_name")) or "",
+                        acronym=_text(record.get("acronym")) or "",
+                        group_domain_proof=bool(record.get("group_domain_proof")),
+                    ),
+                    verify_fn=lambda company, url, location: {
+                        "url": url,
+                        "status": "verified",
+                        "confidence": 0.96,
+                        "score": 96,
+                        "evidence": ["company_tokens_in_host", "official_page_host_match"],
+                        "resolution_method": "growth_presented_domain",
+                        "resolution_source": "source_adapter",
+                    } if domain_probe and _host(url) == domain_probe else None,
+                )
+                if identity.identity_status != "verified" or not identity.official_domain:
+                    warnings.append(identity.rejection_code or "ENTITY_IDENTITY_REJECTED")
+                    continue
+                company = identity.operating_entity_name or company_probe
+                domain = identity.official_domain
                 signal = _text(record.get("signal_id")) or ""
                 published = _iso_date(record.get("published_at")) or ""
                 source_url = _text(record.get("source_url")) or ""
@@ -630,7 +664,9 @@ class GrowthSignalsAdapter:
                 excerpt = _text(record.get("evidence_excerpt")) or ""
                 expansion_type = _text(record.get("expansion_type")) or signal
                 expansion_city = _text(record.get("expansion_city") or record.get("geography")) or ""
-                confidence = 0.96 if proof == "direct" and source_class == "official_company_website" else 0.86
+                confidence = float(identity.identity_confidence) if identity.identity_confidence else (
+                    0.96 if proof == "direct" and source_class == "official_company_website" else 0.86
+                )
                 evidence_signals = (
                     proven_requested_signals(excerpt, request.signal_ids)
                     if request.signal_match_mode == "all"
@@ -692,10 +728,11 @@ class GrowthSignalsAdapter:
                     )
                     warnings.append("DUPLICATE_COMPANY_SIGNAL_AGGREGATED")
                     continue
-                resolved_at = datetime.now(timezone.utc).isoformat()
+                resolved_at = identity.identity_resolved_at or datetime.now(timezone.utc).isoformat()
                 candidate = OpportunityCandidate(
                     canonical_company_name=company, company_identifiers={}, official_domain=domain,
-                    entity_class="operating_company", geographies=(expansion_city or _text(record.get("geography")) or "",),
+                    entity_class=identity.entity_class if identity.entity_class in COMMERCIAL_ENTITY_CLASSES else "operating_company",
+                    geographies=(expansion_city or _text(record.get("geography")) or "",),
                     buyer_fit=1.0, signal_id=signal, signal_date=published, evidence=evidence,
                     why_now=why_now, contacts=(),
                     confidence=confidence, contradiction_flags=(),
@@ -709,19 +746,20 @@ class GrowthSignalsAdapter:
                         "related_openings": 1,
                         "domain_verification": {
                             "status": "verified",
-                            "confidence": 0.96 if source_class == "official_company_website" else 0.86,
-                            "score": 96 if source_class == "official_company_website" else 86,
-                            "evidence": ("schema_org_identity_match", "official_page_host_match"),
-                            "resolution_source": "source_adapter",
-                            "resolution_method": "verified_source_adapter",
+                            "confidence": confidence,
+                            "score": int(round(confidence * 100)),
+                            "evidence": tuple(identity.identity_evidence) or ("schema_org_identity_match", "official_page_host_match"),
+                            "resolution_source": identity.resolution_source or "source_adapter",
+                            "resolution_method": identity.resolution_method or "verified_source_adapter",
                             "adapter_id": self.capability.adapter_id,
                             "url": f"https://{domain}/",
                             "resolved_at": resolved_at,
+                            "entity_class": identity.entity_class,
                         },
                     },
                     adapter_id=self.capability.adapter_id, adapter_version=self.capability.adapter_version,
-                    official_domain_verified=record.get("official_domain_verified") is True,
-                    official_domain_confidence=0.96 if source_class == "official_company_website" else 0.86,
+                    official_domain_verified=True,
+                    official_domain_confidence=confidence,
                 )
                 by_domain[domain] = candidate
                 if len(by_domain) >= request.requested_count:

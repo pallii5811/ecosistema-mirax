@@ -46,7 +46,16 @@ class DomainResolutionResult:
 
 DomainResolver = Callable[[str, str, str, float], Awaitable[Optional[DomainResolutionResult]]]
 # Directory portals often embed company schema.org; host tokens are required.
-_OWNERSHIP_EVIDENCE = frozenset({"company_tokens_in_host"})
+_OWNERSHIP_EVIDENCE = frozenset({
+    "company_tokens_in_host",
+    "company_owned_evidence_host",
+    "cache_verified_domain",
+    "cache_hit",
+    "page_official_link",
+    "structured_data_identity",
+    "group_domain_proof",
+    "official_page_host_match",
+})
 _MAX_SOURCE_RECORDS = 30
 
 
@@ -56,38 +65,40 @@ async def _default_domain_resolver(
     location: str,
     budget_eur: float,
 ) -> Optional[DomainResolutionResult]:
-    """Resolve and positively verify ownership; probable/dead domains fail closed."""
-    from backend_mirror.agents.domain_resolver import resolve_official_identity, verify_company_domain
-    from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, normalize_domain
+    """Resolve via shared entity identity resolver; probable/dead domains fail closed."""
+    from backend_mirror.agents.entity_identity_resolver import (
+        COMMERCIAL_ENTITY_CLASSES,
+        EntityIdentityRequest,
+        resolve_entity_identity,
+    )
 
-    if presented_url:
-        raw = await asyncio.to_thread(verify_company_domain, company_name, presented_url, location)
-        cost = 0.0
-        source = "extracted_website"
-    else:
-        if budget_eur + 1e-9 < _DOMAIN_SEARCH_COST_EUR:
-            return None
-        raw = await asyncio.to_thread(resolve_official_identity, company_name, location, max_results=5)
-        cost = _DOMAIN_SEARCH_COST_EUR
-        source = str((raw or {}).get("resolution_source") or "serp_identity")
-    if not raw or str(raw.get("status") or "").lower() != "verified":
+    identity = await asyncio.to_thread(
+        resolve_entity_identity,
+        EntityIdentityRequest(
+            company_name=company_name,
+            presented_domain=presented_url,
+            geography=location,
+            budget_eur=budget_eur,
+            allow_serp=not bool(presented_url),
+            allowed_entity_classes=tuple(COMMERCIAL_ENTITY_CLASSES),
+            source_payload={"presented_url": presented_url},
+        ),
+    )
+    if identity.identity_status != "verified" or not identity.official_domain:
         return None
-    confidence = float(raw.get("confidence") or 0.0)
-    score = int(raw.get("score") or 0)
-    evidence = tuple(str(item) for item in raw.get("evidence") or () if str(item))
-    if confidence < 0.70 or score < 70 or not evidence:
+    if float(identity.identity_confidence) < 0.70:
         return None
-    if not _OWNERSHIP_EVIDENCE.intersection(evidence):
-        return None
-    url = str(raw.get("url") or "")
-    if not url or is_blacklisted_domain(normalize_domain(url)):
+    if not _OWNERSHIP_EVIDENCE.intersection(identity.identity_evidence):
         return None
     return DomainResolutionResult(
-        url=url, confidence=confidence, score=score,
-        evidence=evidence, resolution_source=source,
-        resolution_method=str(raw.get("resolution_method") or "positive_page_identity"),
-        cost_eur=cost,
-        resolved_at=str(raw.get("resolved_at") or "") or datetime.now(timezone.utc).isoformat(),
+        url=f"https://{identity.official_domain}/",
+        confidence=float(identity.identity_confidence),
+        score=int(round(float(identity.identity_confidence) * 100)),
+        evidence=identity.identity_evidence,
+        resolution_source=identity.resolution_source,
+        resolution_method=identity.resolution_method,
+        cost_eur=float(identity.cost_eur),
+        resolved_at=identity.identity_resolved_at,
     )
 
 
