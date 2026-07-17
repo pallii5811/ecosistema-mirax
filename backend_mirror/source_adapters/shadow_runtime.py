@@ -17,7 +17,7 @@ from .hiring_qualification import (
     related_opportunity_from_payload,
     evaluate_vacancy_geography,
 )
-from .orchestrator import OrchestrationResult, ProgressCallback, UniversalSourceOrchestrator, request_from_plan
+from .orchestrator import OrchestrationResult, ProgressCallback, request_from_plan
 
 
 _MAX_SHADOW_CAP_EUR = 0.125
@@ -219,14 +219,24 @@ async def execute_source_adapter_shadow(
     )
     token = set_current_cost_governor(governor)
     try:
-        orchestrator = UniversalSourceOrchestrator(registry or default_source_capability_registry())
-        result = await orchestrator.run(
+        from .universal_signal_discovery_engine import UniversalSignalDiscoveryEngine
+
+        engine = UniversalSignalDiscoveryEngine(registry or default_source_capability_registry())
+        engine_result = await engine.run(
             request,
+            plan=plan,
             required_source_classes=preferred,
             mandatory_adapter_ids=mandatory,
             progress_callback=progress_callback,
             resume_cursors=resume_cursors or None,
         )
+        result = engine_result.orchestration
+        # Keep shadow fail-closed for customer visibility; telemetry stays in limitations.
+        if engine_result.notes:
+            result = replace(
+                result,
+                limitations=tuple(dict.fromkeys((*result.limitations, *engine_result.notes, f"universal_capability:{engine_result.capability_status}"))),
+            )
     finally:
         reset_current_cost_governor(token)
     if result.cost_eur + prior_cost_eur > cap + 1e-9:

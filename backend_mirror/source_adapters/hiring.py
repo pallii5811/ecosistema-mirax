@@ -162,6 +162,15 @@ def _build_hiring_discovery_queries(request: AdapterDiscoveryRequest) -> List[Tu
     ) else [item for item in request.geographies if item.casefold() not in {"italy", "italia"}] or ["Italia"]
     sector = " ".join(request.sectors)
     pairs: List[Tuple[str, str, str]] = []
+    # Universal engine strategies first.
+    from .universal_strategy_queries import universal_strategy_queries_from_filters
+    for query in universal_strategy_queries_from_filters(
+        request.technical_filters,
+        signal_ids=request.signal_ids,
+        max_queries=6,
+    ):
+        key = f"serp:universal:{query}"
+        pairs.append((key, query, "serp:universal"))
     for role in roles:
         for geo in priority_geos:
             for template, source in (

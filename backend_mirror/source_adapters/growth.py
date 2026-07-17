@@ -377,6 +377,15 @@ async def _default_growth_provider(request: AdapterDiscoveryRequest, offset: int
     sector = " ".join(request.sectors)
     signals = set(request.signal_ids)
     queries: List[str] = []
+    # Universal engine strategies first (cheap multi-query exploration).
+    from .universal_strategy_queries import universal_strategy_queries_from_filters
+    queries.extend(
+        universal_strategy_queries_from_filters(
+            request.technical_filters,
+            signal_ids=request.signal_ids,
+            max_queries=8,
+        )
+    )
     if signals & _MARKETING_SIGNALS:
         queries.extend((
             f'aziende {location} ("campagna pubblicitaria" OR "Meta Ads" OR "Google Ads") {sector}',
@@ -393,6 +402,8 @@ async def _default_growth_provider(request: AdapterDiscoveryRequest, offset: int
             f'site:.it "comunicato stampa" ("nuova sede" OR "nuovo stabilimento" OR "nuovo punto vendita") '
             f'(2025 OR 2026) {sector}'.strip(),
         ))
+    # Deduplicate while preserving order.
+    queries = list(dict.fromkeys(q for q in queries if str(q).strip()))
     max_queries = min(len(queries), math.floor((request.budget_eur + 1e-9) / _QUERY_COST_EUR))
     if max_queries <= 0:
         return GrowthProviderResult((), False, 0.0, ("BUDGET_TOO_LOW_FOR_SEARCH",))

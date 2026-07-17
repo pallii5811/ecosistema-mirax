@@ -37,6 +37,11 @@ from .shadow_runtime import (
     serialize_shadow_qualified_leads,
     source_adapter_shadow_decision,
 )
+from .universal_query_spec import UniversalQuerySpec, compile_universal_query_spec, CANARY_QUERY_SPECS
+from .signal_strategy_planner import DiscoveryStrategy, plan_strategies
+from .universal_signal_discovery_engine import UniversalEngineResult, UniversalSignalDiscoveryEngine
+from .cheap_discovery_prefilter import DiscoveryHit, cheap_rank_hits, prefilter_discovery_hit
+from .universal_evidence import ExtractedEvidence, extract_evidence_from_text
 
 __all__ = [
     "AdapterDiscoveryRequest",
@@ -60,6 +65,18 @@ __all__ = [
     "SearchProgress",
     "ShadowRuntimeDecision",
     "UniversalSourceOrchestrator",
+    "UniversalSignalDiscoveryEngine",
+    "UniversalEngineResult",
+    "UniversalQuerySpec",
+    "DiscoveryStrategy",
+    "DiscoveryHit",
+    "ExtractedEvidence",
+    "CANARY_QUERY_SPECS",
+    "compile_universal_query_spec",
+    "plan_strategies",
+    "cheap_rank_hits",
+    "prefilter_discovery_hit",
+    "extract_evidence_from_text",
     "default_candidate_qualifier",
     "request_from_plan",
     "OpportunityCandidate",
