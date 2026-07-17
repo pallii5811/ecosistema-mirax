@@ -23,14 +23,6 @@ _EXPLICIT_SIZE_CONSTRAINT_RE = re.compile(
     re.I,
 )
 
-_LOMBARDIA_LOCALITIES = frozenset({
-    "milano", "milan", "bergamo", "brescia", "monza", "brianza",
-    "varese", "como", "lecco", "pavia", "cremona", "mantova",
-    "lodi", "sondrio", "sesto san giovanni", "arese",
-    "trezzano sul naviglio",
-})
-
-
 def plan_requires_explicit_size_constraint(canonical_plan: Dict[str, Any]) -> bool:
     """Size policy applies only when the user query or attributes ask for it."""
     raw_query = str(canonical_plan.get("raw_query") or "")
@@ -263,14 +255,24 @@ def _geography_matches_target(lead: Dict[str, Any], canonical_plan: Dict[str, An
             source_url=str(lead.get("vacancy_url") or ""),
             geographies=geographies,
         ))
-    lead_geo = str(lead.get("citta") or lead.get("city") or "").strip().lower()
-    location_blob = " ".join(
-        str(lead.get(key) or "") for key in ("citta", "city", "indirizzo", "address")
-    ).lower()
-    if any(geo in {"lombardia", "lombardy"} for geo in geographies):
-        if any(re.search(rf"(?<!\w){re.escape(locality)}(?!\w)", location_blob) for locality in _LOMBARDIA_LOCALITIES):
-            return True
-    return any(geo == lead_geo or geo in location_blob for geo in geographies)
+    requested_evidence = {
+        str(item).strip().casefold()
+        for item in lead.get("requested_geographies") or ()
+        if str(item).strip()
+    }
+    if lead.get("geography_match") is True and requested_evidence.intersection(geographies):
+        return True
+    if str(lead.get("geography_rejection_code") or "") in {"GEO_OUT_OF_SCOPE", "GEO_UNVERIFIED"}:
+        return False
+    # Compatibility fallback for payloads created before acquisition
+    # provenance was persisted.  Exact locality equality remains valid for any
+    # municipality string; no internal registration is required.
+    values = [
+        str(lead.get(key) or "").strip().casefold()
+        for key in ("address_locality", "municipality", "citta", "city", "location")
+        if str(lead.get(key) or "").strip()
+    ]
+    return any(geo == value for geo in geographies for value in values)
 
 
 def _is_category_scoped_digital_audit(lead: Dict[str, Any], canonical_plan: Dict[str, Any]) -> bool:
@@ -314,7 +316,10 @@ def _evaluate_category_scoped_digital_audit_buyer_fit(
         "evidence_verifiable": bool(publishable_evidence) and bool(evidence_signals.intersection(matched)),
         "no_critical_contradictions": not unresolved_contradictions,
     }
-    passed = all(checks.values())
+    # Geography is an independent hard gate.  Keeping it outside buyer fit
+    # preserves a precise GEO_* rejection instead of collapsing a location
+    # evidence problem into NO_BUYER_FIT.
+    passed = all(value for key, value in checks.items() if key != "geography_matches_target")
     score = round(
         70.0
         + (10.0 if checks["signal_groups_verified"] else 0.0)
@@ -653,7 +658,7 @@ def evaluate_publication_gate(
         "no_critical_contradictions": not unresolved_contradictions,
         "cost_within_budget": cost_within_budget,
     }
-    if str(lead.get("source_adapter_id") or "") == "structured_hiring_v1":
+    if str(lead.get("source_adapter_id") or "") in {"structured_hiring_v1", _DIGITAL_AUDIT_ADAPTER_ID}:
         gates["geography_matches_target"] = _geography_matches_target(lead, canonical_plan)
     failures = [key for key, passed in gates.items() if not passed]
     reason_codes = {
@@ -672,6 +677,13 @@ def evaluate_publication_gate(
         "cost_within_budget": "COST_GATE_FAILED",
         "geography_matches_target": "GEO_OUT_OF_SCOPE",
     }
+    geography_rejection = str(lead.get("geography_rejection_code") or "").strip()
+    if "geography_matches_target" in failures:
+        reason_codes["geography_matches_target"] = (
+            geography_rejection
+            if geography_rejection in {"GEO_OUT_OF_SCOPE", "GEO_UNVERIFIED"}
+            else "GEO_UNVERIFIED"
+        )
     rejection_codes = list(dict.fromkeys(reason_codes[key] for key in failures))
     buyer_fit_detail = {
         "buyer_fit_method": digital_audit_fit["method"] if digital_audit_fit else "lead_quality_contract_score",

@@ -24,6 +24,8 @@ try:
 except ImportError:  # pragma: no cover - deployed worker imports from backend root
     from maps_pagination import maps_identity_hash
 
+from .digital_audit_partition_policy import controlled_geography_partitions
+
 from .contracts import (
     AdapterDiscoveryRequest,
     AdapterExecutionResult,
@@ -78,18 +80,6 @@ _CATEGORY_PARTITION_ALIASES: Dict[str, Tuple[str, ...]] = {
         "servizi di pulizia",
     ),
 }
-
-_GEOGRAPHY_PARTITIONS: Dict[str, Tuple[str, ...]] = {
-    "milano": (
-        "Milano", "Milano Centro", "Milano Nord", "Milano Sud", "Milano Est", "Milano Ovest",
-        "Milano Niguarda", "Milano Lambrate", "Milano Baggio",
-    ),
-    "lombardia": (
-        "Milano", "Bergamo", "Brescia", "Monza", "Como", "Varese", "Pavia", "Cremona",
-        "Lecco", "Lodi", "Mantova", "Sondrio",
-    ),
-}
-
 
 @dataclass(frozen=True)
 class DigitalAuditCursorState:
@@ -177,6 +167,70 @@ def _normalize_category_label(value: Optional[str]) -> str:
         return ""
     text = value.casefold().strip()
     return re.sub(r"\s+", " ", text)
+
+
+def _controlled_maps_geography_provenance(
+    raw: Mapping[str, Any],
+    request: AdapterDiscoveryRequest,
+) -> Dict[str, Any]:
+    """Preserve provider/acquisition geography without a locality whitelist.
+
+    Maps remains authoritative for interpreting the user location.  This
+    boundary records the exact request and controlled partition; it does not
+    attempt to decide whether a municipality exists in an internal catalog.
+    """
+    requested = tuple(dict.fromkeys(str(item).strip() for item in request.geographies if str(item).strip()))
+    original_location = _text(raw.get("_mirax_acquisition_requested_location"))
+    query_location = _text(raw.get("_mirax_maps_query_location") or raw.get("city"))
+    provider_locality = _text(
+        raw.get("address_locality")
+        or raw.get("municipality")
+        or raw.get("provider_city")
+        or raw.get("citta")
+        or raw.get("city")
+    )
+    provider_region = _text(
+        raw.get("address_region") or raw.get("region") or raw.get("administrative_area")
+    )
+    provider_province = _text(raw.get("address_province") or raw.get("province"))
+    provider_country = _text(raw.get("address_country") or raw.get("country"))
+    rejection_code = None
+    geography_match = bool(requested and original_location and query_location)
+
+    # An exact locality query may be contradicted only by an explicit provider
+    # locality.  Region partitions instead use an explicit provider region as
+    # the contradiction boundary.  Missing internal dictionary knowledge is
+    # never a rejection reason.
+    original_norm = _normalize_category_label(original_location)
+    query_norm = _normalize_category_label(query_location)
+    requested_norm = {_normalize_category_label(item) for item in requested}
+    if provider_locality and original_norm == query_norm:
+        if _normalize_category_label(provider_locality) not in requested_norm:
+            geography_match = False
+            rejection_code = "GEO_OUT_OF_SCOPE"
+    elif provider_region and original_norm != query_norm:
+        if _normalize_category_label(provider_region) not in requested_norm:
+            geography_match = False
+            rejection_code = "GEO_OUT_OF_SCOPE"
+    if not geography_match and rejection_code is None:
+        rejection_code = "GEO_UNVERIFIED"
+
+    return {
+        "geography_match": geography_match,
+        "requested_geographies": requested,
+        "matched_geography": query_location if geography_match else None,
+        "normalized_country": provider_country,
+        "geography_match_method": "controlled_maps_partition" if geography_match else None,
+        "geography_match_evidence": {
+            "original_user_location": original_location,
+            "maps_query_location": query_location,
+            "provider_locality": provider_locality,
+            "provider_region": provider_region,
+            "provider_province": provider_province,
+            "provider_country": provider_country,
+        },
+        "geography_rejection_code": rejection_code,
+    }
 
 
 def _category_family_for_requested(requested: str) -> frozenset[str]:
@@ -348,7 +402,7 @@ def _partition_plan(category: str, location: str, technical_filters: Mapping[str
             return tuple(dict.fromkeys(parsed))
     canonical_category = _normalize_category_label(category)
     aliases = _CATEGORY_PARTITION_ALIASES.get(canonical_category, (category,))
-    geographies = _GEOGRAPHY_PARTITIONS.get(_normalize_category_label(location), (location,))
+    geographies = controlled_geography_partitions(location)
     return tuple(dict.fromkeys((alias, geography) for geography in geographies for alias in aliases))
 
 
@@ -573,6 +627,7 @@ def project_candidate_from_raw(
     for kind, key in (("email", "email"), ("phone", "phone"), ("social", "instagram"), ("social", "facebook")):
         if value := _text(raw.get(key)):
             contacts.append(ContactRecord(kind=kind, value=value, source_url=website, verified=True))  # type: ignore[arg-type]
+    geography = _controlled_maps_geography_provenance(raw, request)
     candidate = OpportunityCandidate(
         canonical_company_name=name,
         company_identifiers={"place_id": _text(raw.get("place_id")) or ""} if _text(raw.get("place_id")) else {},
@@ -598,6 +653,7 @@ def project_candidate_from_raw(
             "normalized_category": normalized_category,
             "matched_category_alias": matched_alias,
             "matched_signal_ids": matched,
+            **geography,
             "domain_verification": {
                 "status": "verified", "confidence": 0.86, "score": 86,
                 "evidence": ("maps_business_website", "direct_website_audit"),
@@ -1061,7 +1117,12 @@ class DigitalAuditAdapter:
             default=len(raw),
         )
         raw = [
-            {**item, "category": item.get("category") or item.get("categoria") or category}
+            {
+                **item,
+                "category": item.get("category") or item.get("categoria") or category,
+                "_mirax_acquisition_requested_location": location,
+                "_mirax_maps_query_location": partition_location,
+            }
             for item in raw
             if item.get("_maps_control_only") is not True
         ]

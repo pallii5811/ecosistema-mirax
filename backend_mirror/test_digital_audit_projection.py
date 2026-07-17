@@ -99,6 +99,62 @@ def test_website_weakness_and_missing_pixel_pass() -> None:
     assert "missing_advertising_pixel" in {item.signal_id for item in decision.candidate.evidence}
 
 
+def test_projection_preserves_controlled_maps_geography_without_whitelist() -> None:
+    raw = {
+        **milano_rows()[0],
+        "_mirax_acquisition_requested_location": "Canicattì",
+        "_mirax_maps_query_location": "Canicattì",
+        "address_locality": "Canicattì",
+    }
+    request = AdapterDiscoveryRequest(
+        intent="maps",
+        signal_ids=("website_weakness",),
+        signal_match_mode="all",
+        geographies=("Canicattì",),
+        freshness_max_age_days=1,
+        requested_count=1,
+        budget_eur=0,
+        query="Imprese di pulizia a Canicattì con errori SEO.",
+        sectors=("imprese di pulizia",),
+        technical_filters={},
+    )
+
+    decision = project_candidate_from_raw(raw, request, observed_at="2026-07-17T00:00:00+00:00")
+
+    assert decision.accepted is True
+    assert decision.candidate is not None
+    assert decision.candidate.provenance["geography_match"] is True
+    assert decision.candidate.provenance["requested_geographies"] == ("Canicattì",)
+    assert decision.candidate.provenance["geography_match_method"] == "controlled_maps_partition"
+
+
+def test_projection_marks_explicit_locality_contradiction_out_of_scope() -> None:
+    raw = {
+        **milano_rows()[0],
+        "_mirax_acquisition_requested_location": "Rho",
+        "_mirax_maps_query_location": "Rho",
+        "address_locality": "Roma",
+    }
+    request = AdapterDiscoveryRequest(
+        intent="maps",
+        signal_ids=("website_weakness",),
+        signal_match_mode="all",
+        geographies=("Rho",),
+        freshness_max_age_days=1,
+        requested_count=1,
+        budget_eur=0,
+        query="Imprese di pulizia a Rho con errori SEO.",
+        sectors=("imprese di pulizia",),
+        technical_filters={},
+    )
+
+    decision = project_candidate_from_raw(raw, request, observed_at="2026-07-17T00:00:00+00:00")
+
+    assert decision.accepted is True
+    assert decision.candidate.provenance["geography_match"] is False
+    assert decision.candidate.provenance["geography_rejection_code"] == "GEO_OUT_OF_SCOPE"
+
+
 def test_website_weakness_and_missing_analytics_pass() -> None:
     raw = {
         **milano_rows()[1],

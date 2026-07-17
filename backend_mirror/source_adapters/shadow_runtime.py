@@ -420,6 +420,7 @@ def candidate_to_lifecycle_shadow_payload(
         "geography_match_method": candidate.provenance.get("geography_match_method"),
         "geography_match_evidence": candidate.provenance.get("geography_match_evidence"),
         "geography_rejection_code": candidate.provenance.get("geography_rejection_code"),
+        "acquisition_geography": candidate.provenance.get("geography_match_evidence"),
         "employer_official_domain": employer_domain or None,
         "operating_company_probability": 0.95 if candidate.entity_class == "operating_company" else 0.0,
         "source_adapter_id": candidate.adapter_id,

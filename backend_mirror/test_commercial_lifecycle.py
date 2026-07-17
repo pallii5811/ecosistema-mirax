@@ -444,20 +444,53 @@ def test_digital_audit_buyer_fit_fails_wrong_category():
 def test_digital_audit_buyer_fit_fails_wrong_geography():
     gate = evaluate_publication_gate(digital_audit_lead(citta="Roma"), MILANO_PLAN, cost_within_budget=True)
     assert gate["publishable"] is False
-    assert "buyer_fit_verified" in gate["failures"] or "relevant_buying_signal_present" in gate["failures"]
+    assert "geography_matches_target" in gate["failures"]
+    assert "GEO_UNVERIFIED" in gate["rejection_codes"]
 
 
 def test_digital_audit_lombardia_target_accepts_milano_but_rejects_roma():
     plan = copy.deepcopy(MILANO_PLAN)
     plan["target"]["geographies"] = ["Lombardia"]
 
-    milano = evaluate_publication_gate(digital_audit_lead(citta="Milano"), plan, cost_within_budget=True)
-    roma = evaluate_publication_gate(digital_audit_lead(citta="Roma"), plan, cost_within_budget=True)
+    milano = evaluate_publication_gate(digital_audit_lead(
+        citta="Milano",
+        geography_match=True,
+        requested_geographies=["Lombardia"],
+        matched_geography="Milano",
+        geography_match_method="controlled_maps_partition",
+    ), plan, cost_within_budget=True)
+    roma = evaluate_publication_gate(digital_audit_lead(
+        citta="Roma",
+        geography_match=False,
+        requested_geographies=["Lombardia"],
+        geography_rejection_code="GEO_OUT_OF_SCOPE",
+    ), plan, cost_within_budget=True)
 
     assert milano["buyer_fit_pass"] is True
     assert milano["publishable"] is True
-    assert roma["buyer_fit_pass"] is False
+    assert roma["buyer_fit_pass"] is True
     assert roma["publishable"] is False
+    assert "GEO_OUT_OF_SCOPE" in roma["rejection_codes"]
+
+
+def test_digital_audit_unknown_exact_locality_does_not_require_dictionary():
+    plan = copy.deepcopy(MILANO_PLAN)
+    plan["target"]["geographies"] = ["Localita Arbitraria ZXQ"]
+    lead = digital_audit_lead(citta="Localita Arbitraria ZXQ")
+
+    gate = evaluate_publication_gate(lead, plan, cost_within_budget=True)
+
+    assert gate["publishable"] is True
+    assert gate["geography_matches_target"] is True
+
+
+def test_digital_audit_missing_geography_evidence_is_unverified():
+    lead = digital_audit_lead(citta=None, location=None)
+
+    gate = evaluate_publication_gate(lead, MILANO_PLAN, cost_within_budget=True)
+
+    assert gate["publishable"] is False
+    assert "GEO_UNVERIFIED" in gate["rejection_codes"]
 
 
 def test_digital_audit_buyer_fit_fails_unofficial_domain():
