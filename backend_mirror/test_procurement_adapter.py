@@ -257,3 +257,99 @@ def test_runtime_binding_is_registered_without_claiming_other_adapters() -> None
     }
     assert source_runtime_coverage("public_procurement_portal") == "supported"
     assert source_runtime_coverage("company_careers") == "supported"
+
+
+def test_countrywide_recent_awards_allow_empty_sectors() -> None:
+    row = fixture_rows()[0]
+    row.update({"source_id": "anac_opendata", "geography": "Lombardia", "official_domain": "https://winner.example"})
+
+    async def one_provider(_request, _offset, _limit):
+        return ProcurementProviderResult((row,), True, 0.0)
+
+    italy = AdapterDiscoveryRequest(
+        intent="public_procurement",
+        signal_ids=("tender_won",),
+        signal_match_mode="all",
+        geographies=("Italia",),
+        freshness_max_age_days=30,
+        requested_count=1,
+        budget_eur=0.10,
+        query="Trova aziende che hanno recentemente vinto gare pubbliche in Italia.",
+        sectors=(),
+        technical_filters={},
+    )
+    result = asyncio.run(adapter((one_provider,)).discover(italy))
+    assert len(result.candidates) == 1
+    candidate = result.candidates[0]
+    assert candidate.canonical_company_name == row["winner_name"]
+    assert candidate.canonical_company_name != row["authority"]
+    assert candidate.official_domain == "winner.example"
+    assert "dati.anticorruzione.it" not in candidate.official_domain
+    assert candidate.evidence[0].source_url
+    assert candidate.evidence[0].source_publisher == "ANAC"
+    assert candidate.why_now
+
+
+def test_missing_winner_and_ambiguous_authority_are_rejected() -> None:
+    missing = fixture_rows()[0]
+    missing.update({"winner_name": "", "official_domain": "https://missing.example"})
+    authority = fixture_rows()[1]
+    authority.update({
+        "winner_name": authority["authority"],
+        "role": "contracting_authority",
+        "official_domain": "https://authority.example",
+    })
+
+    async def one_provider(_request, _offset, _limit):
+        return ProcurementProviderResult((missing, authority), True, 0.0)
+
+    result = asyncio.run(adapter((one_provider,)).discover(request(count=2)))
+    assert result.candidates == ()
+    assert "WINNER_MISSING" in result.warnings
+    assert "PUBLISHER_OR_AUTHORITY_AS_WINNER" in result.warnings or "ENTITY_NOT_WINNER" in result.warnings
+
+
+def test_duplicate_award_or_entity_is_rejected() -> None:
+    first, second = fixture_rows()[0], fixture_rows()[1]
+    second.update({
+        "winner_name": first["winner_name"],
+        "winner_identifier": first["winner_identifier"],
+        "award_id": "DUP-CIG",
+        "official_domain": "https://dup.example",
+    })
+
+    async def one_provider(_request, _offset, _limit):
+        return ProcurementProviderResult((first, second), True, 0.0)
+
+    result = asyncio.run(adapter((one_provider,)).discover(request(count=5)))
+    assert len(result.candidates) == 1
+    assert "DUPLICATE_AWARD_OR_ENTITY" in result.warnings
+
+
+def test_official_source_url_is_not_used_as_company_domain() -> None:
+    row = fixture_rows()[0]
+    row.update({
+        "official_domain": "https://dati.anticorruzione.it/opendata/cig/CIG0001",
+        "source_url": "https://dati.anticorruzione.it/opendata/cig/CIG0001",
+    })
+
+    async def one_provider(_request, _offset, _limit):
+        return ProcurementProviderResult((row,), True, 0.0)
+
+    result = asyncio.run(adapter((one_provider,)).discover(request(count=1)))
+    assert result.candidates == ()
+    assert "PUBLISHER_DOMAIN_AS_COMPANY" in result.warnings
+
+
+def test_provider_failure_does_not_block_exhaustion_when_anac_is_done() -> None:
+    async def failing_ted(_request, _offset, _limit):
+        raise RuntimeError("TED unavailable")
+
+    async def anac_done(_request, _offset, _limit):
+        return ProcurementProviderResult((), True, 0.0)
+
+    result = asyncio.run(adapter((anac_done, failing_ted)).discover(request(count=5)))
+    assert result.candidates == ()
+    assert result.exhaustion.exhausted is True
+    assert result.exhaustion.authoritative is True
+    assert "PROVIDER_FAILED:FAILING_TED:RUNTIMEERROR" in result.warnings

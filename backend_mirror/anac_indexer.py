@@ -17,7 +17,7 @@ import sqlite3
 import threading
 import zipfile
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -88,26 +88,42 @@ def _discover_latest_resources(client: httpx.Client) -> Tuple[Optional[str], Opt
 
     for pkg_name, kind in [("aggiudicazioni", "tenders"), ("aggiudicatari", "winners")]:
         pkg = _api_get_sync(client, "package_show", {"id": pkg_name})
-        if not pkg:
-            continue
-        for res in pkg.get("resources", []) or []:
-            if not isinstance(res, dict):
-                continue
-            if res.get("format", "").upper() != "CSV":
-                continue
-            name = str(res.get("name") or "")
-            date = _parse_resource_date(name)
-            if not date:
-                continue
-            url = str(res.get("url") or "")
-            if not url.endswith(".zip"):
-                continue
-            if kind == "tenders" and date > tenders_date:
-                tenders_date = date
-                tenders_url = url
-            elif kind == "winners" and date > winners_date:
-                winners_date = date
-                winners_url = url
+        if pkg:
+            for res in pkg.get("resources", []) or []:
+                if not isinstance(res, dict):
+                    continue
+                name = str(res.get("name") or "")
+                url = str(res.get("url") or "")
+                date = _parse_resource_date(name)
+                if not date:
+                    continue
+                if not url.endswith(".zip"):
+                    continue
+                if kind == "tenders" and date > tenders_date:
+                    tenders_date = date
+                    tenders_url = url
+                elif kind == "winners" and date > winners_date:
+                    winners_date = date
+                    winners_url = url
+
+    # CKAN HTML WAF intermittently blocks package_show. Fall back to the known
+    # monthly filesystem naming used by ANAC Open Data.
+    if not tenders_url or not winners_url:
+        for yyyymmdd in (
+            datetime.now().strftime("%Y%m01"),
+            (datetime.now().replace(day=1) - timedelta(days=1)).strftime("%Y%m01"),
+        ):
+            t_url = f"{BASE_URL}/download/dataset/aggiudicazioni/filesystem/{yyyymmdd}-aggiudicazioni_csv.zip"
+            w_url = f"{BASE_URL}/download/dataset/aggiudicatari/filesystem/{yyyymmdd}-aggiudicatari_csv.zip"
+            try:
+                t_ok = client.head(t_url, headers=_headers(), timeout=20.0).status_code == 200
+                w_ok = client.head(w_url, headers=_headers(), timeout=20.0).status_code == 200
+            except Exception:
+                t_ok = w_ok = False
+            if t_ok and w_ok:
+                tenders_url = tenders_url or t_url
+                winners_url = winners_url or w_url
+                break
 
     return tenders_url, winners_url
 
@@ -152,14 +168,26 @@ def _parse_date(value: Any) -> Optional[str]:
     if not value:
         return None
     text = str(value).strip()[:10]
+    parsed: Optional[str] = None
     if re.match(r"^\d{4}-\d{2}-\d{2}$", text):
-        return text
-    for fmt in ("%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(text, fmt).date().isoformat()
-        except ValueError:
-            continue
-    return None
+        parsed = text
+    else:
+        for fmt in ("%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y"):
+            try:
+                parsed = datetime.strptime(text, fmt).date().isoformat()
+                break
+            except ValueError:
+                continue
+    if not parsed:
+        return None
+    try:
+        day = date.fromisoformat(parsed)
+    except ValueError:
+        return None
+    # Reject corrupted years from source dumps (e.g. 6202-01-16).
+    if day.year < 1990 or day > datetime.now().date() + timedelta(days=1):
+        return None
+    return parsed
 
 
 def _db_meta_value(conn: sqlite3.Connection, key: str) -> Optional[str]:
@@ -446,8 +474,11 @@ def search_company(
 
 _DISCOVERY_STOPWORDS = {
     "azienda", "aziende", "impresa", "imprese", "italia", "italiane", "italiani",
-    "gara", "gare", "appalto", "appalti", "vinto", "vinta", "ultimi", "ultimo",
-    "anno", "anni", "trova", "cerca", "settore", "servizi", "lavori",
+    "gara", "gare", "appalto", "appalti", "vinto", "vinta", "vinte", "vinti",
+    "ultimi", "ultimo", "recente", "recenti", "recentemente",
+    "pubblico", "pubblica", "pubbliche", "pubblici",
+    "anno", "anni", "trova", "trovami", "cerca", "settore", "servizi", "lavori",
+    "che", "hanno", "nella", "nelle", "degli", "delle",
 }
 
 
@@ -470,14 +501,20 @@ def discover_companies(
         for token in _normalize_company(str(value)).split():
             if len(token) >= 4 and token not in _DISCOVERY_STOPWORDS and token not in tokens:
                 tokens.append(token)
-    if not tokens:
-        return []
 
     cutoff = (datetime.now() - timedelta(days=max(1, days))).date().isoformat()
-    object_clause = " OR ".join("LOWER(t.object) LIKE ?" for _ in tokens)
-    params: List[Any] = [f"%{token}%" for token in tokens]
-    where = [f"({object_clause})", "t.date >= ?"]
-    params.append(cutoff)
+    today = datetime.now().date().isoformat()
+    # Date-first discovery: when the query has no sector tokens left after
+    # stopword filtering (e.g. country-wide "recent public contract winners"),
+    # return recent winners without inventing a municipality/sector dictionary.
+    where = ["t.date >= ?", "t.date <= ?", "w.company_name IS NOT NULL", "LENGTH(TRIM(w.company_name)) > 2"]
+    params: List[Any] = [cutoff, today]
+    if tokens:
+        object_clause = " OR ".join("LOWER(t.object) LIKE ?" for _ in tokens)
+        # Current ANAC award CSVs often omit object text; keep token filter only
+        # when object is present, otherwise fall through on date+winner.
+        where.insert(0, f"((LENGTH(COALESCE(t.object,'')) = 0) OR ({object_clause}))")
+        params = [f"%{token}%" for token in tokens] + params
 
     geo = _normalize_company(location)
     if geo and geo != "italia":

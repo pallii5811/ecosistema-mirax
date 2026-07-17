@@ -164,21 +164,39 @@ def _record_is_valid(record: Mapping[str, Any], request: AdapterDiscoveryRequest
         return False, "WINNER_MISSING"
     if name.casefold() in {(_text(record.get("authority")) or "").casefold(), (_text(record.get("publisher")) or "").casefold()}:
         return False, "PUBLISHER_OR_AUTHORITY_AS_WINNER"
-    if role and not any(term in role for term in ("winner", "aggiudicat", "contractor")):
+    # ANAC Open Data labels winners as "operatore economico ..."; TED uses winner/contractor.
+    winner_role_ok = (not role) or any(
+        term in role
+        for term in (
+            "winner", "aggiudicat", "contractor", "operatore economico",
+            "mandataria", "monosoggett",
+        )
+    )
+    # Exclude pure auxiliary / authority-side roles.
+    if role and any(term in role for term in ("ausiliar", "subappalt", "progettista", "contracting", "stazione")):
+        return False, "ENTITY_NOT_WINNER"
+    if not winner_role_ok:
         return False, "ENTITY_NOT_WINNER"
     if not any(term in status for term in ("award", "aggiudic", "affidat", "contract")):
         return False, "NOT_AWARDED"
     awarded_at = _iso_date(record.get("award_date") or record.get("date"))
     if not awarded_at:
         return False, "AWARD_DATE_MISSING"
-    if request.freshness_max_age_days is not None and (today - date.fromisoformat(awarded_at)).days > request.freshness_max_age_days:
+    awarded_date = date.fromisoformat(awarded_at)
+    if awarded_date > today:
+        return False, "AWARD_DATE_INVALID"
+    if request.freshness_max_age_days is not None and (today - awarded_date).days > request.freshness_max_age_days:
         return False, "AWARD_STALE"
     if not _geography_matches(record, request):
         return False, "GEOGRAPHY_MISMATCH"
     tokens = _target_tokens(request)
     title = (_text(record.get("title") or record.get("object")) or "").lower()
-    if tokens and not any(token in title for token in tokens):
+    if tokens and title and not any(token in title for token in tokens):
         return False, "TARGET_FIT_MISMATCH"
+    if tokens and not title:
+        # Country-wide ANAC award rows may omit object text in the current CSV schema;
+        # do not invent sector fit, but do not reject solely for an empty title.
+        pass
     if not _text(record.get("source_url")) or not _text(record.get("publisher")):
         return False, "SOURCE_PROVENANCE_MISSING"
     return True, ""
@@ -200,23 +218,31 @@ async def _anac_provider(request: AdapterDiscoveryRequest, offset: int, limit: i
     )
     normalized = []
     for record in records[offset:offset + limit]:
+        cig = _text(record.get("cig")) or ""
+        object_text = _text(record.get("object")) or (
+            f"Contratto pubblico aggiudicato (CIG {cig})" if cig else "Contratto pubblico aggiudicato"
+        )
         normalized.append({
             "source_id": "anac_opendata",
             "winner_name": record.get("company_name"),
             "winner_identifier": record.get("cf"),
             "official_domain": "",
             "award_id": record.get("cig"),
-            "title": record.get("object"),
+            "title": object_text,
             "award_date": record.get("date"),
             "amount": record.get("amount"),
             "cpv": record.get("cpv"),
-            "geography": " ".join(filter(None, (record.get("province"), record.get("region")))),
+            "geography": " ".join(filter(None, (record.get("province"), record.get("region")))) or "Italia",
             "authority": record.get("authority"),
             "publisher": "ANAC",
-            "source_url": "https://dati.anticorruzione.it/opendata",
+            "source_url": (
+                f"https://dati.anticorruzione.it/opendata/cig/{record.get('cig')}"
+                if record.get("cig")
+                else "https://dati.anticorruzione.it/opendata"
+            ),
             "status": record.get("status") or "aggiudicata",
             "role": record.get("role") or "aggiudicatario",
-            "evidence_excerpt": f"CIG {record.get('cig')}: {record.get('company_name')} aggiudicataria - {record.get('object')}",
+            "evidence_excerpt": f"CIG {record.get('cig')}: {record.get('company_name')} aggiudicataria - {object_text}",
         })
     return ProcurementProviderResult(tuple(normalized), len(records) < offset + limit, 0.0)
 
@@ -272,8 +298,8 @@ class ProcurementAdapter:
         return self.CAPABILITY
 
     async def discover(self, request: AdapterDiscoveryRequest) -> AdapterExecutionResult:
-        if not request.sectors:
-            raise ValueError("Procurement discovery requires sector/contract keywords")
+        # Empty sectors are valid for country-wide recent-award discovery; ANAC
+        # then uses date-first indexing instead of inventing sector keywords.
         offset = _cursor_offset(request.cursor)
         per_provider = min(100, max(request.requested_count * 2, 20))
         started = datetime.now(timezone.utc).isoformat()
@@ -365,6 +391,16 @@ class ProcurementAdapter:
                 if not official_domain:
                     rejection_codes.append("OFFICIAL_DOMAIN_UNRESOLVED")
                     continue
+                publisher_host = _domain(source_url)
+                if publisher_host and official_domain == publisher_host:
+                    rejection_codes.append("PUBLISHER_DOMAIN_AS_COMPANY")
+                    continue
+                amount_clause = f" for EUR {amount:,.0f}" if amount else ""
+                why_now = (
+                    f"{name} won public contract {award_id}{amount_clause} "
+                    f"({title[:120]}). Recent award creates immediate delivery, "
+                    f"subcontracting and compliance demand."
+                )
                 candidates.append(OpportunityCandidate(
                     canonical_company_name=name,
                     company_identifiers={"fiscal_id": identifier} if identifier else {},
@@ -375,7 +411,7 @@ class ProcurementAdapter:
                     signal_id=signal_id,
                     signal_date=awarded_at,
                     evidence=(evidence,),
-                    why_now=f"Recent contract award {award_id}" + (f" worth EUR {amount:,.0f}" if amount else ""),
+                    why_now=why_now,
                     contacts=(),
                     confidence=0.98,
                     contradiction_flags=(),
@@ -403,7 +439,12 @@ class ProcurementAdapter:
             if len(candidates) >= request.requested_count:
                 break
         target_reached = len(candidates) >= request.requested_count
-        all_exhausted = bool(provider_results) and not provider_warnings and all(result.exhausted for result in provider_results)
+        # Provider failures are warnings; they must not keep paging forever when
+        # every successful provider already reported exhaustion.
+        if not provider_results:
+            all_exhausted = True
+        else:
+            all_exhausted = all(result.exhausted for result in provider_results)
         next_cursor = None if all_exhausted else DiscoveryCursor(f"procurement:v1:{offset + per_provider}", partition="anac_ted")
         return AdapterExecutionResult(
             adapter_id=self.capability.adapter_id,

@@ -7,9 +7,10 @@ import { connectMiraxDb, loadMiraxDbPassword } from './lib/mirax-db.mjs'
 
 const ROOT = new URL('../', import.meta.url)
 const DATASET_VERSION = 'mirax-live-source-adapter-v5'
-const HARD_BUDGET_EUR = 0.125
-const TARGET_COST_EUR = 0.105
+const HARD_BUDGET_EUR = 0.10
+const TARGET_COST_EUR = 0.08
 const REQUESTED_COUNT = 5
+const MAX_SOURCE_RECORDS = 30
 
 const args = new Map(process.argv.slice(2).map((arg) => {
   const [key, ...value] = arg.replace(/^--/, '').split('=')
@@ -20,17 +21,17 @@ const vertical = args.get('vertical') || ''
 
 const SPECS = {
   procurement: {
-    query: 'Trovami imprese edili italiane che hanno vinto gare pubbliche negli ultimi 30 giorni.',
-    industries: ['edilizia', 'costruzioni'],
+    query: 'Trova aziende che hanno recentemente vinto gare pubbliche in Italia.',
+    industries: [],
     geographies: ['Italia'],
     signals: ['tender_won'],
     freshness: { tender_won: 30 },
     preferredSources: ['public_procurement_portal'],
     allowedSources: ['public_procurement_portal'],
     primarySources: ['tender_won'],
-    requiredAttributes: ['impresa operativa nel settore edile'],
+    requiredAttributes: ['azienda operativa aggiudicataria di gara pubblica'],
     buyerProblem: 'La recente aggiudicazione genera fabbisogni operativi, finanziari e commerciali immediati.',
-    event: 'gara pubblica aggiudicata negli ultimi 30 giorni',
+    event: 'gara pubblica aggiudicata di recente',
     impliedNeed: 'Capacita e servizi necessari per eseguire il contratto aggiudicato.',
   },
   hiring: {

@@ -55,6 +55,30 @@ def test_anac_discovers_winners_by_need() -> None:
                 time.sleep(0.05)
 
 
+def test_anac_date_first_discovery_without_sector_tokens() -> None:
+    handle, path = tempfile.mkstemp(suffix=".db")
+    os.close(handle)
+    try:
+        _build_anac_fixture(path)
+        records = anac_indexer.discover_companies(
+            ["Trova aziende che hanno recentemente vinto gare pubbliche in Italia"],
+            location="Italia",
+            max_records=10,
+            db_path=path,
+        )
+        assert len(records) == 1
+        assert records[0]["company_name"] == "Acque Pulite Srl"
+    finally:
+        for attempt in range(5):
+            try:
+                os.unlink(path)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05)
+
+
 def test_anac_signal_keeps_verification_status() -> None:
     signal = _to_signal(
         {
