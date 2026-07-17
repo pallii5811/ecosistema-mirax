@@ -147,10 +147,21 @@ def test_official_and_structured_news_parser_preserve_entity_boundary() -> None:
     """
     news = parse_growth_page(news_html, "https://notizie-lombardia.test/economia/buyer", ("expansion",), ("Lombardia",))
     assert news and news[0]["source_class"] == "recognized_local_news"
-    assert news[0]["corroborated"] is False
-    result = asyncio.run(GrowthSignalsAdapter((lambda *_: _async_result(news),)).discover(request("expansion", count=1)))
-    assert result.candidates == ()
-    assert "SECONDARY_SOURCE_NOT_CORROBORATED" in result.warnings
+    assert news[0]["entity_bound"] is True
+    assert news[0]["corroborated"] is True
+    assert news[0]["official_domain"] == "buyer-fixture.test"
+    result = asyncio.run(GrowthSignalsAdapter((lambda *_: _async_result(news),)).discover(
+        replace(
+            request("expansion", count=1),
+            query="Trova aziende che hanno recentemente aperto o annunciato nuove sedi in Italia.",
+            geographies=("Italia",),
+            freshness_max_age_days=180,
+        )
+    ))
+    assert len(result.candidates) == 1
+    assert result.candidates[0].canonical_company_name == "Buyer Fixture Srl"
+    assert result.candidates[0].official_domain == "buyer-fixture.test"
+    assert "notizie-lombardia.test" not in result.candidates[0].official_domain
 
 
 async def _async_result(records):
@@ -222,3 +233,103 @@ def test_any_accepts_alternative_signals_but_all_is_fail_closed() -> None:
     all_result = asyncio.run(GrowthSignalsAdapter((mixed,)).discover(all_request))
     assert all_result.candidates == ()
     assert "ALL_SIGNALS_INCOMPLETE" in all_result.warnings
+
+
+def test_certification_gates_for_expansion_live_contract() -> None:
+    today = date.today().isoformat()
+
+    official_html = f"""
+      <script type="application/ld+json">{{"@type":"Organization","name":"Cert Growth Srl","url":"https://cert-growth.test"}}</script>
+      <meta property="article:published_time" content="{today}">
+      <meta property="og:site_name" content="Cert Growth Srl">
+      <article>Cert Growth Srl inaugura una nuova sede a Bologna.</article>
+    """
+    official = parse_growth_page(
+        official_html, "https://cert-growth.test/newsroom/apertura",
+        ("expansion",), ("Italia",),
+    )
+    assert official and official[0]["source_class"] == "official_company_website"
+
+    news_html = f"""
+      <script type="application/ld+json">{{
+        "@type":"NewsArticle",
+        "about":{{"@type":"Organization","name":"News Bound Srl","url":"https://news-bound.test"}}
+      }}</script>
+      <meta property="article:published_time" content="{today}">
+      <meta property="og:site_name" content="Quotidiano Locale">
+      <article>News Bound Srl apre un nuovo negozio a Verona.</article>
+    """
+    news = parse_growth_page(
+        news_html, "https://quotidiano-locale.test/economia/news-bound",
+        ("expansion",), ("Italia",),
+    )
+    assert news and news[0]["official_domain"] == "news-bound.test"
+
+    async def mixed(_request, _offset, _limit):
+        return GrowthProviderResult((*official, *news), True, 0.0)
+
+    italy = replace(
+        request("expansion", count=5),
+        geographies=("Italia",),
+        freshness_max_age_days=180,
+        query="Trova aziende che hanno recentemente aperto o annunciato nuove sedi, stabilimenti, negozi o espansioni in Italia.",
+        technical_filters={"max_source_records": 40},
+    )
+    accepted = asyncio.run(GrowthSignalsAdapter((mixed,)).discover(italy))
+    assert len(accepted.candidates) == 2
+    assert {item.official_domain for item in accepted.candidates} == {"cert-growth.test", "news-bound.test"}
+
+    publisher = {
+        **fixture_rows("expansion")[0],
+        "company_name": "Quotidiano Locale",
+        "source_publisher": "Quotidiano Locale",
+        "source_class": "recognized_local_news",
+        "corroborated": True,
+        "entity_bound": True,
+        "official_domain": "buyer-ok.test",
+        "source_url": "https://quotidiano-locale.test/x",
+        "evidence_excerpt": "Quotidiano Locale inaugura una nuova sede a Milano.",
+    }
+    comune = {
+        **fixture_rows("expansion")[0],
+        "company_name": "Comune di Roma",
+        "official_domain": "comune.roma.it",
+        "evidence_excerpt": "Comune di Roma inaugura una nuova sede.",
+    }
+    stale = {**fixture_rows("expansion")[0], "published_at": (date.today() - timedelta(days=400)).isoformat()}
+    rumor = {
+        **fixture_rows("expansion")[0],
+        "company_name": "Rumor Co Srl",
+        "official_domain": "rumor-co.test",
+        "evidence_excerpt": "Secondo rumor Rumor Co Srl potrebbe aprire una nuova sede a Milano.",
+    }
+    directory = {
+        **fixture_rows("expansion")[0],
+        "company_name": "Dir Co Srl",
+        "official_domain": "fatturatoitalia.it",
+        "evidence_excerpt": "Dir Co Srl inaugura una nuova sede a Milano.",
+    }
+    first = fixture_rows("expansion")[0]
+    dup = {
+        **fixture_rows("expansion")[1],
+        "company_name": first["company_name"],
+        "official_domain": first["official_domain"],
+        "evidence_excerpt": f"{first['company_name']} apre un nuovo negozio a Napoli.",
+        "source_url": f"https://{first['official_domain']}/news/seconda-apertura",
+    }
+
+    async def negatives(_request, _offset, _limit):
+        return GrowthProviderResult((publisher, comune, stale, rumor, directory, first, dup), True, 0.0)
+
+    rejected = asyncio.run(GrowthSignalsAdapter((negatives,)).discover(italy))
+    assert len(rejected.candidates) == 1
+    assert rejected.candidates[0].official_domain == first["official_domain"]
+    assert int(rejected.candidates[0].provenance.get("related_openings") or 0) >= 2
+    assert {
+        "PUBLISHER_AS_BUYER",
+        "PUBLIC_BODY_AS_COMPANY",
+        "SIGNAL_STALE",
+        "RUMOR_OR_HYPOTHESIS",
+        "OFFICIAL_DOMAIN_UNRESOLVED",
+        "DUPLICATE_COMPANY_SIGNAL_AGGREGATED",
+    }.issubset(set(rejected.warnings))

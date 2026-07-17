@@ -42,15 +42,43 @@ _DIRECT_PATTERNS: Dict[str, re.Pattern[str]] = {
     "google_ads_started": re.compile(r"\b(?:campagn[ae]|annunc[io]|investimento)\s+(?:attiv[ae]\s+)?(?:su\s+)?google\s+ads\b", re.I),
     "active_advertising": re.compile(r"\b(?:ha\s+)?(?:avviato|lanciato|attivato|pianificato)\s+(?:una\s+)?(?:nuova\s+)?campagna\s+(?:pubblicitaria|advertising|paid media)\b", re.I),
     "rebranding": re.compile(r"\b(?:annuncia|avvia|completa|presenta)\s+(?:il\s+)?(?:nuovo\s+)?rebrand(?:ing)?\b", re.I),
-    "new_location": re.compile(r"\b(?:inaugura|apre|ha aperto|annuncia)\s+(?:una\s+)?nuov[ao]\s+(?:sede|filiale|ufficio|showroom|punto vendita|apertura)\b", re.I),
-    "production_expansion": re.compile(r"\b(?:amplia|potenzia|inaugura|avvia)\s+(?:(?:la|un|una)\s+)?(?:capacita produttiva|capacità produttiva|produzione|nuov[ao]\s+(?:linea|impianto|stabilimento))\b", re.I),
-    "geographic_expansion": re.compile(r"\b(?:entra|si espande|avvia le operazioni|debutta)\s+(?:in|nel|sul)\s+(?:(?:un|una)\s+)?(?:nuov[oi]\s+)?mercat[oi]\b", re.I),
+    "new_location": re.compile(
+        r"\b(?:inaugura(?:to|ta)?|apre|ha aperto|annuncia(?:to|ta)?|apertura di)\s+"
+        r"(?:(?:una|un|la|il)\s+)?(?:nuov[ao]\s+)?"
+        r"(?:sede|filiale|ufficio|showroom|punto\s+vendita|negozio|stabilimento|apertura)\b|"
+        r"\bnuov[ao]\s+(?:sede|filiale|negozio|stabilimento|punto\s+vendita)\b",
+        re.I,
+    ),
+    "production_expansion": re.compile(
+        r"\b(?:amplia|potenzia|inaugura|avvia|aumenta)\s+"
+        r"(?:(?:la|un|una)\s+)?(?:capacita produttiva|capacità produttiva|produzione|"
+        r"presenza\s+territoriale|nuov[ao]\s+(?:linea|impianto|stabilimento))\b|"
+        r"\bampliamento\s+(?:della\s+)?(?:sede|stabilimento|capacita|capacità)\b",
+        re.I,
+    ),
+    "geographic_expansion": re.compile(
+        r"\b(?:entra|si espande|avvia le operazioni|debutta|espansione\s+geografica)\s+"
+        r"(?:in|nel|sul|verso)?\s*(?:(?:un|una)\s+)?(?:nuov[oi]\s+)?mercat[oi]?\b|"
+        r"\bespansione\s+(?:in|nel|sul)\s+[A-ZÀ-Üa-zà-ü]{3,}",
+        re.I,
+    ),
     "internationalization": re.compile(r"\b(?:espansione internazionale|internazionalizzazione|entra nel mercato estero|apre all'estero)\b", re.I),
     "product_launch": re.compile(r"\b(?:lancia|presenta|introduce)\s+(?:(?:il|la|un|una)\s+)?nuov[oa]\s+(?:prodotto|linea|gamma)\b", re.I),
     "service_launch": re.compile(r"\b(?:lancia|presenta|introduce)\s+(?:il\s+|un\s+)?nuov[oa]\s+servizi[oa]\b", re.I),
     "new_equipment": re.compile(r"\b(?:installa|acquista|investe in)\s+(?:un\s+|una\s+)?nuov[oa]\s+(?:macchinario|impianto|attrezzatura)\b", re.I),
     "market_entry": re.compile(r"\b(?:entra|debutta|sbarca)\s+(?:in|nel|sul)\s+(?:nuov[oa]\s+)?mercat[oa]\b", re.I),
 }
+_RUMOR_RE = re.compile(
+    r"\b(?:si\s+parla\s+di|secondo\s+rumor|secondo\s+voci|ipotizz[ao]|potrebbe\s+aprire|"
+    r"in\s+trattativa\s+per\s+aprire|progetto\s+ipotetic[oa]|non\s+confermat[oa])\b",
+    re.I,
+)
+_PUBLIC_BODY_RE = re.compile(
+    r"\b(?:comune|citt[aà]\s+metropolitana|provincia|regione|ministero|prefettura|"
+    r"camera\s+di\s+commercio|asl\b|inps\b|agenzia\s+delle\s+entrate)\b",
+    re.I,
+)
+_MAX_SOURCE_RECORDS = 40
 _STRONG_MARKETING_PROXY_RE = re.compile(
     r"\b(?:affida|incarica|sceglie)\s+(?:una\s+)?agenzia\s+(?:per|di)\s+(?:la\s+)?(?:campagna|comunicazione|rebranding)|"
     r"\b(?:assume|ricerca)\s+(?:un\s+|una\s+)?(?:marketing manager|performance marketer|media buyer)\b",
@@ -209,6 +237,17 @@ def parse_growth_page(
     publisher_meta = soup.find("meta", attrs={"property": "og:site_name"})
     publisher = _text(publisher_meta.get("content") if publisher_meta else None) or host
     source_class = "official_company_website" if is_official else "recognized_local_news"
+    # Company site pages are self-corroborating. News is allowed only when schema
+    # binds a distinct company domain (no second SERP required for ownership).
+    entity_bound = bool(official_domain and official_domain != host)
+    corroborated = bool(is_official or entity_bound)
+    expansion_city = ""
+    city_match = re.search(
+        r"\b(?:a|ad|in|di)\s+([A-ZÀ-Ü][a-zà-ü']+(?:\s+[A-ZÀ-Ü][a-zà-ü']+){0,2})\b",
+        match.group(0) + " " + excerpt[match.end() - match.start():match.end() - match.start() + 80],
+    )
+    if city_match:
+        expansion_city = city_match.group(1)
     return [{
         "company_name": company,
         "official_domain": official_domain,
@@ -217,13 +256,16 @@ def parse_growth_page(
         "signal_id": signal_id,
         "proof_level": proof_level,
         "published_at": published,
-        "geography": geography,
+        "geography": geography or expansion_city,
+        "expansion_type": signal_id,
+        "expansion_city": expansion_city or geography,
         "source_url": source_url,
         "source_publisher": publisher,
         "source_class": source_class,
         "evidence_excerpt": excerpt,
         "extraction_method": "structured_official_page" if is_official else "structured_news_about_entity",
-        "corroborated": is_official,
+        "corroborated": corroborated,
+        "entity_bound": entity_bound or is_official,
     }]
 
 
@@ -243,8 +285,10 @@ async def _default_growth_provider(request: AdapterDiscoveryRequest, offset: int
         ))
     if signals & _EXPANSION_SIGNALS:
         queries.extend((
-            f'aziende {location} ("nuova sede" OR "nuovo stabilimento" OR "capacità produttiva") {sector}',
-            f'aziende {location} ("nuovo mercato" OR internazionalizzazione OR "nuova linea") {sector}',
+            f'Italia ("nuova sede" OR "nuovo stabilimento" OR "nuovo negozio" OR "punto vendita") '
+            f'(inaugura OR "ha aperto" OR annuncia OR apertura) {location} {sector}'.strip(),
+            f'("comunicato stampa" OR newsroom OR "ufficio stampa") '
+            f'("nuova sede" OR "nuovo stabilimento" OR ampliamento OR "capacità produttiva") {location} {sector}'.strip(),
         ))
     max_queries = min(len(queries), math.floor((request.budget_eur + 1e-9) / _QUERY_COST_EUR))
     if max_queries <= 0:
@@ -253,7 +297,11 @@ async def _default_growth_provider(request: AdapterDiscoveryRequest, offset: int
     urls: List[str] = []
     seen: set[str] = set()
     spent = 0.0
-    target = min(100, offset + max(limit * 2, 30))
+    max_source = min(
+        _MAX_SOURCE_RECORDS,
+        int((request.technical_filters or {}).get("max_source_records") or _MAX_SOURCE_RECORDS),
+    )
+    target = min(max_source, offset + max(limit * 2, 20))
     for index, query in enumerate(queries[:max_queries]):
         if spent + _QUERY_COST_EUR > request.budget_eur + 1e-9:
             break
@@ -263,21 +311,37 @@ async def _default_growth_provider(request: AdapterDiscoveryRequest, offset: int
         spent += _QUERY_COST_EUR
         for url in found:
             key = url.lower().rstrip("/")
-            if key not in seen:
-                seen.add(key)
-                urls.append(url)
+            host = _host(url)
+            if key in seen or not host or is_blacklisted_domain(host):
+                continue
+            seen.add(key)
+            urls.append(url)
+    # Prefer likely company/newsroom hosts before generic portals when fetching.
+    def _fetch_rank(url: str) -> tuple[int, str]:
+        host = _host(url)
+        path = (urlparse(url).path or "").lower()
+        score = 0
+        if any(token in path for token in ("newsroom", "comunicato", "press", "news", "novita", "chi-siamo")):
+            score -= 2
+        if host.endswith(".it") and host.count(".") == 1:
+            score -= 1
+        return (score, host)
+
+    urls.sort(key=_fetch_rank)
     records: List[Mapping[str, Any]] = []
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Growth/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
     async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=headers) as client:
-        for url in urls[offset:offset + limit]:
+        for url in urls[offset:offset + min(limit, max_source)]:
             try:
                 response = await client.get(url)
                 if response.status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
                     continue
                 records.extend(parse_growth_page(response.text[:2_000_000], str(response.url), request.signal_ids, request.geographies))
+                if len(records) >= max_source:
+                    break
             except Exception:
                 continue
-    return GrowthProviderResult(tuple(records), offset + limit >= len(urls), spent)
+    return GrowthProviderResult(tuple(records[:max_source]), True, spent)
 
 
 def _cursor_offset(cursor: Optional[DiscoveryCursor]) -> int:
@@ -298,6 +362,8 @@ def _record_valid(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
     domain = _host(record.get("official_domain"))
     if not company:
         return False, "COMPANY_MISSING"
+    if _PUBLIC_BODY_RE.search(company):
+        return False, "PUBLIC_BODY_AS_COMPANY"
     if not domain or is_blacklisted_domain(domain):
         return False, "OFFICIAL_DOMAIN_UNRESOLVED"
     if record.get("official_domain_verified") is not True:
@@ -311,8 +377,15 @@ def _record_valid(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
         return False, "SOURCE_PROVENANCE_MISSING"
     if source_class not in {"official_company_website", "recognized_local_news", "industry_publication"}:
         return False, "SOURCE_CLASS_UNSUPPORTED"
-    if source_class != "official_company_website" and record.get("corroborated") is not True:
-        return False, "SECONDARY_SOURCE_NOT_CORROBORATED"
+    source_host = _host(source_url)
+    if source_class != "official_company_website":
+        entity_bound = record.get("entity_bound") is True or (
+            bool(domain) and bool(source_host) and domain != source_host and record.get("corroborated") is True
+        )
+        if not entity_bound and record.get("corroborated") is not True:
+            return False, "SECONDARY_SOURCE_NOT_CORROBORATED"
+        if domain and source_host and domain == source_host:
+            return False, "PUBLISHER_DOMAIN_AS_COMPANY"
     if source_class != "official_company_website" and company.casefold() == publisher.casefold():
         return False, "PUBLISHER_AS_BUYER"
     published = _iso_date(record.get("published_at"))
@@ -343,6 +416,8 @@ def _record_valid(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
     if proof not in {"direct", "strong_proxy"}:
         return False, "EVIDENCE_TOO_WEAK"
     excerpt = _text(record.get("evidence_excerpt")) or ""
+    if _RUMOR_RE.search(excerpt):
+        return False, "RUMOR_OR_HYPOTHESIS"
     proven = set(proven_requested_signals(excerpt, request.signal_ids))
     if request.signal_match_mode == "all" and not requested.issubset(proven):
         return False, "EVIDENCE_PATTERN_UNPROVEN"
@@ -400,7 +475,11 @@ class GrowthSignalsAdapter:
 
     async def discover(self, request: AdapterDiscoveryRequest) -> AdapterExecutionResult:
         offset = _cursor_offset(request.cursor)
-        page_size = min(100, max(request.requested_count * 3, 20))
+        max_source_records = min(
+            _MAX_SOURCE_RECORDS,
+            int(request.technical_filters.get("max_source_records") or _MAX_SOURCE_RECORDS),
+        )
+        page_size = min(max_source_records, max(request.requested_count * 3, 20))
         started = datetime.now(timezone.utc).isoformat()
         results: List[GrowthProviderResult] = []
         spent = 0.0
@@ -410,7 +489,9 @@ class GrowthSignalsAdapter:
                 intent=request.intent, signal_ids=request.signal_ids, signal_match_mode=request.signal_match_mode,
                 geographies=request.geographies, freshness_max_age_days=request.freshness_max_age_days,
                 requested_count=request.requested_count, budget_eur=remaining, query=request.query,
-                sectors=request.sectors, technical_filters=request.technical_filters, cursor=request.cursor,
+                sectors=request.sectors,
+                technical_filters={**dict(request.technical_filters or {}), "max_source_records": max_source_records},
+                cursor=request.cursor,
             )
             result = await provider(bounded, offset, page_size)
             if result.cost_eur > remaining + 1e-9:
@@ -420,9 +501,13 @@ class GrowthSignalsAdapter:
         observed = datetime.now(timezone.utc).isoformat()
         warnings = [warning for result in results for warning in result.warnings]
         candidates: List[OpportunityCandidate] = []
-        seen: set[Tuple[str, str]] = set()
+        by_domain: Dict[str, OpportunityCandidate] = {}
+        source_attempts = 0
         for result in results:
             for record in result.records:
+                if source_attempts >= max_source_records:
+                    break
+                source_attempts += 1
                 valid, rejection = _record_valid(record, request, date.today())
                 if not valid:
                     warnings.append(rejection)
@@ -430,17 +515,14 @@ class GrowthSignalsAdapter:
                 company = _text(record.get("company_name")) or ""
                 domain = _host(record.get("official_domain"))
                 signal = _text(record.get("signal_id")) or ""
-                key = (domain, signal)
-                if key in seen:
-                    warnings.append("DUPLICATE_COMPANY_SIGNAL")
-                    continue
-                seen.add(key)
                 published = _iso_date(record.get("published_at")) or ""
                 source_url = _text(record.get("source_url")) or ""
                 publisher = _text(record.get("source_publisher")) or ""
                 source_class = _text(record.get("source_class")) or ""
                 proof = _text(record.get("proof_level")) or ""
                 excerpt = _text(record.get("evidence_excerpt")) or ""
+                expansion_type = _text(record.get("expansion_type")) or signal
+                expansion_city = _text(record.get("expansion_city") or record.get("geography")) or ""
                 confidence = 0.96 if proof == "direct" and source_class == "official_company_website" else 0.86
                 evidence_signals = (
                     proven_requested_signals(excerpt, request.signal_ids)
@@ -452,46 +534,109 @@ class GrowthSignalsAdapter:
                     source_class=source_class, excerpt=excerpt[:1200], observed_at=observed,
                     published_at=published, extraction_method=_text(record.get("extraction_method")) or "structured_growth_event",
                     confidence=confidence,
-                    provenance={"proof_level": proof, "corroborated": record.get("corroborated") is True},
+                    provenance={
+                        "proof_level": proof,
+                        "corroborated": record.get("corroborated") is True,
+                        "expansion_type": expansion_type,
+                        "expansion_city": expansion_city,
+                    },
                 ) for evidence_signal in evidence_signals)
-                candidates.append(OpportunityCandidate(
+                why_now = _text(record.get("why_now"))
+                if not why_now:
+                    if signal in _EXPANSION_SIGNALS or "expansion" in set(request.signal_ids):
+                        why_now = (
+                            f"{company} ha annunciato {expansion_type.replace('_', ' ')}"
+                            f"{f' a {expansion_city}' if expansion_city else ''} "
+                            f"({published}). L'espansione crea fabbisogni operativi, fornitura e capacita immediati."
+                        )
+                    else:
+                        why_now = f"{proof}: {excerpt[:240]}"
+                if domain in by_domain:
+                    existing = by_domain[domain]
+                    seen_urls = {item.source_url for item in existing.evidence}
+                    extra = tuple(item for item in evidence if item.source_url not in seen_urls)
+                    merged_evidence = existing.evidence + extra
+                    by_domain[domain] = OpportunityCandidate(
+                        canonical_company_name=existing.canonical_company_name,
+                        company_identifiers=existing.company_identifiers,
+                        official_domain=existing.official_domain,
+                        entity_class=existing.entity_class,
+                        geographies=tuple(dict.fromkeys([*existing.geographies, expansion_city or ""])),
+                        buyer_fit=existing.buyer_fit,
+                        signal_id=existing.signal_id,
+                        signal_date=existing.signal_date,
+                        evidence=merged_evidence,
+                        why_now=f"{existing.why_now} | {why_now}"[:900],
+                        contacts=existing.contacts,
+                        confidence=max(existing.confidence, confidence),
+                        contradiction_flags=existing.contradiction_flags,
+                        provenance={
+                            **dict(existing.provenance),
+                            "matched_signal_ids": tuple(dict.fromkeys([
+                                *tuple(existing.provenance.get("matched_signal_ids") or ()),
+                                *evidence_signals,
+                            ])),
+                            "related_openings": int(existing.provenance.get("related_openings") or 1) + 1,
+                        },
+                        adapter_id=existing.adapter_id,
+                        adapter_version=existing.adapter_version,
+                        official_domain_verified=existing.official_domain_verified,
+                        official_domain_confidence=existing.official_domain_confidence,
+                    )
+                    warnings.append("DUPLICATE_COMPANY_SIGNAL_AGGREGATED")
+                    continue
+                resolved_at = datetime.now(timezone.utc).isoformat()
+                candidate = OpportunityCandidate(
                     canonical_company_name=company, company_identifiers={}, official_domain=domain,
-                    entity_class="operating_company", geographies=(_text(record.get("geography")) or "",),
+                    entity_class="operating_company", geographies=(expansion_city or _text(record.get("geography")) or "",),
                     buyer_fit=1.0, signal_id=signal, signal_date=published, evidence=evidence,
-                    why_now=_text(record.get("why_now")) or f"{proof}: {excerpt[:240]}", contacts=(),
+                    why_now=why_now, contacts=(),
                     confidence=confidence, contradiction_flags=(),
                     provenance={
                         "adapter_id": self.capability.adapter_id,
                         "proof_level": proof,
                         "publisher": publisher,
+                        "expansion_type": expansion_type,
+                        "expansion_city": expansion_city,
                         "matched_signal_ids": evidence_signals,
+                        "related_openings": 1,
                         "domain_verification": {
-                            "status": "verified", "confidence": 0.96 if source_class == "official_company_website" else 0.86,
+                            "status": "verified",
+                            "confidence": 0.96 if source_class == "official_company_website" else 0.86,
                             "score": 96 if source_class == "official_company_website" else 86,
                             "evidence": ("schema_org_identity_match", "official_page_host_match"),
                             "resolution_source": "source_adapter",
                             "resolution_method": "verified_source_adapter",
                             "adapter_id": self.capability.adapter_id,
                             "url": f"https://{domain}/",
+                            "resolved_at": resolved_at,
                         },
                     },
                     adapter_id=self.capability.adapter_id, adapter_version=self.capability.adapter_version,
                     official_domain_verified=record.get("official_domain_verified") is True,
                     official_domain_confidence=0.96 if source_class == "official_company_website" else 0.86,
-                ))
-                if len(candidates) >= request.requested_count:
+                )
+                by_domain[domain] = candidate
+                if len(by_domain) >= request.requested_count:
                     break
-            if len(candidates) >= request.requested_count:
+            if len(by_domain) >= request.requested_count or source_attempts >= max_source_records:
                 break
+        candidates = list(by_domain.values())[: request.requested_count]
         reached = len(candidates) >= request.requested_count
-        exhausted = all(result.exhausted for result in results)
+        exhausted = all(result.exhausted for result in results) or source_attempts >= max_source_records
+        # ponytail: record cap is a canary safety stop, not authoritative global exhaustion
         next_cursor = None if exhausted else DiscoveryCursor(f"growth:v1:{offset + page_size}", partition="official_growth_sources")
         return AdapterExecutionResult(
             adapter_id=self.capability.adapter_id, adapter_version=self.capability.adapter_version,
             candidates=tuple(candidates),
             exhaustion=SourceExhaustion(
                 exhausted=exhausted and not reached, scope="source" if exhausted else "partition",
-                reason="requested_count_reached" if reached else "all_growth_sources_exhausted" if exhausted else "next_partition_available",
+                reason=(
+                    "requested_count_reached" if reached
+                    else "max_source_records_reached" if source_attempts >= max_source_records
+                    else "all_growth_sources_exhausted" if all(result.exhausted for result in results)
+                    else "next_partition_available"
+                ),
                 authoritative=False, next_cursor=next_cursor,
             ),
             operations=sum(len(result.records) for result in results), cost_eur=spent,

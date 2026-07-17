@@ -10,7 +10,7 @@ const DATASET_VERSION = 'mirax-live-source-adapter-v5'
 const HARD_BUDGET_EUR = 0.10
 const TARGET_COST_EUR = 0.08
 const REQUESTED_COUNT = 5
-const MAX_SOURCE_RECORDS = 30
+const MAX_SOURCE_RECORDS = 40
 
 const args = new Map(process.argv.slice(2).map((arg) => {
   const [key, ...value] = arg.replace(/^--/, '').split('=')
@@ -93,17 +93,17 @@ const SPECS = {
     impliedNeed: 'Correzione della postura email e della presenza social ufficiale.',
   },
   expansion: {
-    query: 'Trovami aziende italiane che hanno annunciato recentemente una nuova sede, un nuovo stabilimento o un ampliamento produttivo.',
-    industries: ['industria', 'servizi B2B'],
+    query: 'Trova aziende che hanno recentemente aperto o annunciato nuove sedi, stabilimenti, negozi o espansioni in Italia.',
+    industries: [],
     geographies: ['Italia'],
     signals: ['expansion'],
-    freshness: { expansion: 90 },
+    freshness: { expansion: 180 },
     preferredSources: ['official_company_website', 'recognized_local_news'],
     allowedSources: ['official_company_website', 'recognized_local_news', 'industry_publication'],
     primarySources: ['expansion'],
-    requiredAttributes: ['azienda operativa italiana'],
+    requiredAttributes: ['azienda operativa che si espande'],
     buyerProblem: 'Una espansione concreta crea nuovi fabbisogni di capacita, fornitori e processi.',
-    event: 'nuova sede, nuovo stabilimento o ampliamento produttivo annunciato di recente',
+    event: 'nuova sede, nuovo stabilimento, negozio o espansione geografica annunciata di recente',
     impliedNeed: 'Servizi e infrastrutture per rendere operativa lespansione.',
   },
   'marketing-investment': {
