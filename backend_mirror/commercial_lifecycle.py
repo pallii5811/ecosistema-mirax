@@ -23,6 +23,13 @@ _EXPLICIT_SIZE_CONSTRAINT_RE = re.compile(
     re.I,
 )
 
+_LOMBARDIA_LOCALITIES = frozenset({
+    "milano", "milan", "bergamo", "brescia", "monza", "brianza",
+    "varese", "como", "lecco", "pavia", "cremona", "mantova",
+    "lodi", "sondrio", "sesto san giovanni", "arese",
+    "trezzano sul naviglio",
+})
+
 
 def plan_requires_explicit_size_constraint(canonical_plan: Dict[str, Any]) -> bool:
     """Size policy applies only when the user query or attributes ask for it."""
@@ -260,6 +267,9 @@ def _geography_matches_target(lead: Dict[str, Any], canonical_plan: Dict[str, An
     location_blob = " ".join(
         str(lead.get(key) or "") for key in ("citta", "city", "indirizzo", "address")
     ).lower()
+    if any(geo in {"lombardia", "lombardy"} for geo in geographies):
+        if any(re.search(rf"(?<!\w){re.escape(locality)}(?!\w)", location_blob) for locality in _LOMBARDIA_LOCALITIES):
+            return True
     return any(geo == lead_geo or geo in location_blob for geo in geographies)
 
 

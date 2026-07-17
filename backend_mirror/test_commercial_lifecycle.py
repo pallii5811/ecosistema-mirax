@@ -447,6 +447,19 @@ def test_digital_audit_buyer_fit_fails_wrong_geography():
     assert "buyer_fit_verified" in gate["failures"] or "relevant_buying_signal_present" in gate["failures"]
 
 
+def test_digital_audit_lombardia_target_accepts_milano_but_rejects_roma():
+    plan = copy.deepcopy(MILANO_PLAN)
+    plan["target"]["geographies"] = ["Lombardia"]
+
+    milano = evaluate_publication_gate(digital_audit_lead(citta="Milano"), plan, cost_within_budget=True)
+    roma = evaluate_publication_gate(digital_audit_lead(citta="Roma"), plan, cost_within_budget=True)
+
+    assert milano["buyer_fit_pass"] is True
+    assert milano["publishable"] is True
+    assert roma["buyer_fit_pass"] is False
+    assert roma["publishable"] is False
+
+
 def test_digital_audit_buyer_fit_fails_unofficial_domain():
     lead = digital_audit_lead()
     lead["domain_verification"]["status"] = "probable"
