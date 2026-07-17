@@ -68,10 +68,12 @@ mv "${NEW_LIVE}" "${LIVE}"
 mv "${NEW_STAGING}" "${STAGING}"
 SWAPPED=1
 
-# Only the read-only/internal audit API is restarted. Search workers remain frozen.
-systemctl restart mirax-audit-api-staging
+# Only the read-only/internal audit APIs are restarted. Search workers remain frozen.
+systemctl restart mirax-audit-api mirax-audit-api-staging
 sleep 3
+systemctl is-active --quiet mirax-audit-api
 systemctl is-active --quiet mirax-audit-api-staging
+curl -sf --max-time 10 http://127.0.0.1:8001/health
 curl -sf --max-time 10 http://127.0.0.1:8002/health
 for service in "${WORKERS[@]}"; do
   test "$(systemctl is-active "${service}" 2>/dev/null || true)" != "active"

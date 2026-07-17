@@ -9,6 +9,7 @@ import { MiraxLogo } from '@/components/MiraxLogo'
 import { useDashboardState } from '@/components/dashboard/hooks/useDashboardState'
 import { useCredits } from '@/components/dashboard/hooks/useCredits'
 import { PartialSearchBanner } from '@/components/dashboard/PartialSearchBanner'
+import { Stage1CapabilityPanel } from '@/components/dashboard/Stage1CapabilityPanel'
 import { useSearchJob } from '@/components/dashboard/hooks/useSearchJob'
 import { useSignalIntentEnrich } from '@/components/dashboard/hooks/useSignalIntentEnrich'
 
@@ -49,6 +50,8 @@ export default function DashboardShell() {
         <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">Trova lead pronti</h1>
         <p className="mt-1 text-sm text-slate-600">Scrivi in linguaggio naturale e lascia che MiraX trovi le aziende giuste.</p>
       </div>
+
+      <Stage1CapabilityPanel />
 
       <SniperArea
         query={query}

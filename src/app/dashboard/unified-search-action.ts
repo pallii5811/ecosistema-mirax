@@ -31,6 +31,12 @@ import {
   isBuyerMarketingInvestmentQuery,
   isSellerMarketingAgencySector,
 } from '@/lib/signal-intent/marketing-investment'
+import {
+  resolveStage1CapabilityFromSignals,
+  stage1SearchOutcomeStatus,
+  stage1UserMessage,
+  type Stage1Capability,
+} from '@/lib/stage1-capabilities'
 
 const UNIFIED_SEARCH_TIMEOUT_MS = 50_000
 const SEARCH_DISABLED_MESSAGE =
@@ -54,13 +60,47 @@ const withTimeout = async <T,>(promise: Promise<T>, ms: number) => {
 
 export type UnifiedSearchResponse = {
   results: Record<string, unknown>[]
-  status?: 'completed' | 'pending'
+  status?: 'completed' | 'pending' | 'partial' | 'unavailable'
   jobId?: string
   searchId?: string
   filters?: Record<string, unknown>
   ai_debug?: Record<string, unknown>
   cache_meta?: Record<string, unknown>
   user_message?: string | null
+  capability?: {
+    id: string
+    label: string
+    status: string
+    limits: string
+  }
+}
+
+function capabilityPayload(capability: Stage1Capability) {
+  return {
+    id: capability.id,
+    label: capability.label,
+    status: capability.status,
+    limits: capability.limits,
+  }
+}
+
+function attachCapability(
+  response: UnifiedSearchResponse,
+  capability: Stage1Capability,
+  extras: Record<string, unknown> = {},
+): UnifiedSearchResponse {
+  return {
+    ...response,
+    capability: capabilityPayload(capability),
+    user_message: response.user_message ?? (
+      capability.status === 'SUPPORTED' ? response.user_message : stage1UserMessage(capability)
+    ),
+    ai_debug: {
+      ...(response.ai_debug || {}),
+      stage1_capability: capabilityPayload(capability),
+      ...extras,
+    },
+  }
 }
 
 const GRAPH_SUFFICIENCY_MIN = 5
@@ -220,15 +260,20 @@ export async function unifiedSearchAction(
   options?: { maxLeads?: number; plan?: MiraxQueryPlan },
 ): Promise<UnifiedSearchResponse> {
   if (envFlag('MIRAX_SEARCH_DISABLED') || envFlag('MIRAX_WORKER_DISABLED')) {
-    return {
-      results: [],
-      status: 'completed',
-      user_message: SEARCH_DISABLED_MESSAGE,
-      ai_debug: {
-        mode: 'safe_disabled',
-        search_disabled: true,
+    const capability = resolveStage1CapabilityFromSignals([])
+    return attachCapability(
+      {
+        results: [],
+        status: 'unavailable',
+        user_message: SEARCH_DISABLED_MESSAGE,
+        ai_debug: {
+          mode: 'safe_disabled',
+          search_disabled: true,
+        },
       },
-    }
+      capability,
+      { brake_engaged: true },
+    )
   }
   try {
     return await withTimeout(unifiedSearchActionCore(userQuery, options), UNIFIED_SEARCH_TIMEOUT_MS)
@@ -249,7 +294,7 @@ export async function unifiedSearchAction(
     }
     return {
       results: [],
-      status: 'completed' as const,
+      status: 'unavailable',
       user_message:
         'La ricerca ha impiegato troppo tempo. Riprova con categoria e città (es. "ristoranti Milano") o riduci il target.',
       ai_debug: { error: err instanceof Error ? err.message : String(err), mode: 'unified_timeout' },
@@ -303,6 +348,7 @@ async function unifiedSearchActionCore(
     }
   }
   const plan = normalizeSellerLeadGenerationPlan(rawPlan, query)
+  const capability = resolveStage1CapabilityFromSignals(plan.required_signals || [])
 
   const aiDebug = planAiDebug(plan, desiredMax)
 
@@ -311,17 +357,36 @@ async function unifiedSearchActionCore(
     categoria: plan.sector || null,
   }
 
+  if (capability.status === 'BETA' || capability.status === 'UNAVAILABLE') {
+    if (planningSearchId) {
+      await cancelAgenticPlanningJob(supabase, planningSearchId, 'capability_unavailable')
+    }
+    return attachCapability(
+      {
+        results: [],
+        status: 'unavailable',
+        user_message: stage1UserMessage(capability),
+        filters,
+        ai_debug: { ...aiDebug, source: 'stage1_capability_gate' },
+      },
+      capability,
+    )
+  }
+
   if (plan.search_strategy === 'fallback') {
     if (planningSearchId) {
       await cancelAgenticPlanningJob(supabase, planningSearchId, 'intent_fallback')
     }
-    return {
-      results: [],
-      status: 'completed',
-      user_message: plan.user_message,
-      filters,
-      ai_debug: { ...aiDebug, source: 'uqe_fallback' },
-    }
+    return attachCapability(
+      {
+        results: [],
+        status: 'unavailable',
+        user_message: plan.user_message || stage1UserMessage(capability),
+        filters,
+        ai_debug: { ...aiDebug, source: 'uqe_fallback' },
+      },
+      capability,
+    )
   }
 
   const intent = commercialIntentFromPlan(plan, query)
@@ -362,26 +427,29 @@ async function unifiedSearchActionCore(
       throw error
     }
 
-    return {
-      results: [],
-      status: 'pending',
-      jobId: sourceAdapterJob.jobId,
-      searchId: sourceAdapterJob.searchId,
-      filters,
-      user_message: 'Ricerca live evidence-first avviata in staging.',
-      ai_debug: {
-        ...aiDebug,
-        source: 'source_adapter_shadow_ui',
-        billing_suppressed: true,
-        customer_visible: false,
-        max_leads: desiredMax,
+    return attachCapability(
+      {
+        results: [],
+        status: 'pending',
+        jobId: sourceAdapterJob.jobId,
+        searchId: sourceAdapterJob.searchId,
+        filters,
+        user_message: 'Ricerca live evidence-first avviata in staging.',
+        ai_debug: {
+          ...aiDebug,
+          source: 'source_adapter_shadow_ui',
+          billing_suppressed: true,
+          customer_visible: false,
+          max_leads: desiredMax,
+        },
+        cache_meta: {
+          source: 'source_adapter_shadow_ui',
+          canonical_job_id: sourceAdapterJob.jobId,
+          needs_more_scrape: true,
+        },
       },
-      cache_meta: {
-        source: 'source_adapter_shadow_ui',
-        canonical_job_id: sourceAdapterJob.jobId,
-        needs_more_scrape: true,
-      },
-    }
+      capability,
+    )
   }
 
   if (plan.search_strategy === 'organic_web_search') {
@@ -422,26 +490,32 @@ async function unifiedSearchActionCore(
       throw error
     }
 
-    return {
-      results: [],
-      status: 'pending',
-      jobId: agenticJob.jobId,
-      searchId: agenticJob.searchId,
-      filters,
-      user_message: AGENTIC_NICHE_USER_MESSAGE,
-      ai_debug: {
-        ...aiDebug,
-        source: 'agentic_worker',
-        max_leads: desiredMax,
-        scrape_category: scrapeCategory,
-        scrape_location: location,
+    return attachCapability(
+      {
+        results: [],
+        status: 'pending',
+        jobId: agenticJob.jobId,
+        searchId: agenticJob.searchId,
+        filters,
+        user_message: [
+          AGENTIC_NICHE_USER_MESSAGE,
+          capability.status === 'SUPPORTED_PARTIAL' ? stage1UserMessage(capability) : null,
+        ].filter(Boolean).join(' '),
+        ai_debug: {
+          ...aiDebug,
+          source: 'agentic_worker',
+          max_leads: desiredMax,
+          scrape_category: scrapeCategory,
+          scrape_location: location,
+        },
+        cache_meta: {
+          source: 'agentic_worker',
+          canonical_job_id: agenticJob.jobId,
+          needs_more_scrape: true,
+        },
       },
-      cache_meta: {
-        source: 'agentic_worker',
-        canonical_job_id: agenticJob.jobId,
-        needs_more_scrape: true,
-      },
-    }
+      capability,
+    )
   }
 
   // maps + hybrid → discovery Maps immediata (streaming + audit 1-a-1 sul worker)
@@ -460,37 +534,44 @@ async function unifiedSearchActionCore(
         await cancelAgenticPlanningJob(supabase, planningSearchId, 'planning_transferred_to_maps_job')
       }
 
-      return {
-        results: [],
-        status: 'pending',
-        jobId: scrape.jobId,
-        searchId: scrape.jobId,
-        filters,
-        ai_debug: {
-          ...aiDebug,
-          source: plan.search_strategy === 'hybrid' ? 'maps_hybrid_worker' : 'maps_worker',
-          scrape_category: scrapeCategory,
-          scrape_location: location,
-          scrape_reused: scrape.reused,
+      return attachCapability(
+        {
+          results: [],
+          status: 'pending',
+          jobId: scrape.jobId,
+          searchId: scrape.jobId,
+          filters,
+          user_message: capability.status === 'SUPPORTED_PARTIAL' ? stage1UserMessage(capability) : null,
+          ai_debug: {
+            ...aiDebug,
+            source: plan.search_strategy === 'hybrid' ? 'maps_hybrid_worker' : 'maps_worker',
+            scrape_category: scrapeCategory,
+            scrape_location: location,
+            scrape_reused: scrape.reused,
+          },
+          cache_meta: {
+            source: 'maps_worker',
+            canonical_job_id: scrape.jobId,
+            needs_more_scrape: true,
+          },
         },
-        cache_meta: {
-          source: 'maps_worker',
-          canonical_job_id: scrape.jobId,
-          needs_more_scrape: true,
-        },
-      }
+        capability,
+      )
     } catch (e) {
       if (planningSearchId) {
         await cancelAgenticPlanningJob(supabase, planningSearchId, 'maps_activation_failed')
       }
       const err = e instanceof Error ? e.message : String(e)
-      return {
-        results: [],
-        status: 'completed',
-        filters,
-        user_message: `Impossibile avviare la discovery Maps: ${err}`,
-        ai_debug: { ...aiDebug, source: 'maps_worker', scrape_error: err },
-      }
+      return attachCapability(
+        {
+          results: [],
+          status: 'unavailable',
+          filters,
+          user_message: `Impossibile avviare la discovery Maps: ${err}`,
+          ai_debug: { ...aiDebug, source: 'maps_worker', scrape_error: err },
+        },
+        capability,
+      )
     }
   }
 
@@ -521,24 +602,35 @@ async function unifiedSearchActionCore(
     withContact >= Math.min(desiredMax, GRAPH_MIN_WITH_CONTACT)
 
   if (plan.search_strategy === 'graph' && sufficientAfterFilter) {
-    return {
-      results: graphResults.slice(0, desiredMax),
-      status: 'completed',
-      searchId: `graph-${Date.now()}`,
-      filters,
-      ai_debug: {
-        ...aiDebug,
-        source: 'knowledge_graph',
-        graph_total: graphTotal,
-        graph_returned: graphResults.length,
-        graph_error: graphError,
+    const sliced = graphResults.slice(0, desiredMax)
+    return attachCapability(
+      {
+        results: sliced,
+        status: stage1SearchOutcomeStatus(capability, {
+          found: sliced.length,
+          target: desiredMax,
+        }),
+        searchId: `graph-${Date.now()}`,
+        filters,
+        user_message:
+          sliced.length < desiredMax && capability.status === 'SUPPORTED_PARTIAL'
+            ? stage1UserMessage(capability)
+            : null,
+        ai_debug: {
+          ...aiDebug,
+          source: 'knowledge_graph',
+          graph_total: graphTotal,
+          graph_returned: graphResults.length,
+          graph_error: graphError,
+        },
+        cache_meta: {
+          source: 'knowledge_graph',
+          graph_total: graphTotal,
+          graph_returned: graphResults.length,
+        },
       },
-      cache_meta: {
-        source: 'knowledge_graph',
-        graph_total: graphTotal,
-        graph_returned: graphResults.length,
-      },
-    }
+      capability,
+    )
   }
 
   try {
@@ -551,47 +643,60 @@ async function unifiedSearchActionCore(
       intent: workerPayload,
     })
 
-    return {
-      results: graphResults,
-      status: 'pending',
-      jobId: scrape.jobId,
-      searchId: scrape.jobId,
-      filters,
-      ai_debug: {
-        ...aiDebug,
-        source: 'knowledge_graph_then_scrape',
-        graph_total: graphTotal,
-        graph_returned: graphResults.length,
-        scrape_category: scrapeCategory,
-        scrape_location: location,
-        scrape_reused: scrape.reused,
-        graph_error: graphError,
+    return attachCapability(
+      {
+        results: graphResults,
+        status: 'pending',
+        jobId: scrape.jobId,
+        searchId: scrape.jobId,
+        filters,
+        user_message: capability.status === 'SUPPORTED_PARTIAL' ? stage1UserMessage(capability) : null,
+        ai_debug: {
+          ...aiDebug,
+          source: 'knowledge_graph_then_scrape',
+          graph_total: graphTotal,
+          graph_returned: graphResults.length,
+          scrape_category: scrapeCategory,
+          scrape_location: location,
+          scrape_reused: scrape.reused,
+          graph_error: graphError,
+        },
+        cache_meta: {
+          source: 'knowledge_graph_then_scrape',
+          graph_total: graphTotal,
+          graph_returned: graphResults.length,
+          canonical_job_id: scrape.jobId,
+          needs_more_scrape: true,
+        },
       },
-      cache_meta: {
-        source: 'knowledge_graph_then_scrape',
-        graph_total: graphTotal,
-        graph_returned: graphResults.length,
-        canonical_job_id: scrape.jobId,
-        needs_more_scrape: true,
-      },
-    }
+      capability,
+    )
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e)
     console.error('[unified] scrape trigger error:', err)
-    return {
-      results: graphResults,
-      status: 'completed',
-      searchId: `graph-${Date.now()}`,
-      filters,
-      ai_debug: {
-        ...aiDebug,
-        source: 'knowledge_graph',
-        graph_total: graphTotal,
-        graph_returned: graphResults.length,
-        scrape_error: err,
-        graph_error: graphError,
+    return attachCapability(
+      {
+        results: graphResults,
+        status: stage1SearchOutcomeStatus(capability, {
+          found: graphResults.length,
+          target: desiredMax,
+        }),
+        searchId: `graph-${Date.now()}`,
+        filters,
+        user_message: graphResults.length
+          ? `Risultati parziali dal Knowledge Graph. Scrape non avviato: ${err}`
+          : `Impossibile completare la ricerca: ${err}`,
+        ai_debug: {
+          ...aiDebug,
+          source: 'knowledge_graph',
+          graph_total: graphTotal,
+          graph_returned: graphResults.length,
+          scrape_error: err,
+          graph_error: graphError,
+        },
+        cache_meta: { source: 'knowledge_graph' },
       },
-      cache_meta: { source: 'knowledge_graph' },
-    }
+      capability,
+    )
   }
 }
