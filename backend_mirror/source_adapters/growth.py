@@ -442,19 +442,54 @@ async def _default_growth_provider(request: AdapterDiscoveryRequest, offset: int
         return (score, host)
 
     urls.sort(key=_fetch_rank)
+    # Universal engine: cheap prefilter before page fetch / identity.
+    if bool((request.technical_filters or {}).get("universal_engine")):
+        from .cheap_discovery_prefilter import DiscoveryHit, prefilter_discovery_hit
+        active_query = next(iter(queries), request.query)
+        gated: List[str] = []
+        codes: Dict[str, int] = {}
+        raw = len(urls)
+        for url in urls:
+            path = (urlparse(url).path or "").replace("/", " ").replace("-", " ")
+            decision = prefilter_discovery_hit(
+                DiscoveryHit(title="", url=url, snippet=f"{path} {active_query}"),
+            )
+            if decision.accepted:
+                gated.append(url)
+            else:
+                codes[decision.reason] = codes.get(decision.reason, 0) + 1
+        bucket = request.technical_filters.get("universal_prefilter_telemetry")
+        if isinstance(bucket, dict):
+            bucket["raw_discovery_hits"] = int(bucket.get("raw_discovery_hits") or 0) + raw
+            bucket["prefilter_accepted"] = int(bucket.get("prefilter_accepted") or 0) + len(gated)
+            bucket["prefilter_rejected"] = int(bucket.get("prefilter_rejected") or 0) + (raw - len(gated))
+            merged = dict(bucket.get("prefilter_rejection_codes") or {})
+            for key, value in codes.items():
+                merged[key] = int(merged.get(key) or 0) + value
+            bucket["prefilter_rejection_codes"] = merged
+            queries_log = list(bucket.get("provider_queries") or [])
+            queries_log.extend(queries[:max_queries])
+            bucket["provider_queries"] = queries_log
+        urls = gated
     records: List[Mapping[str, Any]] = []
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Growth/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
+    pages_opened = 0
     async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=headers) as client:
         for url in urls[offset:offset + min(limit, max_source)]:
             try:
                 response = await client.get(url)
                 if response.status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
                     continue
+                pages_opened += 1
                 records.extend(parse_growth_page(response.text[:2_000_000], str(response.url), request.signal_ids, request.geographies))
                 if len(records) >= max_source:
                     break
             except Exception:
                 continue
+    if bool((request.technical_filters or {}).get("universal_engine")):
+        bucket = request.technical_filters.get("universal_prefilter_telemetry")
+        if isinstance(bucket, dict):
+            bucket["pages_opened_after_prefilter"] = int(bucket.get("pages_opened_after_prefilter") or 0) + pages_opened
     return GrowthProviderResult(
         tuple(records[:max_source]),
         exhausted=bool(not urls or offset + min(limit, max_source) >= len(urls) or len(records) >= max_source),

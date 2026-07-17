@@ -24,9 +24,9 @@ _ADMIN_ASSOC_RE = re.compile(
     re.I,
 )
 _EVENT_HINT_RE = re.compile(
-    r"\b(assume|assunzione|inaugur|apertur|nuova sede|espans|aggiudic|"
-    r"finanz|investiment|nomina|CEO|direttore|certific|adeguament|"
-    r"campagna|rebrand|migrazion|implementa|CRM|ERP)\b",
+    r"\b(assum\w*|inaugur\w*|apertur\w*|nuova sede|espans\w*|aggiudic\w*|"
+    r"finanz\w*|investiment\w*|nomina\w*|CEO|direttore|certific\w*|adeguament\w*|"
+    r"campagna\w*|rebrand\w*|migrazion\w*|implementa\w*|raccolt\w*|CRM|ERP|Meta Ads|Google Ads|pubblicitaria)\b",
     re.I,
 )
 _STALE_YEAR_RE = re.compile(r"\b(20(?:0\d|1\d|2[0-2]))\b")

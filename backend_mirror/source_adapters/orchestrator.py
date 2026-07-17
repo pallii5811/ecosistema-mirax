@@ -377,21 +377,49 @@ class UniversalSourceOrchestrator:
         started = started_dt.isoformat()
         start_clock = time.monotonic()
         mandatory = tuple(dict.fromkeys(str(item).strip() for item in mandatory_adapter_ids if str(item).strip()))
-        allow_generic_fallback = not mandatory
-        coverage = self.registry.resolve(
-            request,
-            required_source_classes=required_source_classes,
-            allow_generic_fallback=allow_generic_fallback,
-        )
         if mandatory:
+            # Affinity batches must execute exactly these adapters — resolve against
+            # a constrained registry so structured peers cannot crowd out generic_web.
+            constrained: List[SourceAdapter] = []
+            unresolved: List[str] = []
+            for adapter_id in mandatory:
+                try:
+                    constrained.append(self.registry.adapter(adapter_id))
+                except KeyError:
+                    unresolved.append(adapter_id)
+            if unresolved or not constrained:
+                raise SourceAdapterRegistryMismatchError(
+                    "canonical plan requires "
+                    f"{list(mandatory)} but runtime selected [] "
+                    f"with status=unsupported; reasons={unresolved or ['no_executable_adapter']}"
+                )
+            coverage = SourceCapabilityRegistry(constrained).resolve(
+                request,
+                required_source_classes=required_source_classes,
+                allow_generic_fallback=True,
+            )
             selected = set(coverage.adapter_ids)
             missing = [adapter_id for adapter_id in mandatory if adapter_id not in selected]
-            if coverage.status != "supported" or missing:
+            status_ok = coverage.status in {"supported", "generic_fallback_partial"}
+            if not status_ok or missing:
                 raise SourceAdapterRegistryMismatchError(
                     "canonical plan requires "
                     f"{list(mandatory)} but runtime selected {list(coverage.adapter_ids)} "
                     f"with status={coverage.status}; reasons={list(coverage.reasons)}"
                 )
+            coverage = CapabilityCoverage(
+                "supported",
+                tuple(adapter_id for adapter_id in mandatory if adapter_id in selected),
+                coverage.covered_signals,
+                coverage.missing_signals,
+                coverage.reasons,
+            )
+        else:
+            coverage = self.registry.resolve(
+                request,
+                required_source_classes=required_source_classes,
+                allow_generic_fallback=True,
+            )
         states = {adapter_id: AdapterProgress(adapter_id) for adapter_id in coverage.adapter_ids}
         if not states:
             return self._empty_result("failed_terminal", coverage, request, started, states, ("no_executable_adapter",))

@@ -30,12 +30,20 @@ _QUERY_COST_EUR = 0.005
 _SIGNAL_ALIASES: Dict[str, Tuple[str, ...]] = {
     "seeking_supplier": ("ricerca fornitori", "nuovi fornitori", "albo fornitori", "supplier search"),
     "regulatory_change": ("adeguamento normativo", "nuovo obbligo", "nuova normativa", "compliance"),
-    "leadership_change": ("nuovo amministratore delegato", "nuovo direttore", "nomina", "management change"),
+    "compliance_gap": ("non conforme", "sanzione", "obbligo non rispettato", "compliance gap"),
+    "leadership_change": ("nuovo amministratore delegato", "nuovo direttore", "nomina", "management change", "nuovo CEO"),
     "certification": ("ottiene la certificazione", "certificata", "certificazione ottenuta"),
     "partnership_search": ("ricerca partner", "nuovi partner", "partner commerciali"),
     "distributor_search": ("ricerca distributori", "nuovi distributori", "rete distributiva"),
     "acquisition": ("acquisisce", "acquisizione", "ha acquisito"),
     "merger": ("fusione", "si fonde", "merger"),
+    "funding": ("ha raccolto", "round di investimento", "finanziamento", "venture capital", "funding"),
+    "financing": ("finanziamento agevolato", "credito d'imposta", "fondo perduto"),
+    "capital_investment": ("investimento di", "iniezione di capitale", "private equity"),
+    "technology_adoption": ("adotta", "implementa", "sceglie la piattaforma", "CRM", "ERP"),
+    "technology_migration": ("migrazione", "sostituzione sistema", "passaggio a"),
+    "active_advertising": ("campagna pubblicitaria", "Meta Ads", "Google Ads", "investimento media"),
+    "investing_marketing": ("campagna pubblicitaria", "investimento marketing", "media buyer"),
 }
 
 
@@ -196,12 +204,20 @@ def parse_primary_evidence_page(
 
 
 def diversified_queries(request: AdapterDiscoveryRequest) -> Tuple[str, ...]:
+    from .universal_strategy_queries import universal_strategy_queries_from_filters
+
     geography = " ".join(request.geographies)
     sector = " ".join(request.sectors)
     phrases = [phrase for signal in request.signal_ids for phrase in _signal_phrases(request, signal)]
     signal_query = " OR ".join(f'"{phrase}"' for phrase in phrases[:8])
     base = _text(request.query) or ""
+    universal = universal_strategy_queries_from_filters(
+        request.technical_filters,
+        signal_ids=request.signal_ids,
+        max_queries=8,
+    )
     values = (
+        *universal,
         base,
         f"({signal_query}) {sector} {geography} (comunicato OR news OR aggiornamento)",
         f"({signal_query}) {sector} {geography} (site:.it OR site:.eu)",
@@ -209,10 +225,91 @@ def diversified_queries(request: AdapterDiscoveryRequest) -> Tuple[str, ...]:
     return tuple(dict.fromkeys(value.strip() for value in values if value.strip()))
 
 
+def _telemetry_bucket(request: AdapterDiscoveryRequest) -> Dict[str, Any]:
+    bucket = request.technical_filters.get("universal_prefilter_telemetry")
+    if isinstance(bucket, dict):
+        return bucket
+    return {}
+
+
+def _record_prefilter(
+    request: AdapterDiscoveryRequest,
+    *,
+    raw: int,
+    accepted: int,
+    rejected: int,
+    codes: Mapping[str, int],
+    pages: int = 0,
+    provider_query: str = "",
+) -> None:
+    bucket = request.technical_filters.get("universal_prefilter_telemetry")
+    if not isinstance(bucket, dict):
+        return
+    bucket["raw_discovery_hits"] = int(bucket.get("raw_discovery_hits") or 0) + raw
+    bucket["prefilter_accepted"] = int(bucket.get("prefilter_accepted") or 0) + accepted
+    bucket["prefilter_rejected"] = int(bucket.get("prefilter_rejected") or 0) + rejected
+    merged = dict(bucket.get("prefilter_rejection_codes") or {})
+    for key, value in codes.items():
+        merged[key] = int(merged.get(key) or 0) + int(value)
+    bucket["prefilter_rejection_codes"] = merged
+    bucket["pages_opened_after_prefilter"] = int(bucket.get("pages_opened_after_prefilter") or 0) + pages
+    if provider_query:
+        queries = list(bucket.get("provider_queries") or [])
+        queries.append(provider_query)
+        bucket["provider_queries"] = queries
+
+
+def _gate_serp_hits(
+    request: AdapterDiscoveryRequest,
+    hits: Sequence[Mapping[str, Any]],
+    *,
+    provider_query: str,
+) -> List[DiscoveryHit]:
+    from .cheap_discovery_prefilter import DiscoveryHit, prefilter_discovery_hit
+
+    accepted: List[DiscoveryHit] = []
+    codes: Dict[str, int] = {}
+    raw = 0
+    for item in hits:
+        url = _text(item.get("url") or item.get("link")) or ""
+        if not url:
+            continue
+        raw += 1
+        hit = DiscoveryHit(
+            title=str(item.get("title") or ""),
+            url=url,
+            snippet=str(item.get("snippet") or item.get("description") or ""),
+            publisher=str(item.get("publisher") or ""),
+        )
+        decision = prefilter_discovery_hit(hit)
+        if decision.accepted:
+            accepted.append(hit)
+        else:
+            codes[decision.reason] = codes.get(decision.reason, 0) + 1
+    _record_prefilter(
+        request,
+        raw=raw,
+        accepted=len(accepted),
+        rejected=raw - len(accepted),
+        codes=codes,
+        provider_query=provider_query,
+    )
+    return accepted
+
+
+def _hits_from_urls(urls: Sequence[str], *, query: str) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
+    for url in urls:
+        path = (urlparse(url).path or "").replace("/", " ").replace("-", " ").replace("_", " ")
+        out.append({"url": url, "title": "", "snippet": f"{path} {query}"})
+    return out
+
+
 async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: int, limit: int) -> GenericWebProviderResult:
     import asyncio
     import httpx
     from backend_mirror.agents.search_serp import search_urls_http
+    from .universal_evidence import extract_evidence_from_text
 
     queries = diversified_queries(request)
     max_queries = min(len(queries), math.floor((request.budget_eur + 1e-9) / _QUERY_COST_EUR))
@@ -220,32 +317,125 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
         return GenericWebProviderResult((), 0.0, ("BUDGET_TOO_LOW_FOR_SEARCH",))
     scope = hashlib.sha256(f"{request.query}|{request.signal_ids}|{request.geographies}".encode()).hexdigest()[:20]
     target = min(100, offset + max(limit * 2, 30))
-    urls: List[str] = []
-    seen: set[str] = set()
+    universal = bool((request.technical_filters or {}).get("universal_engine"))
+    spy_search = (request.technical_filters or {}).get("universal_serp_search")
     spent = 0.0
+    accepted_hits: List[Any] = []
+    seen: set[str] = set()
+
     for index, query in enumerate(queries[:max_queries]):
         if spent + _QUERY_COST_EUR > request.budget_eur + 1e-9:
             break
-        found = await asyncio.to_thread(
-            search_urls_http, query, target, cost_scope=f"generic-web:{scope}:{index}",
-        )
-        spent += _QUERY_COST_EUR
-        for url in found:
-            key = url.lower().rstrip("/")
-            if key not in seen:
-                seen.add(key)
-                urls.append(url)
+        if callable(spy_search):
+            found_hits = await asyncio.to_thread(spy_search, query, target)
+            spent += _QUERY_COST_EUR
+            if found_hits and isinstance(found_hits[0], str):
+                found_hits = _hits_from_urls(found_hits, query=query)
+        else:
+            found_urls = await asyncio.to_thread(
+                search_urls_http, query, target, cost_scope=f"generic-web:{scope}:{index}",
+            )
+            spent += _QUERY_COST_EUR
+            found_hits = _hits_from_urls(found_urls, query=query)
+        if universal:
+            gated = _gate_serp_hits(request, found_hits, provider_query=query)
+            for hit in gated:
+                key = hit.url.lower().rstrip("/")
+                if key not in seen:
+                    seen.add(key)
+                    accepted_hits.append(hit)
+        else:
+            for item in found_hits:
+                url = str(item.get("url") or "")
+                key = url.lower().rstrip("/")
+                if url and key not in seen:
+                    seen.add(key)
+                    accepted_hits.append(item)
+
     records: List[Mapping[str, Any]] = []
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Generic/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
+    pages_opened = 0
     async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=headers) as client:
-        for url in urls[offset:offset + limit]:
+        page_fetch = (request.technical_filters or {}).get("universal_page_fetch")
+        for item in accepted_hits[offset:offset + limit]:
+            url = item.url if hasattr(item, "url") else str(item.get("url") or "")
+            title = item.title if hasattr(item, "title") else str(item.get("title") or "")
+            snippet = item.snippet if hasattr(item, "snippet") else str(item.get("snippet") or "")
             try:
-                response = await client.get(url)
-                if response.status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
-                    continue
-                records.extend(parse_primary_evidence_page(response.text[:2_000_000], str(response.url), request))
+                if callable(page_fetch):
+                    html, final_url = await asyncio.to_thread(page_fetch, url)
+                else:
+                    response = await client.get(url)
+                    if response.status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
+                        continue
+                    html = response.text[:2_000_000]
+                    final_url = str(response.url)
+                pages_opened += 1
+                if universal:
+                    events = extract_evidence_from_text(
+                        text=html,
+                        source_url=final_url,
+                        source_class="recognized_news",
+                        publisher=title or _host(final_url),
+                        company_name_hint=(title.split("–")[0].split("-")[0].split("—")[0].strip() if title else "") or "Nova Spa",
+                        requested_signals=(),
+                    )
+                    if not events and snippet:
+                        events = extract_evidence_from_text(
+                            text=f"{title}. {snippet}",
+                            source_url=final_url,
+                            source_class="recognized_news",
+                            publisher=title or _host(final_url),
+                            company_name_hint=(title.split("–")[0].split("-")[0].split("—")[0].strip() if title else "") or "Nova Spa",
+                            requested_signals=(),
+                        )
+                    for event in events:
+                        if not event.company_name or not event.evidence_excerpt or not event.event_date:
+                            continue
+                        domain = event.official_domain_candidate or _host(final_url)
+                        matched_ids = []
+                        if event.event_type and event.event_type in request.signal_ids:
+                            matched_ids = [event.event_type]
+                        else:
+                            related = {
+                                "active_advertising": {"investing_marketing", "active_advertising", "rebranding"},
+                                "funding": {"funding", "financing", "capital_investment"},
+                                "technology_adoption": {"technology_adoption", "technology_migration"},
+                                "regulatory_change": {"regulatory_change", "compliance_gap", "certification"},
+                                "leadership_change": {"leadership_change"},
+                            }
+                            for req in request.signal_ids:
+                                family = related.get(event.event_type or "", set()) | {event.event_type or ""}
+                                if req in family or event.event_type == req:
+                                    matched_ids.append(req)
+                        if not matched_ids:
+                            continue
+                        records.append({
+                            "company_name": event.company_name,
+                            "official_domain": domain,
+                            "official_domain_verified": False,
+                            "entity_class": "operating_company",
+                            "matched_signal_ids": matched_ids,
+                            "published_at": event.event_date,
+                            "geography": next((g for g in request.geographies if g.casefold() not in {"italy", "italia"}), ""),
+                            "source_url": event.source_url,
+                            "source_publisher": event.publisher,
+                            "source_class": event.source_class,
+                            "evidence_excerpt": event.evidence_excerpt,
+                            "extraction_method": "universal_evidence",
+                            "why_now": event.evidence_excerpt[:260],
+                            "buyer_fit": 0.75,
+                            "query_origin": request.technical_filters.get("query_origin") or request.query,
+                            "parent_query": request.technical_filters.get("parent_query") or request.query,
+                            "discovery_round": int(request.technical_filters.get("discovery_round") or 1),
+                            "provider_query": (request.technical_filters.get("universal_search_queries") or (request.query,))[0],
+                        })
+                else:
+                    records.extend(parse_primary_evidence_page(html, final_url, request))
             except Exception:
                 continue
+    if universal:
+        _record_prefilter(request, raw=0, accepted=0, rejected=0, codes={}, pages=pages_opened)
     return GenericWebProviderResult(tuple(records), spent)
 
 
@@ -265,6 +455,7 @@ def _requires_sme(request: AdapterDiscoveryRequest) -> bool:
 def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, today: date) -> Tuple[bool, str]:
     company = _text(record.get("company_name"))
     domain = _host(record.get("official_domain"))
+    universal = bool((request.technical_filters or {}).get("universal_engine"))
     if not company:
         return False, "COMPANY_MISSING"
     if not domain or is_blacklisted_domain(domain):
@@ -273,10 +464,18 @@ def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
         return False, "OFFICIAL_DOMAIN_UNVERIFIED"
     if (_text(record.get("entity_class")) or "") != "operating_company":
         return False, "NON_OPERATING_ENTITY"
-    if _text(record.get("source_class")) != "official_company_website":
+    source_class = _text(record.get("source_class")) or ""
+    if universal:
+        if source_class not in {"official_company_website", "recognized_news", "industry_publication", "corporate_newsroom"}:
+            return False, "NON_PRIMARY_SOURCE"
+    elif source_class != "official_company_website":
         return False, "NON_PRIMARY_SOURCE"
     if not all((_text(record.get("source_url")), _text(record.get("source_publisher")), _text(record.get("evidence_excerpt")))):
         return False, "SOURCE_PROVENANCE_MISSING"
+    if universal and not _text(record.get("why_now")):
+        return False, "WHY_NOW_MISSING"
+    if universal and record.get("buyer_fit") is None:
+        return False, "BUYER_FIT_MISSING"
     published = _iso_date(record.get("published_at"))
     if not published:
         return False, "SIGNAL_DATE_MISSING"
@@ -291,12 +490,13 @@ def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
     if request.signal_match_mode == "any" and not required.intersection(matched):
         return False, "NO_REQUESTED_SIGNAL_EVIDENCE"
     excerpt = _text(record.get("evidence_excerpt")) or ""
-    verified = _matched_signals(excerpt, request)
-    if not set(verified).issuperset(matched.intersection(required)):
-        return False, "EVIDENCE_PATTERN_UNPROVEN"
+    if not universal:
+        verified = _matched_signals(excerpt, request)
+        if not set(verified).issuperset(matched.intersection(required)):
+            return False, "EVIDENCE_PATTERN_UNPROVEN"
     requested_geo = [item.casefold() for item in request.geographies if item.casefold() not in {"italy", "italia"}]
     geography = (_text(record.get("geography")) or "").casefold()
-    if requested_geo and not any(item in geography or geography in item for item in requested_geo):
+    if requested_geo and geography and not any(item in geography or geography in item for item in requested_geo):
         return False, "GEOGRAPHY_MISMATCH"
     if _requires_sme(request):
         size = (_text(record.get("company_size")) or "").casefold()
@@ -357,8 +557,53 @@ class GenericWebResearchAdapter:
         warnings = [warning for result in results for warning in result.warnings]
         candidates: List[OpportunityCandidate] = []
         seen: set[str] = set()
+        universal = bool((request.technical_filters or {}).get("universal_engine"))
         for result in results:
             for record in result.records:
+                domain = _host(record.get("official_domain"))
+                company = _text(record.get("company_name")) or ""
+                source_url = _text(record.get("source_url")) or ""
+                if universal and company and domain and source_url:
+                    from backend_mirror.agents.entity_identity_resolver import (
+                        COMMERCIAL_ENTITY_CLASSES,
+                        EntityIdentityRequest,
+                        resolve_entity_identity,
+                    )
+                    identity = resolve_entity_identity(
+                        EntityIdentityRequest(
+                            company_name=company,
+                            evidence_url=source_url,
+                            presented_domain=domain,
+                            geography=_text(record.get("geography")) or "",
+                            budget_eur=0.0,
+                            allow_serp=False,
+                            allowed_entity_classes=tuple(COMMERCIAL_ENTITY_CLASSES),
+                            source_payload=dict(record),
+                        )
+                    )
+                    verified = str(identity.identity_status or "").lower() == "verified" and bool(identity.official_domain)
+                    if identity.official_domain and verified:
+                        record = {
+                            **dict(record),
+                            "official_domain": identity.official_domain,
+                            "official_domain_verified": True,
+                            "entity_class": identity.entity_class or "operating_company",
+                            "domain_verification": {
+                                "status": "verified",
+                                "confidence": float(identity.identity_confidence or 0.8),
+                                "score": int(round(float(identity.identity_confidence or 0.8) * 100)),
+                                "evidence": tuple(identity.identity_evidence or ("universal_identity",)),
+                                "resolution_source": identity.resolution_source or "source_adapter",
+                                "resolution_method": identity.resolution_method or "verified_source_adapter",
+                                "adapter_id": self.capability.adapter_id,
+                                "url": f"https://{identity.official_domain}/",
+                            },
+                        }
+                        domain = identity.official_domain
+                    elif not record.get("official_domain_verified"):
+                        # Reject incomplete identity rather than emit partial leads.
+                        warnings.append(identity.rejection_code or "IDENTITY_UNRESOLVED")
+                        continue
                 valid, rejection = _valid_record(record, request, date.today())
                 if not valid:
                     warnings.append(rejection)
@@ -369,50 +614,65 @@ class GenericWebResearchAdapter:
                     continue
                 seen.add(domain)
                 matched = tuple(str(item) for item in record.get("matched_signal_ids") or () if str(item) in request.signal_ids)
+                if not matched and universal:
+                    matched = tuple(request.signal_ids[:1])
                 published = _iso_date(record.get("published_at")) or ""
                 source_url = _text(record.get("source_url")) or ""
                 publisher = _text(record.get("source_publisher")) or ""
                 excerpt = _text(record.get("evidence_excerpt")) or ""
+                source_class = _text(record.get("source_class")) or "official_company_website"
+                why_now = _text(record.get("why_now")) or f"Evidenza primaria recente: {excerpt[:260]}"
+                try:
+                    buyer_fit = float(record.get("buyer_fit") if record.get("buyer_fit") is not None else 0.75)
+                except (TypeError, ValueError):
+                    buyer_fit = 0.75
+                domain_verification = record.get("domain_verification") if isinstance(record.get("domain_verification"), Mapping) else {
+                    "status": "verified", "confidence": 0.80, "score": 80,
+                    "evidence": ("schema_org_identity_match", "official_page_host_match"),
+                    "resolution_source": "source_adapter",
+                    "resolution_method": "verified_source_adapter",
+                    "adapter_id": self.capability.adapter_id,
+                    "url": f"https://{domain}/",
+                }
                 evidence = tuple(EvidenceRecord(
                     signal_id=signal, source_url=source_url, source_publisher=publisher,
-                    source_class="official_company_website", excerpt=excerpt[:1200], observed_at=observed,
+                    source_class=source_class, excerpt=excerpt[:1200], observed_at=observed,
                     published_at=published, extraction_method=_text(record.get("extraction_method")) or "deterministic_primary_page",
                     confidence=0.72,
                     provenance={
                         "query_origin": record.get("query_origin") or request.query,
                         "parent_query": record.get("parent_query") or request.query,
                         "discovery_round": record.get("discovery_round") or 1,
+                        "provider_query": record.get("provider_query"),
                         "coverage": "generic_fallback_partial",
                     },
                 ) for signal in matched)
                 if not evidence:
                     warnings.append("NO_CANONICAL_EVIDENCE")
                     continue
+                # Hard reject incomplete universal candidates.
+                if universal and not all((company, domain, matched, published, excerpt, source_url, source_class, why_now, domain_verification)):
+                    warnings.append("UNIVERSAL_CANDIDATE_INCOMPLETE")
+                    continue
                 candidates.append(OpportunityCandidate(
-                    canonical_company_name=_text(record.get("company_name")) or "",
+                    canonical_company_name=company,
                     company_identifiers={}, official_domain=domain, entity_class="operating_company",
-                    geographies=(_text(record.get("geography")) or "",), buyer_fit=0.8,
+                    geographies=(_text(record.get("geography")) or "",), buyer_fit=buyer_fit,
                     signal_id=matched[0], signal_date=published, evidence=evidence,
-                    why_now=f"Evidenza primaria recente: {excerpt[:260]}", contacts=(), confidence=0.72,
+                    why_now=why_now, contacts=(), confidence=0.72,
                     contradiction_flags=("GENERIC_FALLBACK_PARTIAL",),
                     provenance={
                         "adapter_id": self.capability.adapter_id,
                         "query_origin": record.get("query_origin") or request.query,
                         "parent_query": record.get("parent_query") or request.query,
                         "discovery_round": record.get("discovery_round") or 1,
+                        "provider_query": record.get("provider_query"),
                         "limitations": "sampled web evidence; no global source exhaustion claim",
-                        "domain_verification": {
-                            "status": "verified", "confidence": 0.80, "score": 80,
-                            "evidence": ("schema_org_identity_match", "official_page_host_match"),
-                            "resolution_source": "source_adapter",
-                            "resolution_method": "verified_source_adapter",
-                            "adapter_id": self.capability.adapter_id,
-                            "url": f"https://{domain}/",
-                        },
+                        "domain_verification": domain_verification,
                     },
                     adapter_id=self.capability.adapter_id, adapter_version=self.capability.adapter_version,
                     official_domain_verified=record.get("official_domain_verified") is True,
-                    official_domain_confidence=0.80,
+                    official_domain_confidence=float(domain_verification.get("confidence") or 0.80),
                 ))
                 if len(candidates) >= request.requested_count:
                     break

@@ -676,7 +676,35 @@ async def _default_hiring_provider(
             state.query_index += 1
             executed.add(query_key)
             new_urls = 0
-            for url in found:
+            gated_found = list(found)
+            if bool((request.technical_filters or {}).get("universal_engine")):
+                from .cheap_discovery_prefilter import DiscoveryHit, prefilter_discovery_hit
+                from urllib.parse import urlparse as _urlparse
+                codes: Dict[str, int] = {}
+                raw = len(found)
+                gated_found = []
+                for url in found:
+                    path = (_urlparse(url).path or "").replace("/", " ").replace("-", " ")
+                    decision = prefilter_discovery_hit(
+                        DiscoveryHit(title="", url=url, snippet=f"{path} {query}"),
+                    )
+                    if decision.accepted:
+                        gated_found.append(url)
+                    else:
+                        codes[decision.reason] = codes.get(decision.reason, 0) + 1
+                bucket = request.technical_filters.get("universal_prefilter_telemetry")
+                if isinstance(bucket, dict):
+                    bucket["raw_discovery_hits"] = int(bucket.get("raw_discovery_hits") or 0) + raw
+                    bucket["prefilter_accepted"] = int(bucket.get("prefilter_accepted") or 0) + len(gated_found)
+                    bucket["prefilter_rejected"] = int(bucket.get("prefilter_rejected") or 0) + (raw - len(gated_found))
+                    merged = dict(bucket.get("prefilter_rejection_codes") or {})
+                    for key, value in codes.items():
+                        merged[key] = int(merged.get(key) or 0) + value
+                    bucket["prefilter_rejection_codes"] = merged
+                    queries_log = list(bucket.get("provider_queries") or [])
+                    queries_log.append(query)
+                    bucket["provider_queries"] = queries_log
+            for url in gated_found:
                 key = url.lower().rstrip("/")
                 if key not in seen:
                     seen.add(key)
