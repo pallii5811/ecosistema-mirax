@@ -199,6 +199,60 @@ def proven_requested_signals(text: str, requested_signals: Sequence[str]) -> Tup
     return tuple(proven)
 
 
+def _guess_company_name(blob: str, match: re.Match[str]) -> Optional[str]:
+    window = blob[max(0, match.start() - 120): match.end() + 40]
+    patterns = (
+        r"([A-ZÀ-Ü][\w\.\'&\- ]{1,70}?)\s+(?:S\.?\s*r\.?\s*l\.?|S\.?\s*p\.?\s*A\.?|S\.?\s*a\.?\s*s\.?|S\.?\s*n\.?\s*c\.?)\b",
+        r"\b((?:[A-ZÀ-Ü][\w\.\'&\-]{2,}(?:\s+[A-ZÀ-Ü][\w\.\'&\-]{2,}){0,3}))\s+(?:inaugura|apre|ha aperto|annuncia)\b",
+    )
+    for pattern in patterns:
+        found = re.search(pattern, window, re.I)
+        if found:
+            name = _text(found.group(1))
+            if name and not _PUBLIC_BODY_RE.search(name) and len(name) >= 3:
+                return name
+    return None
+
+
+def _looks_like_news_host(host: str) -> bool:
+    if not host:
+        return True
+    news_roots = (
+        "corriere.", "repubblica.", "sole24ore.", "ilsole24ore.", "ansa.", "lastampa.",
+        "ilgiornale.", "oggi.", "milanofinanza.", "economyup.", "startupitalia.",
+        "today.it", "citynews.", "notiz", "news.", "giornale", "quotidiano",
+    )
+    return any(root in host for root in news_roots)
+
+
+def _company_owns_host(company: str, host: str, publisher: str) -> bool:
+    """Promote source host to official domain only when ownership is credible."""
+    if not company or not host or is_blacklisted_domain(host):
+        return False
+    if publisher and company.casefold() == publisher.casefold() and not _looks_like_news_host(host):
+        return True
+    tokens = [t for t in re.split(r"[^a-z0-9à-ü]+", company.casefold()) if len(t) >= 4]
+    host_cf = host.casefold().replace("-", "").replace(".", "")
+    return any(t.replace("-", "") in host_cf for t in tokens[:4]) and not _looks_like_news_host(host)
+
+
+def _extract_company_domain_from_links(soup: BeautifulSoup, company: str, page_host: str) -> str:
+    tokens = [t for t in re.split(r"[^a-z0-9à-ü]+", (company or "").casefold()) if len(t) >= 4][:3]
+    if not tokens:
+        return ""
+    for anchor in soup.find_all("a", href=True)[:80]:
+        href = str(anchor.get("href") or "")
+        candidate = _host(href)
+        if not candidate or candidate == page_host or is_blacklisted_domain(candidate):
+            continue
+        if _looks_like_news_host(candidate):
+            continue
+        host_cf = candidate.casefold().replace("-", "").replace(".", "")
+        if any(t.replace("-", "") in host_cf for t in tokens):
+            return candidate
+    return ""
+
+
 def parse_growth_page(
     html: str,
     source_url: str,
@@ -210,15 +264,23 @@ def parse_growth_page(
         return []
     soup = BeautifulSoup(html or "", "html.parser")
     organization, is_official = _organization_from_page(soup, host)
-    if not organization:
-        return []
-    company = _text(organization.get("name"))
-    official_domain = _host(organization.get("url") or organization.get("sameAs"))
-    if not company or not official_domain or is_blacklisted_domain(official_domain):
-        return []
     blob = _text(soup.get_text(" ", strip=True)) or ""
     signal_id, proof_level, match = classify_growth_evidence(blob, requested_signals)
     if not signal_id or not match:
+        return []
+    publisher_meta = soup.find("meta", attrs={"property": "og:site_name"})
+    publisher = _text(publisher_meta.get("content") if publisher_meta else None) or host
+    company = _text(organization.get("name") if organization else None) or _guess_company_name(blob, match)
+    official_domain = _host((organization or {}).get("url") or (organization or {}).get("sameAs")) if organization else ""
+    if not official_domain and company and _company_owns_host(company, host, publisher):
+        # Company newsroom/page: source host is the ownership candidate (no second SERP).
+        official_domain = host
+        is_official = True
+    if not official_domain and company:
+        official_domain = _extract_company_domain_from_links(soup, company, host)
+    if not company or not official_domain or is_blacklisted_domain(official_domain):
+        return []
+    if company.casefold() == publisher.casefold() and _looks_like_news_host(host):
         return []
     published = None
     for attrs in ({"property": "article:published_time"}, {"name": "date"}, {"itemprop": "datePublished"}):
@@ -234,17 +296,13 @@ def parse_growth_page(
     geography = next((item for item in geographies if item.casefold() in blob.casefold()), "")
     start = max(0, match.start() - 180)
     excerpt = blob[start:match.end() + 300]
-    publisher_meta = soup.find("meta", attrs={"property": "og:site_name"})
-    publisher = _text(publisher_meta.get("content") if publisher_meta else None) or host
-    source_class = "official_company_website" if is_official else "recognized_local_news"
-    # Company site pages are self-corroborating. News is allowed only when schema
-    # binds a distinct company domain (no second SERP required for ownership).
-    entity_bound = bool(official_domain and official_domain != host)
-    corroborated = bool(is_official or entity_bound)
+    source_class = "official_company_website" if (is_official or official_domain == host) else "recognized_local_news"
+    entity_bound = bool(official_domain and (official_domain == host or official_domain != host))
+    corroborated = bool(source_class == "official_company_website" or (official_domain and official_domain != host))
     expansion_city = ""
     city_match = re.search(
         r"\b(?:a|ad|in|di)\s+([A-ZÀ-Ü][a-zà-ü']+(?:\s+[A-ZÀ-Ü][a-zà-ü']+){0,2})\b",
-        match.group(0) + " " + excerpt[match.end() - match.start():match.end() - match.start() + 80],
+        match.group(0),
     )
     if city_match:
         expansion_city = city_match.group(1)
@@ -263,9 +321,9 @@ def parse_growth_page(
         "source_publisher": publisher,
         "source_class": source_class,
         "evidence_excerpt": excerpt,
-        "extraction_method": "structured_official_page" if is_official else "structured_news_about_entity",
+        "extraction_method": "structured_official_page" if source_class == "official_company_website" else "structured_news_about_entity",
         "corroborated": corroborated,
-        "entity_bound": entity_bound or is_official,
+        "entity_bound": entity_bound,
     }]
 
 
@@ -341,7 +399,11 @@ async def _default_growth_provider(request: AdapterDiscoveryRequest, offset: int
                     break
             except Exception:
                 continue
-    return GrowthProviderResult(tuple(records[:max_source]), True, spent)
+    return GrowthProviderResult(
+        tuple(records[:max_source]),
+        exhausted=bool(not urls or offset + min(limit, max_source) >= len(urls) or len(records) >= max_source),
+        cost_eur=spent,
+    )
 
 
 def _cursor_offset(cursor: Optional[DiscoveryCursor]) -> int:

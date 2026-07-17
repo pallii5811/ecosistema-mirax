@@ -235,6 +235,44 @@ def test_any_accepts_alternative_signals_but_all_is_fail_closed() -> None:
     assert "ALL_SIGNALS_INCOMPLETE" in all_result.warnings
 
 
+def test_schema_less_company_newsroom_uses_source_host_as_domain() -> None:
+    today = date.today().isoformat()
+    html = f"""
+      <meta property="article:published_time" content="{today}">
+      <meta property="og:site_name" content="Schema Free Growth Srl">
+      <article>Schema Free Growth Srl inaugura una nuova sede a Padova.</article>
+    """
+    rows = parse_growth_page(
+        html, "https://schema-free-growth.test/newsroom/apertura",
+        ("expansion",), ("Italia",),
+    )
+    assert rows and rows[0]["official_domain"] == "schema-free-growth.test"
+    assert rows[0]["source_class"] == "official_company_website"
+    italy = replace(
+        request("expansion", count=1),
+        query="Trova aziende che hanno recentemente aperto sedi in Italia.",
+        geographies=("Italia",),
+        freshness_max_age_days=180,
+    )
+    result = asyncio.run(GrowthSignalsAdapter((lambda *_: _async_result(rows),)).discover(italy))
+    assert len(result.candidates) == 1
+    assert result.candidates[0].official_domain == "schema-free-growth.test"
+
+
+def test_unknown_news_host_without_company_domain_is_rejected() -> None:
+    today = date.today().isoformat()
+    html = f"""
+      <meta property="article:published_time" content="{today}">
+      <meta property="og:site_name" content="Cronaca Locale Online">
+      <article>Acme Espansione Srl inaugura una nuova sede a Torino.</article>
+    """
+    rows = parse_growth_page(
+        html, "https://cronaca-locale-online.test/economia/acme",
+        ("expansion",), ("Italia",),
+    )
+    assert rows == []
+
+
 def test_certification_gates_for_expansion_live_contract() -> None:
     today = date.today().isoformat()
 
