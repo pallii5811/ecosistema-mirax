@@ -210,6 +210,17 @@ def test_legacy_runner_page_selection_never_reaudits_prior_page() -> None:
     assert {item["place_id"] for item in page} == {f"place-{index}" for index in range(50, 100)}
 
 
+def test_pre_and_post_audit_website_forms_share_one_identity() -> None:
+    pre_audit = {"website": "https://www.example-cleaning.it/servizi?ref=maps"}
+    post_audit = {"website": "example-cleaning.it"}
+    assert maps_identity_hash(pre_audit) == maps_identity_hash(post_audit)
+    page = select_digital_audit_maps_page([pre_audit], {
+        "maps_page_size": 1,
+        "processed_identity_hashes": [maps_identity_hash(post_audit)],
+    })
+    assert page[0]["_maps_control_only"] is True
+
+
 def test_all_processed_provider_page_returns_control_record_not_audit_work() -> None:
     raw = [{"place_id": f"place-{index}"} for index in range(10)]
     page = select_digital_audit_maps_page(raw, {

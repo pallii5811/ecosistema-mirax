@@ -5,12 +5,24 @@ from __future__ import annotations
 import hashlib
 import re
 from typing import Any, Dict, List, Mapping
+from urllib.parse import urlparse
+
+
+def _website_domain(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    return (parsed.hostname or "").removeprefix("www.")
 
 
 def maps_identity_hash(item: Mapping[str, Any]) -> str:
     place_id = str(item.get("place_id") or "").strip()
     maps_url = str(item.get("maps_url") or item.get("google_maps_url") or "").strip()
-    website = str(item.get("website") or "").strip().lower()
+    # The pre-audit record normally contains a full URL while the audited
+    # record stores the canonical host.  Hash the same canonical value at
+    # both boundaries or resume will audit the same company again.
+    website = _website_domain(item.get("website"))
     name = re.sub(r"\s+", " ", str(item.get("business_name") or item.get("name") or "").strip().casefold())
     address = re.sub(r"\s+", " ", str(item.get("address") or "").strip().casefold())
     identity = place_id or maps_url or website or f"{name}|{address}"

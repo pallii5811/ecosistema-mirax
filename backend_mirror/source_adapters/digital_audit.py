@@ -19,6 +19,11 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
+try:
+    from ..maps_pagination import maps_identity_hash
+except ImportError:  # pragma: no cover - deployed worker imports from backend root
+    from maps_pagination import maps_identity_hash
+
 from .contracts import (
     AdapterDiscoveryRequest,
     AdapterExecutionResult,
@@ -348,13 +353,7 @@ def _partition_plan(category: str, location: str, technical_filters: Mapping[str
 
 
 def _raw_identity_hash(raw: Mapping[str, Any]) -> str:
-    place_id = _text(raw.get("place_id"))
-    maps_url = _text(raw.get("maps_url") or raw.get("google_maps_url"))
-    website = _domain(raw.get("website"))
-    name = _normalize_category_label(_text(raw.get("business_name") or raw.get("name")))
-    address = _normalize_category_label(_text(raw.get("address")))
-    identity = place_id or maps_url or website or f"{name}|{address}"
-    return hashlib.sha256(str(identity).encode("utf-8")).hexdigest()[:20]
+    return maps_identity_hash(raw)
 
 
 def _confirmed_signal_values(raw: Mapping[str, Any]) -> Dict[str, str]:
