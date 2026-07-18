@@ -44,6 +44,21 @@ def _role_is_correct(case: Dict[str, Any], interpretation: Any) -> bool:
     return interpretation.target_entity_role.casefold() == str(expected).casefold()
 
 
+def _target_role_precision(rows: list[Dict[str, Any]]) -> float:
+    """Measure role correctness only for leads the system promotes.
+
+    A rejected role-inversion example is a correctly handled negative, not a
+    published lead with the wrong role. Those examples are measured by the
+    semantic precision/rejection gates. Including them in this denominator
+    penalises the evaluator precisely when the fail-closed role gate works.
+    """
+    promoted = [row for row in rows if row["predicted"]]
+    return (
+        sum(row["role_correct"] for row in promoted) / len(promoted)
+        if promoted else 0.0
+    )
+
+
 def _maximum_age_days(contract: Any) -> int | None:
     constraints = contract.temporal_constraints
     for key in ("maximum_age_days", "max_age_days", "within_days"):
@@ -141,7 +156,7 @@ async def evaluate(split: str, cap: float, cache_path: Path) -> Dict[str, Any]:
         "metrics": {
             "semantic_precision": tp / (tp + fp) if tp + fp else 0.0,
             "semantic_recall": tp / positives if positives else 0.0,
-            "target_role_precision": sum(row["role_correct"] for row in rows) / len(rows) if rows else 0.0,
+            "target_role_precision": _target_role_precision(rows),
             "negation_hypothesis_rejection": (
                 sum(row["unsafe_modality_rejected"] is True for row in modalities) / len(modalities)
                 if modalities else 1.0
