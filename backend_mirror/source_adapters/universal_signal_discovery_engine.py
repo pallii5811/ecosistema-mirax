@@ -122,6 +122,7 @@ class UniversalEngineResult:
             "prefilter_rejected": self.prefilter_rejected,
             "orchestration_status": self.orchestration.status,
             "notes": list(self.notes),
+            "semantic": dict(self.orchestration.semantic_telemetry),
             "query_spec": self.query_spec.to_dict(),
         }
 

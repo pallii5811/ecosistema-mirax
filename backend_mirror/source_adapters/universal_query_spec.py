@@ -73,12 +73,15 @@ def compile_universal_query_spec(
     seller = plan.get("seller") if isinstance(plan.get("seller"), Mapping) else {}
     target = plan.get("target") if isinstance(plan.get("target"), Mapping) else {}
     signal_policy = plan.get("signal_policy") if isinstance(plan.get("signal_policy"), Mapping) else {}
+    semantic_contract = plan.get("semantic_query_contract") if isinstance(plan.get("semantic_query_contract"), Mapping) else {}
     source_policy = plan.get("source_policy") if isinstance(plan.get("source_policy"), Mapping) else {}
     evidence_policy = plan.get("evidence_policy") if isinstance(plan.get("evidence_policy"), Mapping) else {}
     budget_policy = plan.get("budget_policy") if isinstance(plan.get("budget_policy"), Mapping) else {}
     ranking = plan.get("ranking_policy") if isinstance(plan.get("ranking_policy"), Mapping) else {}
 
     required = _tuple_str(signal_policy.get("required_signals") or plan.get("required_signals"))
+    if not required and semantic_contract:
+        required = _tuple_str(semantic_contract.get("required_relationships"))
     optional = _tuple_str(signal_policy.get("optional_signals"))
     if not required:
         raise ValueError("UniversalQuerySpec requires at least one required_signal")
@@ -141,6 +144,9 @@ def compile_universal_query_spec(
         target_geographies=geographies,
         buyer_roles=buyer_roles,
         business_problem=str(
+            semantic_contract.get("event_or_state_description")
+            or semantic_contract.get("target_company_description")
+            or
             (hypotheses[0] if hypotheses else None)
             or plan.get("intent_summary")
             or "Buying signal research"
@@ -154,7 +160,7 @@ def compile_universal_query_spec(
         evidence_requirements=tuple(evidence_reqs),
         cost_budget=budget,
         capability_status="SUPPORTED_PARTIAL",  # upgraded by engine after strategy coverage
-        commercial_hypotheses=tuple(hypotheses),
+        commercial_hypotheses=tuple(hypotheses) or _tuple_str(semantic_contract.get("positive_conditions")),
         observability_notes=tuple(observability),
     )
 

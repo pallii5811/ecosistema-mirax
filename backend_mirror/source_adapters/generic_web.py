@@ -268,6 +268,7 @@ def _gate_serp_hits(
     from .cheap_discovery_prefilter import DiscoveryHit, prefilter_discovery_hit
 
     accepted: List[DiscoveryHit] = []
+    semantic_open_world = request.technical_filters.get("semantic_authority_required") is True
     codes: Dict[str, int] = {}
     raw = 0
     for item in hits:
@@ -281,7 +282,11 @@ def _gate_serp_hits(
             snippet=str(item.get("snippet") or item.get("description") or ""),
             publisher=str(item.get("publisher") or ""),
         )
-        decision = prefilter_discovery_hit(hit)
+        decision = prefilter_discovery_hit(
+            hit,
+            require_event_hint=not semantic_open_world,
+            allow_admin_assoc=semantic_open_world,
+        )
         if decision.accepted:
             accepted.append(hit)
         else:
@@ -316,7 +321,74 @@ _LEGAL_ENTITY_RE = re.compile(
 )
 
 
+def _structured_subject_identities(html: str, *, page_host: str = "") -> Tuple[Mapping[str, Any], ...]:
+    """Extract explicit target organizations without treating the publisher as one.
+
+    Only organizations linked from an event-bearing object (about, mentions,
+    hiringOrganization) are accepted on third-party pages.  A page-level
+    Organization is accepted only on a non-article page hosted on that same
+    organization's domain.  This is identity discovery, never event matching.
+    """
+    soup = BeautifulSoup(html or "", "html.parser")
+    items: List[Mapping[str, Any]] = []
+    for script in soup.find_all("script", attrs={"type": re.compile("ld\\+json", re.I)}):
+        try:
+            payload = json.loads(script.string or script.get_text() or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        items.extend(_iter_json(payload))
+
+    article_page = any(
+        str(value) in {"Article", "NewsArticle", "Report", "BlogPosting"}
+        for item in items
+        for value in (item.get("@type") if isinstance(item.get("@type"), list) else [item.get("@type")])
+    )
+    identities: Dict[Tuple[str, str], Mapping[str, Any]] = {}
+    for item in items:
+        subjects: List[Any] = []
+        for key in ("about", "mentions", "hiringOrganization"):
+            value = item.get(key)
+            subjects.extend(value if isinstance(value, list) else [value])
+        raw_item_type = item.get("@type")
+        item_types = raw_item_type if isinstance(raw_item_type, list) else [raw_item_type]
+        item_url = item.get("url") or item.get("sameAs")
+        if (
+            not article_page
+            and any(value in {"Organization", "Corporation", "LocalBusiness"} for value in item_types)
+            and _host(item_url) == page_host
+        ):
+            subjects.append(item)
+        for subject in subjects:
+            if not isinstance(subject, Mapping):
+                continue
+            raw_type = subject.get("@type")
+            types = raw_type if isinstance(raw_type, list) else [raw_type]
+            if not any(value in {"Organization", "Corporation", "LocalBusiness"} for value in types):
+                continue
+            name = _text(subject.get("name")) or ""
+            raw_urls = subject.get("url") or subject.get("sameAs") or ()
+            urls = raw_urls if isinstance(raw_urls, list) else [raw_urls]
+            official_url = next(
+                (str(value) for value in urls if _host(value) and not is_blacklisted_domain(_host(value))),
+                "",
+            )
+            domain = _host(official_url)
+            if name and domain:
+                identities[(name.casefold(), domain)] = {
+                    "name": name,
+                    "url": official_url,
+                    "domain": domain,
+                    "types": tuple(str(value) for value in types if value),
+                }
+    return tuple(identities.values())
+
+
 def _structured_subject_company(html: str) -> str:
+    identities = _structured_subject_identities(html)
+    return str(identities[0].get("name") or "") if len(identities) == 1 else ""
+
+
+def _structured_page_date(html: str) -> Optional[str]:
     soup = BeautifulSoup(html or "", "html.parser")
     for script in soup.find_all("script", attrs={"type": re.compile("ld\\+json", re.I)}):
         try:
@@ -324,19 +396,20 @@ def _structured_subject_company(html: str) -> str:
         except (TypeError, json.JSONDecodeError):
             continue
         for item in _iter_json(payload):
-            subjects: List[Any] = []
-            for key in ("about", "mentions", "hiringOrganization"):
-                value = item.get(key)
-                subjects.extend(value if isinstance(value, list) else [value])
-            for subject in subjects:
-                if not isinstance(subject, Mapping):
-                    continue
-                raw_type = subject.get("@type")
-                types = raw_type if isinstance(raw_type, list) else [raw_type]
-                name = _text(subject.get("name"))
-                if name and any(value in {"Organization", "Corporation", "LocalBusiness"} for value in types):
-                    return name
-    return ""
+            for key in ("datePublished", "datePosted"):
+                parsed = _iso_date(item.get(key))
+                if parsed:
+                    return parsed
+    for attrs in (
+        {"property": "article:published_time"}, {"name": "date"},
+        {"itemprop": "datePublished"}, {"itemprop": "datePosted"},
+    ):
+        node = soup.find("meta", attrs=attrs)
+        parsed = _iso_date(node.get("content") if node else None)
+        if parsed:
+            return parsed
+    node = soup.find("time", attrs={"datetime": True})
+    return _iso_date(node.get("datetime") if node else None)
 
 
 def _company_identity_hint(*, title: str, snippet: str, html: str) -> str:
@@ -449,6 +522,50 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                     final_url = str(response.url)
                 pages_opened += 1
                 if universal:
+                    page_host = _host(final_url)
+                    # Dynamic relationships are acquisition hypotheses only.
+                    # Final event type, role and query match are decided by the
+                    # semantic interpreter and exact grounding verifier.
+                    semantic_contract = request.technical_filters.get("semantic_query_contract")
+                    if isinstance(semantic_contract, Mapping):
+                        identities = _structured_subject_identities(html, page_host=page_host)
+                        if not identities:
+                            provider_warnings.append("COMPANY_IDENTITY_UNRESOLVED")
+                            continue
+                        visible_text = _text(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)) or ""
+                        published = _structured_page_date(html)
+                        if not visible_text or not published:
+                            provider_warnings.append("SEMANTIC_SOURCE_PROVENANCE_INCOMPLETE")
+                            continue
+                        for identity in identities:
+                            company = str(identity.get("name") or "")
+                            domain = str(identity.get("domain") or "")
+                            excerpt = title.strip() if title.strip() and title.strip() in visible_text else visible_text[:1200]
+                            records.append({
+                                "company_name": company,
+                                "official_domain": domain,
+                                "organization_url": identity.get("url"),
+                                "official_domain_verified": False,
+                                "entity_class": "operating_company",
+                                "matched_signal_ids": list(request.signal_ids),
+                                "published_at": published,
+                                "geography": next((g for g in request.geographies if g.casefold() not in {"italy", "italia"}), ""),
+                                "source_url": final_url,
+                                "source_publisher": str(item.get("publisher") or title or page_host) if isinstance(item, Mapping) else (title or page_host),
+                                "source_class": "official_company_website" if domain == page_host else "recognized_news",
+                                "evidence_excerpt": excerpt,
+                                "extraction_method": "structured_identity_semantic_candidate",
+                                "source_text": visible_text[:250_000],
+                                "page_title": title,
+                                "search_snippet": snippet,
+                                "structured_metadata": {"target_organization": dict(identity)},
+                                "query_origin": request.technical_filters.get("query_origin") or request.query,
+                                "parent_query": request.technical_filters.get("parent_query") or request.query,
+                                "discovery_round": int(request.technical_filters.get("discovery_round") or 1),
+                                "provider_query": provider_query,
+                                "search_provider": search_provider,
+                            })
+                        continue
                     company_hint = _company_identity_hint(title=title, snippet=snippet, html=html)
                     if not company_hint:
                         provider_warnings.append("COMPANY_IDENTITY_UNRESOLVED")
@@ -538,6 +655,7 @@ def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
     company = _text(record.get("company_name"))
     domain = _host(record.get("official_domain"))
     universal = bool((request.technical_filters or {}).get("universal_engine"))
+    semantic_required = request.technical_filters.get("semantic_authority_required") is True
     if not company:
         return False, "COMPANY_MISSING"
     if not domain or is_blacklisted_domain(domain):
@@ -554,9 +672,9 @@ def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
         return False, "NON_PRIMARY_SOURCE"
     if not all((_text(record.get("source_url")), _text(record.get("source_publisher")), _text(record.get("evidence_excerpt")))):
         return False, "SOURCE_PROVENANCE_MISSING"
-    if universal and not _text(record.get("why_now")):
+    if universal and not semantic_required and not _text(record.get("why_now")):
         return False, "WHY_NOW_MISSING"
-    if universal and record.get("buyer_fit") is None:
+    if universal and not semantic_required and record.get("buyer_fit") is None:
         return False, "BUYER_FIT_MISSING"
     published = _iso_date(record.get("published_at"))
     if not published:
@@ -640,6 +758,7 @@ class GenericWebResearchAdapter:
         candidates: List[OpportunityCandidate] = []
         seen: set[str] = set()
         universal = bool((request.technical_filters or {}).get("universal_engine"))
+        semantic_required = request.technical_filters.get("semantic_authority_required") is True
         for result in results:
             for record in result.records:
                 domain = _host(record.get("official_domain"))
@@ -704,11 +823,15 @@ class GenericWebResearchAdapter:
                 publisher = _text(record.get("source_publisher")) or ""
                 excerpt = _text(record.get("evidence_excerpt")) or ""
                 source_class = _text(record.get("source_class")) or "official_company_website"
-                why_now = _text(record.get("why_now")) or f"Evidenza primaria recente: {excerpt[:260]}"
-                try:
-                    buyer_fit = float(record.get("buyer_fit") if record.get("buyer_fit") is not None else 0.75)
-                except (TypeError, ValueError):
-                    buyer_fit = 0.75
+                why_now = _text(record.get("why_now"))
+                if semantic_required:
+                    buyer_fit = None
+                else:
+                    why_now = why_now or f"Evidenza primaria recente: {excerpt[:260]}"
+                    try:
+                        buyer_fit = float(record.get("buyer_fit") if record.get("buyer_fit") is not None else 0.75)
+                    except (TypeError, ValueError):
+                        buyer_fit = 0.75
                 domain_verification = record.get("domain_verification") if isinstance(record.get("domain_verification"), Mapping) else {
                     "status": "verified", "confidence": 0.80, "score": 80,
                     "evidence": ("schema_org_identity_match", "official_page_host_match"),
@@ -728,13 +851,17 @@ class GenericWebResearchAdapter:
                         "discovery_round": record.get("discovery_round") or 1,
                         "provider_query": record.get("provider_query"),
                         "coverage": "generic_fallback_partial",
+                        "source_text": record.get("source_text") or excerpt,
+                        "page_title": record.get("page_title"),
+                        "search_snippet": record.get("search_snippet"),
+                        "structured_metadata": record.get("structured_metadata") or {},
                     },
                 ) for signal in matched)
                 if not evidence:
                     warnings.append("NO_CANONICAL_EVIDENCE")
                     continue
                 # Hard reject incomplete universal candidates.
-                if universal and not all((company, domain, matched, published, excerpt, source_url, source_class, why_now, domain_verification)):
+                if universal and not all((company, domain, matched, published, excerpt, source_url, source_class, domain_verification)):
                     warnings.append("UNIVERSAL_CANDIDATE_INCOMPLETE")
                     continue
                 candidates.append(OpportunityCandidate(
@@ -742,7 +869,7 @@ class GenericWebResearchAdapter:
                     company_identifiers={}, official_domain=domain, entity_class="operating_company",
                     geographies=(_text(record.get("geography")) or "",), buyer_fit=buyer_fit,
                     signal_id=matched[0], signal_date=published, evidence=evidence,
-                    why_now=why_now, contacts=(), confidence=0.72,
+                    why_now=why_now, contacts=(), confidence=0.55 if semantic_required else 0.72,
                     contradiction_flags=("GENERIC_FALLBACK_PARTIAL",),
                     provenance={
                         "adapter_id": self.capability.adapter_id,

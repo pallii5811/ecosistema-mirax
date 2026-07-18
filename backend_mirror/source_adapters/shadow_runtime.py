@@ -237,6 +237,12 @@ async def execute_source_adapter_shadow(
                 result,
                 limitations=tuple(dict.fromkeys((*result.limitations, *engine_result.notes, f"universal_capability:{engine_result.capability_status}"))),
             )
+        committed_run_cost = max(
+            0.0,
+            governor.committed_micro_eur / 1_000_000 - prior_cost_eur,
+        )
+        if committed_run_cost > result.cost_eur:
+            result = replace(result, cost_eur=committed_run_cost)
     finally:
         reset_current_cost_governor(token)
     if result.cost_eur + prior_cost_eur > cap + 1e-9:
@@ -404,10 +410,53 @@ def candidate_to_lifecycle_shadow_payload(
         or candidate.official_domain
         or ""
     ).strip()
+    semantic_grounding = (
+        dict(candidate.provenance.get("semantic_grounding"))
+        if isinstance(candidate.provenance.get("semantic_grounding"), Mapping)
+        else {}
+    )
+    grounded_items = semantic_grounding.get("grounded_evidence") or ()
+    grounded_interpretation = next((
+        item.get("interpretation") for item in grounded_items
+        if isinstance(item, Mapping) and isinstance(item.get("interpretation"), Mapping)
+    ), {})
+    public_source = candidate.evidence[0].source_url if candidate.evidence else f"https://{candidate.official_domain}"
+    legal_name = str(candidate.company_identifiers.get("legal_name") or "").strip() or None
+
+    def field(value: Any, status: str, confidence: float, source: Optional[str] = None) -> Mapping[str, Any]:
+        return {
+            "value": value,
+            "source": source or public_source,
+            "confidence": round(max(0.0, min(1.0, confidence)), 4),
+            "observed_at": now,
+            "status": status,
+        }
+
+    field_provenance = {
+        "company_name": field(candidate.canonical_company_name, "verified", candidate.official_domain_confidence),
+        "official_domain": field(candidate.official_domain, "verified", candidate.official_domain_confidence),
+        "legal_name": field(legal_name, "verified" if legal_name else "unavailable", 0.9 if legal_name else 0.0),
+        "location": field(
+            geography or None,
+            "verified" if candidate.provenance.get("geography_match") is True else "inferred" if geography else "unavailable",
+            0.9 if candidate.provenance.get("geography_match") is True else 0.6 if geography else 0.0,
+        ),
+        "phone": field(contacts.get("phone"), "verified" if contacts.get("phone") else "unavailable", 0.9 if contacts.get("phone") else 0.0),
+        "email": field(contacts.get("email"), "verified" if contacts.get("email") else "unavailable", 0.9 if contacts.get("email") else 0.0),
+        "signal_event": field(candidate.signal_id, "verified", candidate.confidence),
+        "event_date": field(candidate.signal_date, "verified" if candidate.signal_date else "unavailable", candidate.confidence if candidate.signal_date else 0.0),
+        "evidence": field(candidate.evidence[0].excerpt if candidate.evidence else None, "verified" if candidate.evidence else "unavailable", candidate.confidence),
+        "buyer_need": field(grounded_interpretation.get("buyer_need") or None, "inferred" if grounded_interpretation.get("buyer_need") else "unavailable", candidate.confidence),
+        "why_now": field(candidate.why_now, "inferred" if candidate.why_now else "unavailable", candidate.confidence),
+        "opportunity_score": field(round(opportunity_value_score * 100, 2), "inferred", candidate.confidence),
+        "company_size": field(size if size != "unknown" else None, "inferred" if size != "unknown" else "unavailable", 0.65 if size != "unknown" else 0.0),
+        "revenue": field(None, "unavailable", 0.0),
+        "decision_makers": field(None, "unavailable", 0.0),
+    }
     payload: MutableMapping[str, Any] = {
         "azienda": candidate.canonical_company_name,
         "name": candidate.canonical_company_name,
-        "legal_name": candidate.canonical_company_name,
+        "legal_name": legal_name,
         "sito": f"https://{candidate.official_domain}",
         "website": f"https://{candidate.official_domain}",
         "entity_type": "company",
@@ -434,6 +483,8 @@ def candidate_to_lifecycle_shadow_payload(
         "employer_official_domain": employer_domain or None,
         "operating_company_probability": 0.95 if candidate.entity_class == "operating_company" else 0.0,
         "source_adapter_id": candidate.adapter_id,
+        "semantic_grounding": semantic_grounding or None,
+        "field_provenance": field_provenance,
         "domain_verification": dict(verification),
         "business_signals": signals,
         "matched_signals": list(dict.fromkeys(item.signal_id for item in candidate.evidence)),
@@ -454,6 +505,8 @@ def candidate_to_lifecycle_shadow_payload(
             "source_adapter_id": candidate.adapter_id,
             "source_adapter_version": candidate.adapter_version,
             "domain_verification": dict(verification),
+            "semantic_grounding": semantic_grounding or None,
+            "field_provenance": field_provenance,
             "geography": {
                 "geography_match": candidate.provenance.get("geography_match") is True,
                 "requested_geographies": list(candidate.provenance.get("requested_geographies") or ()),

@@ -6,6 +6,7 @@ const allowedAnthropic = new Set([
   path.normalize('src/lib/intent-compiler/compile-commercial-search-plan.ts'),
   path.normalize('backend_mirror/agents/data_extractor.py'),
   path.normalize('backend_mirror/agents/web_researcher.py'),
+  path.normalize('backend_mirror/semantic_intelligence.py'),
 ])
 const extensions = new Set(['.ts', '.tsx', '.js', '.mjs', '.py'])
 const ignored = new Set(['node_modules', '.next', '.git', '.vercel', '__pycache__'])
@@ -56,6 +57,17 @@ if (!extractor.includes('Anthropic extraction requires an atomic cost governor')
 const researcher = fs.readFileSync(path.join(root, 'backend_mirror/agents/web_researcher.py'), 'utf8')
 if (!researcher.includes('Anthropic query generation requires an atomic cost governor')) {
   failures.push('query generator lacks fail-closed governor guard')
+}
+
+const semantic = fs.readFileSync(path.join(root, 'backend_mirror/semantic_intelligence.py'), 'utf8')
+if (!semantic.includes('semantic interpretation requires an atomic cost governor')) {
+  failures.push('semantic interpreter lacks fail-closed governor guard')
+}
+if (
+  semantic.indexOf('governor.reserve(') < 0 ||
+  semantic.indexOf('governor.reserve(') > semantic.indexOf('https://api.anthropic.com/v1/messages')
+) {
+  failures.push('semantic interpreter does not reserve before Anthropic execution')
 }
 
 if (failures.length) {

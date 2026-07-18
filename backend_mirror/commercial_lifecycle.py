@@ -497,7 +497,14 @@ def evaluate_publication_gate(
     domain = canonical_domain(lead.get("sito") or lead.get("website"))
     identity = lead.get("domain_verification") if isinstance(lead.get("domain_verification"), dict) else {}
     quality = lead.get("lead_quality_contract") if isinstance(lead.get("lead_quality_contract"), dict) else {}
+    semantic_contract = (
+        canonical_plan.get("semantic_query_contract")
+        if isinstance(canonical_plan.get("semantic_query_contract"), dict)
+        else None
+    )
     required_raw = canonical_plan.get("signal_policy", {}).get("required_signals") or []
+    if not required_raw and semantic_contract is not None:
+        required_raw = semantic_contract.get("required_relationships") or []
     required = {canonical_signal_id(str(value)) or str(value) for value in required_raw}
     records = evidence_records(lead)
     observed = {
@@ -643,6 +650,21 @@ def evaluate_publication_gate(
     causal_offer_link = _causal_offer_link_verified(canonical_plan, relevant_signals)
     if digital_audit_fit is not None and digital_audit_fit["pass"]:
         causal_offer_link = True
+    semantic_grounding = (
+        lead.get("semantic_grounding")
+        if isinstance(lead.get("semantic_grounding"), dict)
+        else report.get("semantic_grounding")
+        if isinstance(report.get("semantic_grounding"), dict)
+        else {}
+    )
+    semantic_authority_passed = (
+        True if semantic_contract is None else semantic_grounding.get("accepted") is True
+    )
+    if semantic_authority_passed and semantic_contract is not None and relevant_evidence:
+        # The common semantic gate has already verified query relationship,
+        # role, evidence offsets and rubric.  Do not force a dynamic open-world
+        # predicate back through the legacy closed-catalog offer linker.
+        causal_offer_link = True
     gates = {
         "official_domain_verified": identity_positive,
         "buyer_fit_verified": buyer_fit_verified,
@@ -657,6 +679,7 @@ def evaluate_publication_gate(
         "audit_completed": audit_completed,
         "no_critical_contradictions": not unresolved_contradictions,
         "cost_within_budget": cost_within_budget,
+        "semantic_authority_passed": semantic_authority_passed,
     }
     if str(lead.get("source_adapter_id") or "") in {"structured_hiring_v1", _DIGITAL_AUDIT_ADAPTER_ID}:
         gates["geography_matches_target"] = _geography_matches_target(lead, canonical_plan)
@@ -675,6 +698,7 @@ def evaluate_publication_gate(
         "audit_completed": "SOURCE_NOT_VERIFIABLE",
         "no_critical_contradictions": "CRITICAL_CONTRADICTION",
         "cost_within_budget": "COST_GATE_FAILED",
+        "semantic_authority_passed": "SEMANTIC_QUERY_MISMATCH",
         "geography_matches_target": "GEO_OUT_OF_SCOPE",
     }
     geography_rejection = str(lead.get("geography_rejection_code") or "").strip()

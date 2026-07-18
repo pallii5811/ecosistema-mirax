@@ -1369,20 +1369,34 @@ def _sync_search_leads_safe(
         print(f"[worker_supabase] search_leads sync skipped: {exc}", flush=True)
 
 
-def _sync_neo4j_leads_safe(results: Any) -> None:
+def _sync_neo4j_leads_safe(results: Any, search_id: Any = None) -> None:
     """Sidecar Neo4j — dopo Postgres; non blocca il worker se fallisce."""
     if not isinstance(results, list) or not results:
         return
     try:
-        from universe_neo4j_sync import is_neo4j_enabled, sync_leads_to_graph
+        from universe_neo4j_sync import (
+            is_neo4j_enabled,
+            sync_leads_to_graph,
+            sync_semantic_leads_to_graph,
+        )
 
         if not is_neo4j_enabled():
             return
         stats = sync_leads_to_graph(results)
+        semantic_stats = sync_semantic_leads_to_graph(
+            results,
+            search_id=str(search_id).strip() if search_id else None,
+        )
         if stats["synced"] or stats["errors"]:
             print(
                 f"[worker_supabase] neo4j sync: {stats['synced']} ok, "
                 f"{stats['skipped']} skip, {stats['errors']} err",
+                flush=True,
+            )
+        if semantic_stats["nodes"] or semantic_stats["relationships"] or semantic_stats["errors"]:
+            print(
+                f"[worker_supabase] neo4j semantic: {semantic_stats['nodes']} nodes, "
+                f"{semantic_stats['relationships']} rel, {semantic_stats['errors']} err",
                 flush=True,
             )
     except Exception as exc:
@@ -5095,7 +5109,7 @@ def main() -> None:
                     supabase.table("searches").update(payload).eq("id", job_id).execute()
                     _sync_search_leads_safe(supabase, job_id, _job_uid, merged)
                     if _should_sync_graph_for_publish_status(status):
-                        _sync_neo4j_leads_safe(merged)
+                        _sync_neo4j_leads_safe(merged, job_id)
                     return merged
                 except Exception as e:
                     print(f"[worker_supabase] Safe publish skipped: {e}", flush=True)
@@ -5908,7 +5922,7 @@ def main() -> None:
                                     _bg_user,
                                     new_results if isinstance(new_results, list) else [],
                                 )
-                                _sync_neo4j_leads_safe(new_results if isinstance(new_results, list) else [])
+                                _sync_neo4j_leads_safe(new_results if isinstance(new_results, list) else [], job_id)
                             except Exception as e:
                                 print(f"[worker_supabase] bg publish skipped: {e}", flush=True)
 
@@ -6008,7 +6022,7 @@ def main() -> None:
                             str(job.get("user_id") or "").strip() if "job" in locals() and isinstance(job, dict) else None,
                             current_results,
                         )
-                        _sync_neo4j_leads_safe(current_results)
+                        _sync_neo4j_leads_safe(current_results, job_id)
                     else:
                         error_payload = {
                             "status": "error",
@@ -6196,7 +6210,7 @@ def run_reaudit_worker(max_leads: int = 20) -> None:
                 try:
                     supabase.table("searches").update({"results": updated_results}).eq("id", job_id).execute()
                     _sync_search_leads_safe(supabase, job_id, None, updated_results)
-                    _sync_neo4j_leads_safe(updated_results)
+                    _sync_neo4j_leads_safe(updated_results, job_id)
                     try:
                         logger.info(f"[reaudit] Job {job_id} aggiornato")
                     except Exception:

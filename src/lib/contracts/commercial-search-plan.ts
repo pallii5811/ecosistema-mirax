@@ -5,6 +5,39 @@ export const COMMERCIAL_SEARCH_PLAN_SCHEMA_VERSION = '1.0.0' as const
 const cleanString = z.string().trim().min(1).max(500)
 const uniqueStrings = z.array(cleanString).max(100).transform((items) => [...new Set(items)])
 
+export const SemanticQueryContractSchema = z
+  .object({
+    query_goal: z.string().trim().min(1).max(1000),
+    seller: z.record(z.string(), z.unknown()),
+    offer: z.record(z.string(), z.unknown()),
+    target_entity_types: uniqueStrings,
+    target_company_description: z.string().trim().min(1).max(2000),
+    event_or_state_description: z.string().trim().min(1).max(2000),
+    target_role_in_event: z.string().trim().min(1).max(200),
+    required_relationships: uniqueStrings,
+    optional_relationships: uniqueStrings,
+    excluded_roles: uniqueStrings,
+    excluded_entities: uniqueStrings,
+    geography: uniqueStrings,
+    industry: uniqueStrings,
+    size_constraints: z.record(z.string(), z.unknown()),
+    temporal_constraints: z.record(z.string(), z.unknown()),
+    positive_conditions: uniqueStrings,
+    negative_conditions: uniqueStrings,
+    must_have_facts: uniqueStrings,
+    forbidden_inferences: uniqueStrings,
+    data_requirements: uniqueStrings,
+    ranking_objective: z.string().trim().min(1).max(1000),
+    acceptance_rubric: uniqueStrings,
+    discovery_hypotheses: z.array(z.record(z.string(), z.unknown())).max(20),
+    clarification_required: z.boolean(),
+    confidence: z.number().min(0).max(1),
+    canonical_signal_hints: uniqueStrings,
+  })
+  .strict()
+
+export type SemanticQueryContract = z.infer<typeof SemanticQueryContractSchema>
+
 const optionalRange = z
   .object({ min: z.number().int().nonnegative().optional(), max: z.number().int().nonnegative().optional() })
   .strict()
@@ -147,6 +180,7 @@ export const CommercialSearchPlanSchema = z
         generated_at: z.iso.datetime(),
       })
       .strict(),
+    semantic_query_contract: SemanticQueryContractSchema.optional(),
   })
   .strict()
   .superRefine((plan, ctx) => {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import date, datetime, timezone
 
 import pytest
@@ -207,6 +208,42 @@ def test_resume_cursor_continues_without_replaying_previous_page() -> None:
     assert resumed.status == "completed_requested_count"
     assert resumed_adapter.cursor_offsets == [700]
     assert first_domains.isdisjoint(resumed_domains)
+
+
+def test_5000_crash_recovery_resumes_all_partitions_without_padding_or_duplicates() -> None:
+    first_adapters = tuple(ScaleShardAdapter(index) for index in range(5))
+    first = asyncio.run(UniversalSourceOrchestrator(
+        SourceCapabilityRegistry(first_adapters), max_rounds=1, max_seconds=60,
+    ).run(request(5_000)))
+    assert first.status == "partial_time_limit"
+    first_domains = {lead.candidate.official_domain for lead in first.qualified_leads}
+    assert len(first_domains) == first.progress.qualified_count == 2_420
+    resume_cursors = {
+        item.adapter_id: item.next_cursor for item in first.adapter_progress if item.next_cursor is not None
+    }
+    assert len(resume_cursors) == 5
+
+    resumed_adapters = tuple(ScaleShardAdapter(index) for index in range(5))
+    remaining = 5_000 - len(first_domains)
+    resumed_request = replace(
+        request(remaining),
+        technical_filters={
+            "query_origin": "offline_scale_crash_recovery",
+            "processed_employer_keys": tuple(f"domain:{domain}" for domain in sorted(first_domains)),
+            "total_unique_employer_target": 5_000,
+        },
+    )
+    resumed = asyncio.run(UniversalSourceOrchestrator(
+        SourceCapabilityRegistry(resumed_adapters), max_rounds=2, max_seconds=60,
+    ).run(resumed_request, resume_cursors=resume_cursors))
+    resumed_domains = {lead.candidate.official_domain for lead in resumed.qualified_leads}
+    assert resumed.status == "completed_requested_count"
+    assert resumed.progress.qualified_count == 5_000
+    assert len(resumed_domains) == remaining
+    assert first_domains.isdisjoint(resumed_domains)
+    assert len(first_domains | resumed_domains) == 5_000
+    assert all(adapter.cursor_offsets[0] == 500 for adapter in resumed_adapters)
+    assert first.cost_eur + resumed.cost_eur <= 0.125
 
 
 def test_authoritative_partition_exhaustion_is_truthful() -> None:

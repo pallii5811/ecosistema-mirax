@@ -1,0 +1,182 @@
+{
+  "schema_version": "1.0.0",
+  "base_sha": "db2a9104f93d73fa85831b8ed111137f51e6bafc",
+  "scope": "All runtime locations where lexical or adapter-local logic can determine commercial meaning, entity role, query match, buyer fit, or final qualification.",
+  "architecture_before": "Canonical LLM plan constrained to a closed signal ontology; adapters discover and frequently assign event semantics locally; regex/keyword extractors can emit matched signals; the common qualifier verifies shape, domain, evidence presence and scores but not entity/event direction against the original query.",
+  "findings": [
+    {
+      "file": "src/lib/intent-compiler/compile-commercial-search-plan.ts",
+      "function": "normalizePayload/canonicalSignals",
+      "current_logic": "Drops model signal values not present in the v1 canonical signal ontology and adds heuristic signal floors.",
+      "semantic_risk": "Open-world predicates are lost or forced into the nearest catalog signal; explicit semantic role and relation direction are not retained.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": true,
+      "replacement_component": "SemanticCommercialQueryInterpreter plus a lossless SemanticQueryContract attached to the canonical plan."
+    },
+    {
+      "file": "src/lib/uqe/mirax-query-planner.ts",
+      "function": "buildMiraxQueryPlan",
+      "current_logic": "Falls back to a heuristic plan when canonical compilation returns null.",
+      "semantic_risk": "A complex unseen query can silently become a keyword-derived plan.",
+      "keep_as_prefilter": false,
+      "must_be_replaced": true,
+      "replacement_component": "Fail-closed semantic contract or clarification_required; heuristic output may only propose discovery hints."
+    },
+    {
+      "file": "src/lib/signal-intent/parse-semantic.ts",
+      "function": "parseSignalIntent/callSemanticAi",
+      "current_logic": "Uses heuristic first and a closed semantic graph fallback; paid semantic parser is retired.",
+      "semantic_risk": "Unexpected language is reduced to a fixed list and may appear semantically understood when it is not.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": true,
+      "replacement_component": "SemanticCommercialQueryInterpreter as final authority; heuristic/graph retained only as zero-cost hints."
+    },
+    {
+      "file": "backend_mirror/source_adapters/universal_query_spec.py",
+      "function": "compile_universal_query_spec",
+      "current_logic": "Requires at least one canonical required_signal and serializes only catalog signals.",
+      "semantic_risk": "Cannot represent a dynamic commercial predicate or target role that has no signal ID.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": true,
+      "replacement_component": "Carry semantic_query_contract and open_predicate alongside optional canonical signal routing hints."
+    },
+    {
+      "file": "backend_mirror/source_adapters/universal_signal_discovery_engine.py",
+      "function": "_infer_adapters/adapters_for_signals",
+      "current_logic": "Routes only by a static signal-to-adapter table.",
+      "semantic_risk": "Unknown predicates always collapse to generic web without source reasoning.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": false,
+      "replacement_component": "Semantic query discovery_hypotheses and source requirements guide routing; static map remains a cheap capability hint."
+    },
+    {
+      "file": "backend_mirror/source_adapters/universal_evidence.py",
+      "function": "extract_evidence_from_text/_EVENT_PATTERNS",
+      "current_logic": "Regex matches assign final event_type, company hint, role-like fields and confidence.",
+      "semantic_risk": "Actor/recipient/provider direction is not understood; a financing provider can be labeled as a funding recipient.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": true,
+      "replacement_component": "Cheap candidate-chunk detector only; SemanticCommercialEventInterpreter assigns event and roles."
+    },
+    {
+      "file": "backend_mirror/source_adapters/generic_web.py",
+      "function": "_matched_signals/parse_primary_evidence_page",
+      "current_logic": "Phrase inclusion declares matched signals and can emit a candidate from first-party page text.",
+      "semantic_risk": "Phrase presence does not prove relation direction, target role, negation, status or query acceptance.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": true,
+      "replacement_component": "Semantic interpretation and deterministic grounding before OpportunityCandidate emission."
+    },
+    {
+      "file": "backend_mirror/agents/data_extractor.py",
+      "function": "page_has_required_signal/_fallback_extract_companies",
+      "current_logic": "Keyword prefilters and fallback extraction can assign matched_signals.",
+      "semantic_risk": "Lexical evidence may be promoted to a commercial event when the model is unavailable.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": true,
+      "replacement_component": "Fallback may only return candidate chunks; final semantic interpretation must be present and grounded."
+    },
+    {
+      "file": "backend_mirror/agents/agentic_gap_fill.py",
+      "function": "_has_active_marketing_investment_evidence/_validate_extracted",
+      "current_logic": "Keyword and field heuristics validate marketing/funding/hiring signals and build business_signals.",
+      "semantic_risk": "Entity role and event direction can be inferred from generic wording.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": true,
+      "replacement_component": "SemanticCommercialEventInterpreter output plus grounding verdict becomes mandatory for commercial signals."
+    },
+    {
+      "file": "backend_mirror/business_events_enrich.py",
+      "function": "detect_hiring_signal/detect_sector_hits/detect_marketing_investment_signal",
+      "current_logic": "Vertical detectors and role keyword expansions produce confirmed business signals.",
+      "semantic_risk": "Generic careers language and ambiguous sector wording can become final evidence.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": true,
+      "replacement_component": "Structured parsers remain acquisition; all unstructured claims pass the common semantic and grounding gate."
+    },
+    {
+      "file": "backend_mirror/source_adapters/hiring.py",
+      "function": "adapter candidate construction",
+      "current_logic": "Structured ATS/parser fields and role matching determine hiring semantics.",
+      "semantic_risk": "Structured JobPosting is usually authoritative, but recruiter/employer and specialized-role ambiguity still require query-role validation.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": false,
+      "replacement_component": "Structured fast path may bypass model only when employer, active vacancy, role and geography are deterministically proven; common grounding still certifies."
+    },
+    {
+      "file": "backend_mirror/source_adapters/procurement.py",
+      "function": "adapter candidate construction",
+      "current_logic": "Registry fields map awardee and tender signal into a candidate.",
+      "semantic_risk": "Low for structured awardee identifiers, but query role may differ from awardee and must remain explicit.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": false,
+      "replacement_component": "Structured relation fast path plus common acceptance-rubric grounding."
+    },
+    {
+      "file": "backend_mirror/source_adapters/growth.py",
+      "function": "growth record parser/candidate construction",
+      "current_logic": "Aliases and source fields assign expansion/location events.",
+      "semantic_risk": "A location mention can be mistaken for target-company expansion or stale/historical activity.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": true,
+      "replacement_component": "Semantic event interpretation for unstructured records; structured official-event fast path when relation fields are explicit."
+    },
+    {
+      "file": "backend_mirror/source_adapters/orchestrator.py",
+      "function": "default_candidate_qualifier",
+      "current_logic": "Checks domain, entity class, evidence shape, buyer_fit, confidence and opportunity score.",
+      "semantic_risk": "Does not verify original-query semantics, target role, relation direction, negation, rumor or literal grounding.",
+      "keep_as_prefilter": false,
+      "must_be_replaced": true,
+      "replacement_component": "SemanticEvidenceGroundingVerifier is mandatory before scoring and qualification."
+    },
+    {
+      "file": "backend_mirror/commercial_lifecycle.py",
+      "function": "evaluate_publication_gate",
+      "current_logic": "Observed signal IDs and keyword-specialized hiring roles drive signal verification and buyer fit.",
+      "semantic_risk": "A syntactically complete but semantically inverted event can pass publication gates.",
+      "keep_as_prefilter": false,
+      "must_be_replaced": true,
+      "replacement_component": "Require a verified semantic_grounding contract with target-role and acceptance-rubric pass before publication."
+    },
+    {
+      "file": "backend_mirror/worker_supabase.py",
+      "function": "_lead_satisfies_confirmed_required_signals/_filter_results_by_confirmed_required_signals",
+      "current_logic": "Alias sets over business_signals decide whether required signals are confirmed for the UI.",
+      "semantic_risk": "Aliases can certify an event that does not place the company in the role requested by the user.",
+      "keep_as_prefilter": true,
+      "must_be_replaced": true,
+      "replacement_component": "UI filter requires the lifecycle semantic_grounding pass; aliases remain display/routing helpers only."
+    },
+    {
+      "file": "backend_mirror/source_adapters/opportunity_scoring.py",
+      "function": "score_opportunity",
+      "current_logic": "Scores evidence completeness, strength, freshness, fit and contactability after adapter semantics.",
+      "semantic_risk": "A high-quality but wrong-direction event can receive a high score.",
+      "keep_as_prefilter": false,
+      "must_be_replaced": false,
+      "replacement_component": "Run only after semantic grounding; scoring never overrides a semantic rejection."
+    },
+    {
+      "file": "backend_mirror/universe/ingest.py",
+      "function": "_map_signal_to_event/_build_event_payload",
+      "current_logic": "Signal aliases are mapped into graph events without a mandatory semantic relation contract.",
+      "semantic_risk": "Incorrectly directed events can be persisted and amplified by the knowledge graph.",
+      "keep_as_prefilter": false,
+      "must_be_replaced": true,
+      "replacement_component": "Persist only grounded semantic events with explicit entity roles, direction, evidence and provenance."
+    }
+  ],
+  "required_common_boundary": {
+    "query": "SemanticCommercialQueryInterpreter",
+    "event": "SemanticCommercialEventInterpreter",
+    "verification": "SemanticEvidenceGroundingVerifier",
+    "policy": "Adapters acquire; semantic interpreter understands; grounding verifier certifies; resolver links; lifecycle qualifies.",
+    "fail_closed_codes": [
+      "SEMANTIC_INTERPRETATION_MISSING",
+      "EVIDENCE_GROUNDING_FAILED",
+      "TARGET_ROLE_UNVERIFIED",
+      "SEMANTIC_QUERY_MISMATCH"
+    ]
+  }
+}

@@ -134,6 +134,9 @@ export interface MiraxQueryPlan {
   /** Contratto canonico v1 condiviso con il worker, quando compilato dall'LLM. */
   canonical_plan?: import('@/lib/contracts/commercial-search-plan').CommercialSearchPlan
 
+  /** Significato open-world lossless; autorita finale per ruolo e relazione. */
+  semantic_query_contract?: import('@/lib/contracts/commercial-search-plan').SemanticQueryContract
+
   /** Domande che il discovery engine deve riuscire a provare. */
   research_questions?: string[]
 

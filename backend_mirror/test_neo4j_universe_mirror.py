@@ -66,8 +66,10 @@ class FakeDriver:
 def test_schema_constraints_are_idempotent() -> None:
     driver = FakeDriver()
     ensure_neo4j_schema(driver, "test")
-    assert len(driver.queries) == 4
+    assert len(driver.queries) == 14
     assert all("IF NOT EXISTS" in query for query, _ in driver.queries)
+    assert any("mirax_event_canonical" in query for query, _ in driver.queries)
+    assert any("mirax_evidence_canonical" in query for query, _ in driver.queries)
 
 
 def test_rich_universe_relationship_is_mirrored() -> None:

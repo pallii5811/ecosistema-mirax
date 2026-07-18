@@ -1722,6 +1722,7 @@ export function canonicalPlanToLegacy(plan: CommercialSearchPlan): MiraxQueryPla
     intent_summary: `${plan.seller.offer_description} → ${firstHypothesis.implied_need}`,
     parse_source: 'llm',
     canonical_plan: plan,
+    semantic_query_contract: plan.semantic_query_contract,
     research_questions: plan.commercial_hypotheses.map(
       (item) => `Quale evidenza osservabile dimostra ${item.triggering_events.join(' / ')} per ${item.buyer_problem}?`,
     ),

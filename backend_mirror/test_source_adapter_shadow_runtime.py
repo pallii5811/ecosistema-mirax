@@ -195,6 +195,11 @@ def test_authorized_shadow_executes_under_cap_and_never_publishes():
     payloads = serialize_shadow_qualified_leads(result)
     assert len(payloads) == 1
     assert payloads[0]["customer_visible"] is False
+    assert payloads[0]["legal_name"] is None
+    assert payloads[0]["field_provenance"]["official_domain"]["status"] == "verified"
+    assert payloads[0]["field_provenance"]["legal_name"]["status"] == "unavailable"
+    assert payloads[0]["field_provenance"]["why_now"]["status"] == "inferred"
+    assert payloads[0]["field_provenance"]["email"]["status"] == "verified"
     gate = evaluate_publication_gate(payloads[0], PLAN, cost_within_budget=True)
     assert gate["publishable"] is True
 

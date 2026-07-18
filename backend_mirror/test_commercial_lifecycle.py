@@ -104,6 +104,31 @@ def test_publication_gate_passes_only_complete_verified_lead():
     assert len(gate["evidence"]) >= 1
 
 
+def test_open_world_semantic_relationship_passes_without_closed_signal_id():
+    relationship = "territorial_presence_extended_by_target"
+    plan = copy.deepcopy(PLAN)
+    plan["signal_policy"]["required_signals"] = []
+    plan["signal_policy"]["maximum_age_days_by_signal"] = {relationship: 90}
+    plan["semantic_query_contract"] = {
+        "required_relationships": [relationship],
+        "target_role_in_event": "expanding_company",
+    }
+    lead = valid_lead()
+    lead["matched_signals"] = [relationship]
+    lead["business_signals"] = [{
+        "type": relationship, "status": "verified", "confidence": 0.95,
+        "source_url": "https://www.alfalogistica.example/news/nuova-sede",
+        "source_class": "company_careers",
+        "evidence": "Alfa Logistica estende la presenza territoriale con un nuovo presidio.",
+        "date": "2026-07-10T00:00:00Z",
+    }]
+    lead["semantic_grounding"] = {"accepted": True, "relationships": [relationship]}
+    gate = evaluate_publication_gate(lead, plan, cost_within_budget=True)
+    assert gate["publishable"] is True
+    assert gate["semantic_authority_passed"] is True
+    assert gate["signal_semantically_linked_to_seller_offer"] is True
+
+
 def test_publication_gate_fails_probable_domain():
     lead = valid_lead()
     lead["domain_verification"]["status"] = "probable"

@@ -8,8 +8,13 @@ import { SOURCE_BY_ID, sourceSupportsSignal } from '@/lib/source-intelligence/re
 import { getSignalDefinition, signalOntologyPromptFragment } from '@/lib/signal-ontology/ontology'
 import { parseSignalIntentHeuristic } from '@/lib/signal-intent/parse-heuristic'
 import { inferSellerBuyerProfile } from '@/lib/signal-intent/seller-buyer-inference'
+import {
+  getSemanticQueryCache,
+  semanticQueryCacheKey,
+  setSemanticQueryCache,
+} from './semantic-query-cache'
 
-export const COMMERCIAL_INTENT_PROMPT_VERSION = 'commercial-intent-v1.1.0' as const
+export const COMMERCIAL_INTENT_PROMPT_VERSION = 'commercial-intent-v1.2.0' as const
 
 function cleanProviderEnv(value: string | undefined): string {
   return String(value || '').replace(/\\[rn]/g, '').trim()
@@ -94,6 +99,12 @@ Rules:
 - Require official domain, source URL and observation date for publication.
 - Use concise arrays and at most 5 strong commercial hypotheses.
 - The plan must stay inside the supplied hard budget.
+- semantic_query_contract is the lossless, open-world meaning of the request. Preserve dynamic predicates even
+  when no canonical signal exists. Explicitly state the target company's event role and inverse/excluded roles.
+- Canonical signal IDs are routing hints only. They never replace event_or_state_description, relationships,
+  forbidden inferences or acceptance rubric.
+- For every relationship use a stable descriptive ID that the event interpreter can return verbatim. For example,
+  a company receiving finance is recipient; lender/provider/investor/publisher/advisor are excluded inverse roles.
 - Output only through the required tool.
 
 AVAILABLE COMPOSABLE SIGNAL ONTOLOGY:
@@ -113,6 +124,11 @@ function normalizedLeadCount(value: number | undefined): number {
 type JsonSchemaNode = {
   $ref?: string
   type?: string | string[]
+  required?: string[]
+  minItems?: number
+  minLength?: number
+  maxLength?: number
+  $defs?: Record<string, JsonSchemaNode>
   properties?: Record<string, JsonSchemaNode>
   items?: JsonSchemaNode
 }
@@ -128,17 +144,24 @@ export function isSellerFramedQuery(query: string): boolean {
  * must carry the complete causal contract in the single paid compiler call.
  */
 export function compilerToolSchema(query: string): typeof canonicalSchema {
-  const schema = structuredClone(canonicalSchema) as any
-  if (!isSellerFramedQuery(query)) return schema
-  const seller = schema.$defs.seller.properties
+  const schema = structuredClone(canonicalSchema) as unknown as JsonSchemaNode
+  const required = schema.required || (schema.required = [])
+  if (!required.includes('semantic_query_contract')) required.push('semantic_query_contract')
+  if (!isSellerFramedQuery(query)) return schema as typeof canonicalSchema
+  const seller = schema.$defs?.seller?.properties
+  const hypotheses = schema.$defs?.commercialHypothesis?.properties
+  const signalPolicy = schema.$defs?.signalPolicy?.properties
+  if (!seller || !hypotheses || !signalPolicy) {
+    throw new Error('COMMERCIAL_COMPILER_SCHEMA_INVALID')
+  }
   seller.offer_category = { type: 'string', minLength: 1, maxLength: 200 }
-  seller.products_or_services.minItems = 1
-  seller.problems_solved.minItems = 1
-  seller.preferred_buyer_roles.minItems = 1
-  schema.$defs.commercialHypothesis.properties.triggering_events.minItems = 1
-  schema.$defs.commercialHypothesis.properties.signals.minItems = 1
-  schema.$defs.signalPolicy.properties.required_signals.minItems = 1
-  return schema
+  if (seller.products_or_services) seller.products_or_services.minItems = 1
+  if (seller.problems_solved) seller.problems_solved.minItems = 1
+  if (seller.preferred_buyer_roles) seller.preferred_buyer_roles.minItems = 1
+  if (hypotheses.triggering_events) hypotheses.triggering_events.minItems = 1
+  if (hypotheses.signals) hypotheses.signals.minItems = 1
+  if (signalPolicy.required_signals) signalPolicy.required_signals.minItems = 1
+  return schema as typeof canonicalSchema
 }
 
 function resolveSchemaNode(node: JsonSchemaNode): JsonSchemaNode {
@@ -326,6 +349,14 @@ function normalizePayload(
   )
   payload.signal_policy = signalPolicy
 
+  const semantic = payload.semantic_query_contract && typeof payload.semantic_query_contract === 'object'
+    ? payload.semantic_query_contract as Record<string, unknown>
+    : null
+  if (semantic) {
+    semantic.canonical_signal_hints = canonicalSignals(semantic.canonical_signal_hints)
+    payload.semantic_query_contract = semantic
+  }
+
   const hypotheses = Array.isArray(payload.commercial_hypotheses)
     ? payload.commercial_hypotheses.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
     : []
@@ -505,6 +536,45 @@ function tokenSet(value: string): Set<string> {
 
 export function validateCommercialPlanSemantics(plan: CommercialSearchPlan): PlanValidationIssue[] {
   const issues: PlanValidationIssue[] = [...detectQueryContradictions(plan.raw_query)]
+  if (plan.planner_metadata.prompt_version === COMMERCIAL_INTENT_PROMPT_VERSION) {
+    const semantic = plan.semantic_query_contract
+    if (!semantic) {
+      issues.push({
+        code: 'SEMANTIC_QUERY_CONTRACT_MISSING',
+        path: 'semantic_query_contract',
+        message: 'AI-native plans require the lossless open-world semantic query contract.',
+      })
+    } else {
+      if (!semantic.clarification_required && semantic.required_relationships.length === 0) {
+        issues.push({
+          code: 'SEMANTIC_RELATIONSHIP_MISSING',
+          path: 'semantic_query_contract.required_relationships',
+          message: 'Executable semantic contracts require at least one explicit target relationship.',
+        })
+      }
+      if (!semantic.clarification_required && !semantic.target_role_in_event.trim()) {
+        issues.push({
+          code: 'SEMANTIC_TARGET_ROLE_MISSING',
+          path: 'semantic_query_contract.target_role_in_event',
+          message: 'Executable semantic contracts require the target company role.',
+        })
+      }
+      if (!semantic.clarification_required && semantic.acceptance_rubric.length === 0) {
+        issues.push({
+          code: 'SEMANTIC_ACCEPTANCE_RUBRIC_MISSING',
+          path: 'semantic_query_contract.acceptance_rubric',
+          message: 'Executable semantic contracts require a deterministic acceptance rubric.',
+        })
+      }
+      if (semantic.excluded_roles.includes(semantic.target_role_in_event)) {
+        issues.push({
+          code: 'SEMANTIC_TARGET_ROLE_EXCLUDED',
+          path: 'semantic_query_contract.excluded_roles',
+          message: 'The required target role cannot also be excluded.',
+        })
+      }
+    }
+  }
   const sellerTokens = tokenSet(
     [plan.seller.offer_category, plan.seller.offer_description, ...plan.seller.products_or_services]
       .filter(Boolean)
@@ -677,7 +747,22 @@ async function callCompiler(
   }
   const idempotencyKey = `intent:${COMMERCIAL_INTENT_PROMPT_VERSION}:${callKind}`
   const configuredMax = Number(process.env.ANTHROPIC_COMPILER_MAX_CALL_EUR || 0.05)
-  const estimatedCostEur = Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 0.05
+  const maxOutputTokens = 1_600
+  const modelIsEconomy = /haiku/i.test(model)
+  const inputRate = Number(process.env.ANTHROPIC_INPUT_EUR_PER_MILLION || (modelIsEconomy ? 1 : 3))
+  const outputRate = Number(process.env.ANTHROPIC_OUTPUT_EUR_PER_MILLION || (modelIsEconomy ? 5 : 15))
+  const serializedUpperBound = Buffer.byteLength(
+    `${SYSTEM_PROMPT}\n${query}${repair}\n${JSON.stringify(compilerToolSchema(query))}`,
+    'utf8',
+  ) + 4_096
+  const computedUpperBound = 1.15 * (
+    serializedUpperBound * inputRate + maxOutputTokens * outputRate
+  ) / 1_000_000
+  // Configuration may reserve more, never less than the computed payload bound.
+  const estimatedCostEur = Math.max(
+    Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 0.05,
+    computedUpperBound,
+  )
   const reservation = await meter.reserve({
     searchId,
     idempotencyKey,
@@ -708,7 +793,7 @@ async function callCompiler(
     },
     body: JSON.stringify({
       model,
-      max_tokens: 1_600,
+      max_tokens: maxOutputTokens,
       system: SYSTEM_PROMPT,
       tools: [
         {
@@ -743,16 +828,11 @@ async function callCompiler(
   }
   const inputTokens = Math.max(0, Number(data.usage?.input_tokens || 0))
   const outputTokens = Math.max(0, Number(data.usage?.output_tokens || 0))
-  const inputRate = Number(process.env.ANTHROPIC_INPUT_EUR_PER_MILLION || 0)
-  const outputRate = Number(process.env.ANTHROPIC_OUTPUT_EUR_PER_MILLION || 0)
-  const metered = inputRate > 0 && outputRate > 0
-  const actualCostEur = metered
-    ? (inputTokens * inputRate + outputTokens * outputRate) / 1_000_000
-    : estimatedCostEur
+  const actualCostEur = (inputTokens * inputRate + outputTokens * outputRate) / 1_000_000
   await meter.settle(searchId, idempotencyKey, actualCostEur, {
     input_tokens: inputTokens,
     output_tokens: outputTokens,
-    pricing_mode: metered ? 'configured_token_rates' : 'conservative_reservation',
+    pricing_mode: 'token_rates_with_model_safe_defaults',
   })
   return data.content?.find((block) => block.type === 'tool_use' && block.name === TOOL_NAME)?.input ?? null
 }
@@ -770,6 +850,18 @@ export async function compileCommercialSearchPlan(
     process.env.SEMANTIC_MODEL ||
     'claude-sonnet-5',
   )
+  const cacheKey = semanticQueryCacheKey({
+    query,
+    requestedCount: normalizedLeadCount(options.requestedLeadCount),
+    language: options.language || 'it',
+    modelVersion: model,
+    interpreterSchemaVersion: COMMERCIAL_INTENT_PROMPT_VERSION,
+  })
+  const cached = await getSemanticQueryCache(cacheKey)
+  if (cached) {
+    const parsed = safeParseCommercialSearchPlan(cached)
+    if (parsed.success && validateCommercialPlanSemantics(parsed.data).length === 0) return parsed.data
+  }
 
   const firstRaw = await callCompiler(query, model, apiKey, options, 'initial')
   if (!firstRaw) return null
@@ -782,7 +874,10 @@ export async function compileCommercialSearchPlan(
         message: issue.message,
       }))
   if (firstIssues.length > 0) options.onDiagnostic?.({ stage: 'initial', issues: firstIssues })
-  if (first.success && firstIssues.length === 0) return first.data
+  if (first.success && firstIssues.length === 0) {
+    await setSemanticQueryCache(cacheKey, first.data)
+    return first.data
+  }
 
   if (options.allowRepair === false) return null
 
@@ -804,5 +899,9 @@ export async function compileCommercialSearchPlan(
   }
   const repairedIssues = validateCommercialPlanSemantics(repaired.data)
   if (repairedIssues.length > 0) options.onDiagnostic?.({ stage: 'repair', issues: repairedIssues })
-  return repairedIssues.length === 0 ? repaired.data : null
+  if (repairedIssues.length === 0) {
+    await setSemanticQueryCache(cacheKey, repaired.data)
+    return repaired.data
+  }
+  return null
 }

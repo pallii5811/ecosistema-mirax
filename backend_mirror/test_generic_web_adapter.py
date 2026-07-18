@@ -16,6 +16,7 @@ from backend_mirror.source_adapters.generic_web import (
     _default_generic_provider,
     diversified_queries,
     parse_primary_evidence_page,
+    _structured_subject_identities,
 )
 
 
@@ -162,3 +163,53 @@ def test_runtime_registry_keeps_fallback_explicitly_partial() -> None:
     coverage = registry.resolve(request(), required_source_classes=("search_snippet",))
     assert coverage.status == "generic_fallback_partial"
     assert coverage.adapter_ids == ("generic_web_research_v1",)
+
+
+def test_open_world_acquisition_uses_structured_target_not_publisher() -> None:
+    relationship = "resources_allocated_to_target_company"
+    article = {
+        "@context": "https://schema.org",
+        "@type": "NewsArticle",
+        "datePublished": date.today().isoformat(),
+        "publisher": {"@type": "Organization", "name": "Economia Oggi", "url": "https://news.test"},
+        "about": {"@type": "Organization", "name": "Beta Srl", "url": "https://beta.test"},
+    }
+    html = (
+        f'<script type="application/ld+json">{json.dumps(article)}</script>'
+        '<article>A Beta Srl sono state destinate nuove risorse per ampliare la produzione.</article>'
+    )
+    semantic_request = AdapterDiscoveryRequest(
+        intent="commercial_search", signal_ids=(relationship,), signal_match_mode="all",
+        geographies=("Italia",), freshness_max_age_days=365, requested_count=1,
+        budget_eur=0.005, query="aziende a cui sono state destinate nuove risorse",
+        technical_filters={
+            "universal_engine": True,
+            "semantic_authority_required": True,
+            "semantic_query_contract": {"required_relationships": [relationship]},
+            "universal_search_queries": ("aziende a cui sono state destinate nuove risorse",),
+            "universal_serp_search": lambda _query, _limit: [{
+                "title": "Nuove risorse per Beta Srl", "url": "https://news.test/beta",
+                "snippet": "A Beta Srl sono state destinate nuove risorse.",
+                "publisher": "Economia Oggi", "provider": "fixture",
+            }],
+            "universal_page_fetch": lambda url: (html, url),
+            "universal_prefilter_telemetry": {},
+        },
+    )
+    result = asyncio.run(_default_generic_provider(semantic_request, 0, 10))
+    assert len(result.records) == 1
+    record = result.records[0]
+    assert record["company_name"] == "Beta Srl"
+    assert record["official_domain"] == "beta.test"
+    assert record["source_publisher"] == "Economia Oggi"
+    assert record["matched_signal_ids"] == [relationship]
+    assert "destinate nuove risorse" in record["source_text"]
+
+
+def test_structured_identity_never_promotes_article_publisher() -> None:
+    article = {
+        "@context": "https://schema.org", "@type": "NewsArticle",
+        "publisher": {"@type": "Organization", "name": "Economia Oggi", "url": "https://news.test"},
+    }
+    html = f'<script type="application/ld+json">{json.dumps(article)}</script>'
+    assert _structured_subject_identities(html, page_host="news.test") == ()

@@ -713,11 +713,12 @@ class GrowthSignalsAdapter:
                 confidence = float(identity.identity_confidence) if identity.identity_confidence else (
                     0.96 if proof == "direct" and source_class == "official_company_website" else 0.86
                 )
-                evidence_signals = (
-                    proven_requested_signals(excerpt, request.signal_ids)
-                    if request.signal_match_mode == "all"
-                    else (signal,)
-                )
+                # Emit the requested canonical relationship(s) proven by this
+                # excerpt.  The provider's narrower subtype remains in
+                # expansion_type/provenance; it must not break the request
+                # boundary for family-level queries such as expansion or
+                # investing_marketing.
+                evidence_signals = proven_requested_signals(excerpt, request.signal_ids)
                 evidence = tuple(EvidenceRecord(
                     signal_id=evidence_signal, source_url=source_url, source_publisher=publisher,
                     source_class=source_class, excerpt=excerpt[:1200], observed_at=observed,

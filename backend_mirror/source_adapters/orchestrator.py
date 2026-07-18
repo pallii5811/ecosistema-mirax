@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 import inspect
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
@@ -70,6 +70,7 @@ class QualificationDecision:
     rejection_code: Optional[str] = None
     opportunity_value_score: float = 0.0
     reasons: Tuple[str, ...] = ()
+    semantic_grounding: Optional[Mapping[str, Any]] = None
 
 
 CandidateQualifier = Callable[[OpportunityCandidate], Awaitable[QualificationDecision]]
@@ -128,6 +129,7 @@ class OrchestrationResult:
     started_at: str
     completed_at: str
     limitations: Tuple[str, ...] = ()
+    semantic_telemetry: Mapping[str, Any] = field(default_factory=dict)
 
 
 def request_from_plan(
@@ -140,6 +142,7 @@ def request_from_plan(
     ranking = plan.get("ranking_policy") if isinstance(plan.get("ranking_policy"), Mapping) else {}
     evidence_policy = plan.get("evidence_policy") if isinstance(plan.get("evidence_policy"), Mapping) else {}
     signal_policy = plan.get("signal_policy") if isinstance(plan.get("signal_policy"), Mapping) else {}
+    semantic_contract = plan.get("semantic_query_contract") if isinstance(plan.get("semantic_query_contract"), Mapping) else {}
     source_policy = plan.get("source_policy") if isinstance(plan.get("source_policy"), Mapping) else {}
     budget_policy = plan.get("budget_policy") if isinstance(plan.get("budget_policy"), Mapping) else {}
     target = plan.get("target") if isinstance(plan.get("target"), Mapping) else {}
@@ -150,8 +153,13 @@ def request_from_plan(
     signals = tuple(str(item).strip() for item in (
         signal_policy.get("required_signals") or plan.get("required_signals") or ()
     ) if str(item).strip())
+    if not signals and semantic_contract:
+        signals = tuple(
+            str(item).strip() for item in semantic_contract.get("required_relationships") or ()
+            if str(item).strip()
+        )
     if not signals:
-        raise ValueError("canonical plan requires at least one signal")
+        raise ValueError("canonical plan requires a signal or open-world semantic relationship")
     mode = str(ranking.get("signal_match_mode") or plan.get("signal_match_mode") or "all").lower()
     if mode not in {"any", "all"}:
         raise ValueError("canonical plan has invalid signal_match_mode")
@@ -182,6 +190,9 @@ def request_from_plan(
         "allowed_source_classes": tuple(str(item) for item in source_policy.get("allowed_source_classes") or ()),
         "excluded_source_classes": tuple(str(item) for item in source_policy.get("excluded_source_classes") or ()),
         "minimum_evidence_confidence": evidence_policy.get("minimum_evidence_confidence"),
+        "semantic_query_contract": dict(semantic_contract) if semantic_contract else None,
+        "semantic_authority_required": bool(semantic_contract) and not bool(semantic_contract.get("clarification_required")),
+        "semantic_telemetry": {},
     })
     signal_groups = _signal_groups_from_required_signals(signals)
     if signal_groups:
@@ -303,6 +314,88 @@ def _merge_candidates(left: OpportunityCandidate, right: OpportunityCandidate) -
     )
 
 
+def _apply_semantic_enrichment(
+    candidate: OpportunityCandidate,
+    semantic_grounding: Mapping[str, Any],
+) -> OpportunityCandidate:
+    """Apply only typed, grounded semantic fields to the published candidate."""
+    raw = semantic_grounding.get("candidate_enrichment")
+    if not isinstance(raw, Mapping):
+        return candidate
+    try:
+        buyer_fit = float(raw.get("buyer_fit")) if raw.get("buyer_fit") is not None else candidate.buyer_fit
+    except (TypeError, ValueError):
+        buyer_fit = candidate.buyer_fit
+    try:
+        confidence = float(raw.get("confidence")) if raw.get("confidence") is not None else candidate.confidence
+    except (TypeError, ValueError):
+        confidence = candidate.confidence
+    if buyer_fit is not None and not 0.0 <= buyer_fit <= 1.0:
+        buyer_fit = candidate.buyer_fit
+    if not 0.0 <= confidence <= 1.0:
+        confidence = candidate.confidence
+    grounded_records: Dict[Tuple[str, str, str], EvidenceRecord] = {}
+    originals_by_url = {item.source_url: item for item in candidate.evidence}
+    for grounded in semantic_grounding.get("grounded_evidence") or ():
+        if not isinstance(grounded, Mapping):
+            continue
+        interpretation = grounded.get("interpretation") if isinstance(grounded.get("interpretation"), Mapping) else {}
+        verdict = grounded.get("verdict") if isinstance(grounded.get("verdict"), Mapping) else {}
+        if verdict.get("accepted") is not True:
+            continue
+        source_url = str(verdict.get("source_url") or "").strip()
+        excerpt = str(verdict.get("evidence_excerpt") or interpretation.get("evidence_excerpt") or "").strip()
+        publisher = str(verdict.get("source_publisher") or interpretation.get("publisher") or "").strip()
+        if not source_url or not excerpt or not publisher:
+            continue
+        original = originals_by_url.get(source_url)
+        semantic_relationships = tuple(
+            str(value) for value in interpretation.get("satisfied_relationships") or () if str(value)
+        )
+        original_relationship = original.signal_id if original else str(grounded.get("evidence_signal_id") or "")
+        relationships = tuple(dict.fromkeys(
+            value for value in (*semantic_relationships, original_relationship) if value
+        ))
+        if not relationships:
+            relationships = (candidate.signal_id,)
+        try:
+            evidence_confidence = float(interpretation.get("confidence") or confidence)
+        except (TypeError, ValueError):
+            evidence_confidence = confidence
+        for relationship in relationships:
+            record = EvidenceRecord(
+                signal_id=relationship,
+                source_url=source_url,
+                source_publisher=publisher,
+                source_class=original.source_class if original else "semantic_grounded_source",
+                excerpt=excerpt,
+                observed_at=str(verdict.get("verified_at") or (original.observed_at if original else "")),
+                published_at=str(interpretation.get("event_date") or "") or (original.published_at if original else None),
+                extraction_method="semantic_interpreter_with_deterministic_grounding",
+                confidence=max(0.0, min(1.0, evidence_confidence)),
+                provenance={
+                    **(dict(original.provenance) if original else {}),
+                    "status": "verified",
+                    "semantic_checks": dict(verdict.get("checks") or {}),
+                    "target_role": interpretation.get("target_entity_role"),
+                    "contract_hash": semantic_grounding.get("contract_hash"),
+                },
+            )
+            grounded_records[(record.signal_id, record.source_url, record.excerpt)] = record
+    evidence = tuple(grounded_records.values()) or candidate.evidence
+    enriched_signal_id = evidence[0].signal_id if evidence else candidate.signal_id
+    return replace(
+        candidate,
+        buyer_fit=buyer_fit,
+        why_now=str(raw.get("why_now") or "").strip() or candidate.why_now,
+        signal_date=str(raw.get("signal_date") or "").strip() or candidate.signal_date,
+        signal_id=enriched_signal_id,
+        evidence=evidence,
+        confidence=confidence,
+        provenance={**candidate.provenance, "semantic_grounding": dict(semantic_grounding)},
+    )
+
+
 async def default_candidate_qualifier(candidate: OpportunityCandidate) -> QualificationDecision:
     if not candidate.official_domain:
         return QualificationDecision(False, False, False, "OFFICIAL_DOMAIN_UNRESOLVED")
@@ -341,6 +434,215 @@ async def default_candidate_qualifier(candidate: OpportunityCandidate) -> Qualif
         opportunity_value_score=score.total,
         reasons=("canonical_gate_passed", *score.explanation()),
     )
+
+
+async def semantic_authority_qualifier(
+    candidate: OpportunityCandidate,
+    request: AdapterDiscoveryRequest,
+) -> QualificationDecision:
+    """Fail-closed common semantic authority for all AI-native plans."""
+    raw_contract = request.technical_filters.get("semantic_query_contract")
+    if not isinstance(raw_contract, Mapping):
+        return QualificationDecision(False, False, False, "SEMANTIC_QUERY_CONTRACT_MISSING")
+    try:
+        from backend_mirror.semantic_intelligence import (
+            AnthropicSemanticModel,
+            SemanticCommercialEventInterpreter,
+            SemanticEvidenceGroundingVerifier,
+            SemanticQueryContract,
+            SemanticResultCache,
+            SemanticTelemetry,
+        )
+
+        contract = SemanticQueryContract.from_model(
+            raw_contract,
+            original_query=request.query,
+            requested_count=request.requested_count,
+        )
+        if contract.clarification_required:
+            return QualificationDecision(False, False, False, "SEMANTIC_CLARIFICATION_REQUIRED")
+        telemetry_bucket = request.technical_filters.get("semantic_telemetry")
+        telemetry = SemanticTelemetry()
+        telemetry.pages_discovered = len(candidate.evidence)
+        telemetry.pages_prefiltered = len(candidate.evidence)
+        telemetry.candidates = 1
+
+        def flush_telemetry() -> None:
+            if isinstance(telemetry_bucket, dict):
+                for key, value in telemetry.to_dict().items():
+                    if isinstance(value, (int, float)) and value is not None:
+                        telemetry_bucket[key] = telemetry_bucket.get(key, 0) + value
+
+        def record_usage(usage: Mapping[str, Any]) -> None:
+            telemetry.input_tokens += int(usage.get("input_tokens") or 0)
+            telemetry.output_tokens += int(usage.get("output_tokens") or 0)
+            telemetry.cost_eur += float(usage.get("cost_eur") or 0.0)
+
+        supplied_model = request.technical_filters.get("semantic_model_client")
+        model = supplied_model if hasattr(supplied_model, "complete_json") else AnthropicSemanticModel(on_usage=record_usage)
+        supplied_adjudicator = request.technical_filters.get("semantic_adjudicator_client")
+        adjudicator = supplied_adjudicator if hasattr(supplied_adjudicator, "complete_json") else None
+        cache_path = request.technical_filters.get("semantic_cache_path")
+        cache = SemanticResultCache(str(cache_path)) if cache_path else SemanticResultCache()
+        interpreter = SemanticCommercialEventInterpreter(
+            model, adjudicator=adjudicator, cache=cache, telemetry=telemetry,
+        )
+        verifier = SemanticEvidenceGroundingVerifier()
+        grounded: list[Mapping[str, Any]] = []
+        supported_relationships: set[str] = set()
+        passed_rubric: set[str] = set()
+        rejection_codes: list[str] = []
+        for evidence in candidate.evidence:
+            provenance = evidence.provenance if isinstance(evidence.provenance, Mapping) else {}
+            source_text = str(provenance.get("source_text") or evidence.excerpt)
+            if len(source_text) > 12_000:
+                evidence_offset = source_text.find(evidence.excerpt)
+                if evidence_offset >= 0:
+                    window_start = max(0, evidence_offset - 4_000)
+                    source_text = source_text[window_start:window_start + 12_000]
+                else:
+                    source_text = evidence.excerpt
+            interpretation = await interpreter.interpret(
+                contract,
+                title=str(provenance.get("page_title") or ""),
+                snippet=str(provenance.get("search_snippet") or evidence.excerpt),
+                source_text=source_text,
+                source_url=evidence.source_url,
+                publisher=evidence.source_publisher,
+                structured_metadata=(
+                    provenance.get("structured_metadata")
+                    if isinstance(provenance.get("structured_metadata"), Mapping)
+                    else {}
+                ),
+                entity_hints=(candidate.canonical_company_name, candidate.official_domain or ""),
+            )
+            # Verify every source independently. Relationship/rubric completeness
+            # is aggregated afterwards so legitimate multi-source queries work.
+            per_source_contract = replace(
+                contract,
+                required_relationships=tuple(
+                    item for item in contract.required_relationships
+                    if item in interpretation.satisfied_relationships
+                ),
+                acceptance_rubric=tuple(
+                    item for item in contract.acceptance_rubric
+                    if item in interpretation.acceptance_rubric_passed
+                ),
+            )
+            verdict = verifier.verify(
+                per_source_contract,
+                interpretation,
+                source_text=source_text,
+                source_url=evidence.source_url,
+                source_publisher=evidence.source_publisher,
+                official_domain_verified=candidate.official_domain_verified,
+                official_domain_confidence=candidate.official_domain_confidence,
+                entity_class=candidate.entity_class,
+                candidate_company=candidate.canonical_company_name,
+                maximum_age_days=request.freshness_max_age_days,
+            )
+            if verdict.accepted:
+                grounded.append({
+                    "interpretation": interpretation.to_dict(),
+                    "verdict": verdict.to_dict(),
+                    "evidence_signal_id": evidence.signal_id,
+                })
+                supported_relationships.update(interpretation.satisfied_relationships)
+                passed_rubric.update(interpretation.acceptance_rubric_passed)
+            else:
+                rejection_codes.append(verdict.rejection_code or "EVIDENCE_GROUNDING_FAILED")
+        telemetry.grounded = len(grounded)
+        missing_relationships = set(contract.required_relationships) - supported_relationships
+        missing_rubric = set(contract.acceptance_rubric) - passed_rubric
+        if missing_relationships or missing_rubric:
+            code = "SEMANTIC_QUERY_MISMATCH" if grounded else (
+                rejection_codes[0] if rejection_codes else "EVIDENCE_GROUNDING_FAILED"
+            )
+            flush_telemetry()
+            return QualificationDecision(
+                False, True, bool(grounded), code,
+                reasons=tuple([
+                    *(f"missing_relationship:{item}" for item in sorted(missing_relationships)),
+                    *(f"missing_rubric:{item}" for item in sorted(missing_rubric)),
+                ]),
+                semantic_grounding={
+                    "accepted": False,
+                    "contract_hash": contract.contract_hash,
+                    "grounded_evidence": grounded,
+                    "rejection_codes": rejection_codes,
+                    "telemetry": telemetry.to_dict(),
+                },
+            )
+        accepted_interpretations = [
+            item.get("interpretation") for item in grounded
+            if isinstance(item.get("interpretation"), Mapping)
+        ]
+        semantic_confidence = max(
+            (float(item.get("confidence") or 0.0) for item in accepted_interpretations),
+            default=0.0,
+        )
+        semantic_buyer_fit = max(
+            (min(float(item.get("confidence") or 0.0), float(item.get("certainty") or 0.0))
+             for item in accepted_interpretations),
+            default=0.0,
+        )
+        semantic_why_now = next(
+            (str(item.get("why_now") or "").strip() for item in accepted_interpretations if str(item.get("why_now") or "").strip()),
+            "",
+        )
+        semantic_dates = sorted(
+            str(item.get("event_date"))[:10] for item in accepted_interpretations if item.get("event_date")
+        )
+        enriched_candidate = replace(
+            candidate,
+            buyer_fit=max(candidate.buyer_fit or 0.0, semantic_buyer_fit),
+            why_now=semantic_why_now or candidate.why_now,
+            signal_date=semantic_dates[-1] if semantic_dates else candidate.signal_date,
+            confidence=max(candidate.confidence, semantic_confidence),
+        )
+        result = await default_candidate_qualifier(enriched_candidate)
+        candidate_enrichment = {
+            "buyer_fit": enriched_candidate.buyer_fit,
+            "why_now": enriched_candidate.why_now,
+            "signal_date": enriched_candidate.signal_date,
+            "confidence": enriched_candidate.confidence,
+        }
+        if not result.qualified:
+            flush_telemetry()
+            return replace(result, semantic_grounding={
+                "accepted": True,
+                "contract_hash": contract.contract_hash,
+                "grounded_evidence": grounded,
+                "candidate_enrichment": candidate_enrichment,
+                "telemetry": telemetry.to_dict(),
+            })
+        telemetry.qualified = 1
+        semantic_payload = {
+            "accepted": True,
+            "contract_hash": contract.contract_hash,
+            "target_role": contract.target_role_in_event,
+            "relationships": sorted(supported_relationships),
+            "acceptance_rubric": sorted(passed_rubric),
+            "grounded_evidence": grounded,
+            "candidate_enrichment": candidate_enrichment,
+            "telemetry": telemetry.to_dict(),
+        }
+        flush_telemetry()
+        return replace(
+            result,
+            reasons=("semantic_authority_passed", *result.reasons),
+            semantic_grounding=semantic_payload,
+        )
+    except Exception as exc:
+        if "telemetry" in locals() and "telemetry_bucket" in locals() and isinstance(telemetry_bucket, dict):
+            for key, value in telemetry.to_dict().items():
+                if isinstance(value, (int, float)) and value is not None:
+                    telemetry_bucket[key] = telemetry_bucket.get(key, 0) + value
+        return QualificationDecision(
+            False, False, False, "SEMANTIC_INTERPRETATION_FAILED",
+            reasons=(type(exc).__name__,),
+            semantic_grounding={"accepted": False, "error_type": type(exc).__name__},
+        )
 
 
 def _signal_subset(adapter: SourceAdapter, request: AdapterDiscoveryRequest) -> Tuple[str, ...]:
@@ -591,7 +893,10 @@ class UniversalSourceOrchestrator:
                             else "SIGNAL_SET_INCOMPLETE"
                         )
                         continue
-                    decision = await self.qualifier(merged)
+                    if request.technical_filters.get("semantic_authority_required") is True:
+                        decision = await semantic_authority_qualifier(merged, request)
+                    else:
+                        decision = await self.qualifier(merged)
                     decisions[key] = decision
                     if not decision.qualified:
                         rejection_by_entity[key] = decision.rejection_code or "QUALIFICATION_FAILED"
@@ -599,6 +904,9 @@ class UniversalSourceOrchestrator:
                     if key in processed_employer_keys:
                         rejection_by_entity[key] = "DUPLICATE_EMPLOYER_OPPORTUNITY"
                         continue
+                    if decision.semantic_grounding:
+                        merged = _apply_semantic_enrichment(merged, decision.semantic_grounding)
+                        accumulated[key] = merged
                     qualified_by_entity[key] = QualifiedLead(
                         candidate=merged,
                         qualification_reasons=decision.reasons or ("qualified",),
@@ -655,6 +963,10 @@ class UniversalSourceOrchestrator:
         )
         limitations = ("generic_fallback_partial",) if coverage.status == "generic_fallback_partial" else ()
         new_unique_keys = _new_unique_qualified_keys(qualified_by_entity, processed_employer_keys)
+        semantic_telemetry = dict(request.technical_filters.get("semantic_telemetry") or {})
+        total_cost = spent + float(semantic_telemetry.get("cost_eur") or 0.0)
+        if total_cost > request.budget_eur + 1e-9:
+            raise RuntimeError("ORCHESTRATOR_HARD_COST_CAP_EXCEEDED")
         return OrchestrationResult(
             status=terminal,
             coverage=coverage,
@@ -662,10 +974,11 @@ class UniversalSourceOrchestrator:
             progress=progress,
             rejection_codes=rejection_codes,
             adapter_progress=tuple(states.values()),
-            cost_eur=spent,
+            cost_eur=total_cost,
             started_at=started,
             completed_at=datetime.now(timezone.utc).isoformat(),
             limitations=limitations,
+            semantic_telemetry=semantic_telemetry,
         )
 
     @staticmethod

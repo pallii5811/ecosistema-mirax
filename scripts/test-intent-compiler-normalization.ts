@@ -9,6 +9,24 @@ import { parseSignalIntentHeuristic } from '../src/lib/signal-intent/parse-heuri
 const fixture = JSON.parse(
   fs.readFileSync('contracts/fixtures/commercial-search-plan.valid.json', 'utf8'),
 ) as Record<string, any>
+const semanticContract = {
+  query_goal: 'Find operating target companies satisfying the explicit commercial condition',
+  seller: {}, offer: {}, target_entity_types: ['operating_company'],
+  target_company_description: 'The operating company requested by the user',
+  event_or_state_description: 'The explicit query condition holds for the target company',
+  target_role_in_event: 'subject_company',
+  required_relationships: ['query_condition_holds_for_target'], optional_relationships: [],
+  excluded_roles: ['publisher', 'advisor'], excluded_entities: [], geography: ['Italia'], industry: [],
+  size_constraints: {}, temporal_constraints: { maximum_age_days: 365 },
+  positive_conditions: ['explicit condition is evidenced'], negative_conditions: [],
+  must_have_facts: ['target identity', 'source evidence'],
+  forbidden_inferences: ['publisher is target'], data_requirements: ['official_domain', 'source_url'],
+  ranking_objective: 'strongest recent grounded evidence first',
+  acceptance_rubric: ['target_identity_verified', 'query_condition_grounded'],
+  discovery_hypotheses: [{ source_classes: ['official_company_website'] }],
+  clarification_required: false, confidence: 0.9, canonical_signal_hints: [],
+}
+fixture.semantic_query_contract = semanticContract
 fixture.untrusted_extra = 'must be pruned'
 fixture.seller.untrusted_extra = true
 fixture.signal_policy.required_signals = ['tender_won']
@@ -122,6 +140,7 @@ try {
       usage: { input_tokens: 90, output_tokens: 45 },
       content: [{
         type: 'tool_use', name: 'submit_commercial_search_plan', input: {
+          semantic_query_contract: semanticContract,
           seller: {
             offer_category: 'insurance_brokerage',
             offer_description: 'Consulenza e coperture assicurative per PMI',
@@ -157,6 +176,7 @@ try {
     return new Response(JSON.stringify({
       usage: { input_tokens: 70, output_tokens: 35 },
       content: [{ type: 'tool_use', name: 'submit_commercial_search_plan', input: {
+        semantic_query_contract: semanticContract,
         target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
         signal_policy: { required_signals: [], optional_signals: [], negative_signals: [] },
         source_policy: { allowed_source_classes: [] },
@@ -189,6 +209,7 @@ try {
     return new Response(JSON.stringify({
       usage: { input_tokens: 70, output_tokens: 35 },
       content: [{ type: 'tool_use', name: 'submit_commercial_search_plan', input: {
+        semantic_query_contract: semanticContract,
         target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
         signal_policy: { required_signals: [], optional_signals: [], negative_signals: [] },
         source_policy: { allowed_source_classes: [] },
@@ -219,6 +240,7 @@ try {
     return new Response(JSON.stringify({
       usage: { input_tokens: 70, output_tokens: 35 },
       content: [{ type: 'tool_use', name: 'submit_commercial_search_plan', input: {
+        semantic_query_contract: semanticContract,
         target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
         signal_policy: { required_signals: [], optional_signals: [], negative_signals: [] },
         source_policy: { allowed_source_classes: [] },
@@ -247,6 +269,7 @@ try {
   const digitalFixture = JSON.parse(
     fs.readFileSync('contracts/fixtures/commercial-search-plan.valid.json', 'utf8'),
   ) as Record<string, any>
+  digitalFixture.semantic_query_contract = semanticContract
   digitalFixture.seller = {
     offer_category: null,
     offer_description: 'Audit tecnico del sito aziendale',

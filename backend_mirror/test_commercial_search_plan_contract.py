@@ -31,7 +31,12 @@ def test_shared_fixture_and_version_validate():
     plan = validate_commercial_search_plan(FIXTURE)
     assert plan.schema_version == COMMERCIAL_SEARCH_PLAN_SCHEMA_VERSION
     assert JSON_SCHEMA["properties"]["schema_version"]["const"] == COMMERCIAL_SEARCH_PLAN_SCHEMA_VERSION
-    assert set(JSON_SCHEMA["required"]) == set(CommercialSearchPlan.model_fields)
+    required_model_fields = {
+        name for name, field in CommercialSearchPlan.model_fields.items()
+        if field.is_required()
+    }
+    assert set(JSON_SCHEMA["required"]) == required_model_fields
+    assert CommercialSearchPlan.model_fields["semantic_query_contract"].is_required() is False
 
 
 @pytest.mark.parametrize("mutation", ["unknown", "budget", "weights", "range"])

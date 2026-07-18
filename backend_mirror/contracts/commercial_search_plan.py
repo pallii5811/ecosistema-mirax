@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -162,6 +162,35 @@ class PlannerMetadata(StrictModel):
     generated_at: datetime
 
 
+class SemanticQueryContractModel(StrictModel):
+    query_goal: str = Field(min_length=1, max_length=1000)
+    seller: Dict[str, Any]
+    offer: Dict[str, Any]
+    target_entity_types: List[str] = Field(max_length=100)
+    target_company_description: str = Field(min_length=1, max_length=2000)
+    event_or_state_description: str = Field(min_length=1, max_length=2000)
+    target_role_in_event: str = Field(min_length=1, max_length=200)
+    required_relationships: List[str] = Field(max_length=100)
+    optional_relationships: List[str] = Field(max_length=100)
+    excluded_roles: List[str] = Field(max_length=100)
+    excluded_entities: List[str] = Field(max_length=100)
+    geography: List[str] = Field(max_length=100)
+    industry: List[str] = Field(max_length=100)
+    size_constraints: Dict[str, Any]
+    temporal_constraints: Dict[str, Any]
+    positive_conditions: List[str] = Field(max_length=100)
+    negative_conditions: List[str] = Field(max_length=100)
+    must_have_facts: List[str] = Field(max_length=100)
+    forbidden_inferences: List[str] = Field(max_length=100)
+    data_requirements: List[str] = Field(max_length=100)
+    ranking_objective: str = Field(min_length=1, max_length=1000)
+    acceptance_rubric: List[str] = Field(max_length=100)
+    discovery_hypotheses: List[Dict[str, Any]] = Field(max_length=20)
+    clarification_required: bool
+    confidence: float = Field(ge=0, le=1)
+    canonical_signal_hints: List[str] = Field(max_length=100)
+
+
 class CommercialSearchPlan(StrictModel):
     schema_version: Literal["1.0.0"]
     search_id: str = Field(min_length=1, max_length=128)
@@ -178,6 +207,7 @@ class CommercialSearchPlan(StrictModel):
     budget_policy: BudgetPolicy
     ambiguity: Ambiguity
     planner_metadata: PlannerMetadata
+    semantic_query_contract: Optional[SemanticQueryContractModel] = None
 
     @model_validator(mode="after")
     def validate_contract_invariants(self) -> "CommercialSearchPlan":

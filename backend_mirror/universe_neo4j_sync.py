@@ -5,10 +5,12 @@ Postgres/search_leads = source of truth; Neo4j = knowledge graph (rebuildable).
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("universe_neo4j_sync")
@@ -81,9 +83,19 @@ def ensure_neo4j_schema(driver: Any, database: Optional[str] = None) -> None:
     db = database or get_neo4j_database()
     statements = (
         "CREATE CONSTRAINT mirax_company_merge_key IF NOT EXISTS FOR (n:Company) REQUIRE n.merge_key IS UNIQUE",
+        "CREATE CONSTRAINT mirax_company_canonical IF NOT EXISTS FOR (n:Company) REQUIRE n.canonical_id IS UNIQUE",
         "CREATE CONSTRAINT mirax_technology_slug IF NOT EXISTS FOR (n:Technology) REQUIRE n.slug IS UNIQUE",
+        "CREATE CONSTRAINT mirax_technology_canonical IF NOT EXISTS FOR (n:Technology) REQUIRE n.canonical_id IS UNIQUE",
         "CREATE CONSTRAINT mirax_signal_slug IF NOT EXISTS FOR (n:Signal) REQUIRE n.slug IS UNIQUE",
+        "CREATE CONSTRAINT mirax_signal_canonical IF NOT EXISTS FOR (n:Signal) REQUIRE n.canonical_id IS UNIQUE",
+        "CREATE CONSTRAINT mirax_person_canonical IF NOT EXISTS FOR (n:Person) REQUIRE n.canonical_id IS UNIQUE",
         "CREATE CONSTRAINT mirax_universe_id IF NOT EXISTS FOR (n:UniverseEntity) REQUIRE n.universe_id IS UNIQUE",
+        "CREATE CONSTRAINT mirax_event_canonical IF NOT EXISTS FOR (n:Event) REQUIRE n.canonical_id IS UNIQUE",
+        "CREATE CONSTRAINT mirax_evidence_canonical IF NOT EXISTS FOR (n:Evidence) REQUIRE n.canonical_id IS UNIQUE",
+        "CREATE CONSTRAINT mirax_source_canonical IF NOT EXISTS FOR (n:Source) REQUIRE n.canonical_id IS UNIQUE",
+        "CREATE CONSTRAINT mirax_search_canonical IF NOT EXISTS FOR (n:Search) REQUIRE n.canonical_id IS UNIQUE",
+        "CREATE CONSTRAINT mirax_location_canonical IF NOT EXISTS FOR (n:Location) REQUIRE n.canonical_id IS UNIQUE",
+        "CREATE CONSTRAINT mirax_graph_health IF NOT EXISTS FOR (n:MiraxGraphHealth) REQUIRE n.id IS UNIQUE",
     )
     with driver.session(database=db) as session:
         for statement in statements:
@@ -361,6 +373,162 @@ def sync_leads_to_graph(leads: List[Any], driver: Optional[Any] = None) -> Dict[
                 exc,
             )
     return stats
+
+
+def _semantic_id(kind: str, *values: Any) -> str:
+    normalized = "|".join(str(value or "").strip().casefold() for value in values)
+    return f"{kind}:{hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:32]}"
+
+
+def build_semantic_graph_records(leads: List[Any], *, search_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Build deterministic graph records only from grounded semantic payloads."""
+    records: List[Dict[str, Any]] = []
+    observed = datetime.now(timezone.utc).isoformat()
+    for lead in leads:
+        if not isinstance(lead, dict):
+            continue
+        grounding = lead.get("semantic_grounding")
+        if not isinstance(grounding, dict) or grounding.get("accepted") is not True:
+            continue
+        company_name = _pick_str(lead, ("azienda", "name", "legal_name", "company"))
+        domain = extract_website_domain(lead) if extract_website_domain else None
+        domain = domain or _host_from_lead(lead)
+        if not company_name or not domain:
+            continue
+        company_id = f"company:{str(domain).lower().removeprefix('www.')}"
+        city = _pick_str(lead, ("citta", "city", "location"))
+        grounded_items = grounding.get("grounded_evidence") or ()
+        for item in grounded_items:
+            if not isinstance(item, dict):
+                continue
+            interpretation = item.get("interpretation") if isinstance(item.get("interpretation"), dict) else {}
+            verdict = item.get("verdict") if isinstance(item.get("verdict"), dict) else {}
+            if verdict.get("accepted") is not True:
+                continue
+            source_url = str(verdict.get("source_url") or "").strip()
+            excerpt = str(verdict.get("evidence_excerpt") or interpretation.get("evidence_excerpt") or "").strip()
+            predicate = str(interpretation.get("predicate") or interpretation.get("open_predicate") or "").strip()
+            event_date = str(interpretation.get("event_date") or "").strip() or None
+            try:
+                confidence = float(interpretation.get("confidence") or 0.0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            if not source_url or not excerpt or not predicate or confidence < 0.70:
+                continue
+            event_id = _semantic_id("event", company_id, predicate, event_date, source_url, excerpt)
+            evidence_id = _semantic_id("evidence", source_url, excerpt)
+            source_id = _semantic_id("source", source_url)
+            relationships = tuple(str(value) for value in interpretation.get("satisfied_relationships") or () if str(value))
+            records.append({
+                "company": {"canonical_id": company_id, "name": company_name, "domain": domain},
+                "event": {
+                    "canonical_id": event_id, "event_type": interpretation.get("event_type"),
+                    "predicate": predicate, "event_date": event_date,
+                    "target_role": interpretation.get("target_entity_role"),
+                },
+                "evidence": {"canonical_id": evidence_id, "excerpt": excerpt},
+                "source": {
+                    "canonical_id": source_id, "url": source_url,
+                    "publisher": verdict.get("source_publisher") or interpretation.get("publisher"),
+                },
+                "signals": tuple({"canonical_id": f"signal:{value}", "name": value} for value in relationships),
+                "location": ({"canonical_id": _semantic_id("location", city), "name": city} if city else None),
+                "technology": (
+                    {"canonical_id": _semantic_id("technology", interpretation.get("technology")), "name": interpretation.get("technology")}
+                    if interpretation.get("technology") else None
+                ),
+                "search": ({"canonical_id": f"search:{search_id}", "search_id": search_id} if search_id else None),
+                "observed_at": observed,
+                "source_url": source_url,
+                "confidence": confidence,
+                "valid_from": event_date or observed,
+                "valid_to": None,
+                "provenance": {
+                    "interpreter_schema": interpretation.get("schema_version"),
+                    "grounding_schema": verdict.get("schema_version"),
+                    "contract_hash": grounding.get("contract_hash"),
+                },
+            })
+    return records
+
+
+def _host_from_lead(lead: Dict[str, Any]) -> Optional[str]:
+    raw = _pick_str(lead, ("sito", "website", "url", "employer_official_domain"))
+    if not raw:
+        return None
+    from urllib.parse import urlparse
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    return (parsed.hostname or "").lower().removeprefix("www.") or None
+
+
+def sync_semantic_leads_to_graph(
+    leads: List[Any], *, search_id: Optional[str] = None, driver: Optional[Any] = None,
+) -> Dict[str, int]:
+    """Idempotent semantic sidecar. Postgres remains authoritative/non-blocking."""
+    stats = {"nodes": 0, "relationships": 0, "errors": 0}
+    records = build_semantic_graph_records(leads, search_id=search_id)
+    if not records or not is_neo4j_enabled():
+        return stats
+    try:
+        drv = driver or get_neo4j_driver()
+        database = get_neo4j_database()
+        with drv.session(database=database) as session:
+            for row in records:
+                session.run(
+                    """
+                    MERGE (c:Company {canonical_id: $company.canonical_id}) SET c += $company, c.observed_at=$observed_at
+                    MERGE (e:Event {canonical_id: $event.canonical_id}) SET e += $event, e.observed_at=$observed_at,
+                      e.source_url=$source_url, e.confidence=$confidence, e.provenance=$provenance,
+                      e.valid_from=$valid_from, e.valid_to=$valid_to
+                    MERGE (v:Evidence {canonical_id: $evidence.canonical_id}) SET v += $evidence,
+                      v.observed_at=$observed_at, v.source_url=$source_url, v.confidence=$confidence,
+                      v.provenance=$provenance, v.valid_from=$valid_from, v.valid_to=$valid_to
+                    MERGE (s:Source {canonical_id: $source.canonical_id}) SET s += $source, s.observed_at=$observed_at
+                    MERGE (c)-[:COMPANY_HAS_EVENT]->(e)
+                    MERGE (e)-[:EVENT_INVOLVES_COMPANY {role: $event.target_role}]->(c)
+                    MERGE (e)-[:EVENT_HAS_EVIDENCE]->(v)
+                    MERGE (v)-[:EVIDENCE_FROM_SOURCE]->(s)
+                    """,
+                    **{**row, "provenance": json.dumps(row["provenance"], sort_keys=True)},
+                ).consume()
+                stats["nodes"] += 4
+                stats["relationships"] += 4
+                for signal in row["signals"]:
+                    session.run(
+                        "MATCH (e:Event {canonical_id:$event_id}) MERGE (s:Signal {canonical_id:$signal.canonical_id}) "
+                        "SET s += $signal MERGE (e)-[:EVENT_RELATES_TO_SIGNAL]->(s)",
+                        event_id=row["event"]["canonical_id"], signal=signal,
+                    ).consume()
+                    stats["nodes"] += 1
+                    stats["relationships"] += 1
+                for key, label, relation in (
+                    ("location", "Location", "COMPANY_LOCATED_IN"),
+                    ("technology", "Technology", "COMPANY_USES_TECHNOLOGY"),
+                    ("search", "Search", "SEARCH_RETURNED_COMPANY"),
+                ):
+                    node = row.get(key)
+                    if not node:
+                        continue
+                    session.run(
+                        f"MERGE (n:{label} {{canonical_id:$node.canonical_id}}) SET n += $node "
+                        f"WITH n MATCH (c:Company {{canonical_id:$company_id}}) MERGE (c)-[:{relation}]->(n)"
+                        if key != "search" else
+                        f"MERGE (n:{label} {{canonical_id:$node.canonical_id}}) SET n += $node "
+                        f"WITH n MATCH (c:Company {{canonical_id:$company_id}}) MERGE (n)-[:{relation}]->(c)",
+                        node=node, company_id=row["company"]["canonical_id"],
+                    ).consume()
+                    stats["nodes"] += 1
+                    stats["relationships"] += 1
+            now = datetime.now(timezone.utc).isoformat()
+            session.run(
+                "MERGE (h:MiraxGraphHealth {id:'main'}) SET h.last_successful_write=$now, h.last_error=null",
+                now=now,
+            ).consume()
+        return stats
+    except Exception as exc:
+        stats["errors"] += 1
+        logger.warning("semantic graph mirror failed: %s", exc)
+        return stats
 
 
 _UNIVERSE_LABELS = {

@@ -80,11 +80,37 @@ export async function GET() {
   try {
     const { verifyNeo4jConnectivity } = await import('@/lib/universe/neo4j-client')
     const connected = await verifyNeo4jConnectivity()
+    if (!connected) {
+      return NextResponse.json({
+        ok: false, configured: true, connected: false, writable: false, readable: false,
+        database: getNeo4jDatabase(), node_count: null, relationship_count: null,
+        last_successful_write: null, last_error: 'connectivity_check_failed',
+      })
+    }
+    const [counts, writeState] = await Promise.all([
+      runNeo4jQuery({
+        cypher: 'MATCH (n) WITH count(n) AS node_count OPTIONAL MATCH ()-[r]->() RETURN node_count, count(r) AS relationship_count',
+        params: {}, mode: 'READ', database: getNeo4jDatabase(),
+      }),
+      runNeo4jQuery({
+        cypher: "OPTIONAL MATCH (h:MiraxGraphHealth {id:'main'}) RETURN h.last_successful_write AS last_successful_write, h.last_error AS last_error",
+        params: {}, mode: 'READ', database: getNeo4jDatabase(),
+      }),
+    ])
+    const countRow = counts.records[0] ?? {}
+    const stateRow = writeState.records[0] ?? {}
+    const lastSuccessfulWrite = stateRow.last_successful_write ?? null
     return NextResponse.json({
       ok: true,
       configured: true,
       connected,
+      readable: true,
+      writable: Boolean(lastSuccessfulWrite) && !stateRow.last_error,
       database: getNeo4jDatabase(),
+      node_count: countRow.node_count ?? 0,
+      relationship_count: countRow.relationship_count ?? 0,
+      last_successful_write: lastSuccessfulWrite,
+      last_error: stateRow.last_error ?? null,
     })
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : 'Neo4j unreachable'
