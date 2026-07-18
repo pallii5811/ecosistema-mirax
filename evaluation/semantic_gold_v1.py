@@ -61,7 +61,7 @@ def _positive_cases() -> List[Dict[str, Any]]:
             role, relationship, event = "recipient", "new_resources_destination_is_target", "resource_allocation"
             tags = ["passive_voice", "no_canonical_keyword"]
         elif index < 60:
-            text = f"{company} si assicura nuove risorse per estendere la produzione nel corso del 2026."
+            text = f"Il 10 luglio 2026 {company} si assicura nuove risorse per estendere la produzione."
             query = "Quali aziende si sono assicurate mezzi aggiuntivi per crescere?"
             role, relationship, event = "recipient", "new_resources_secured_by_target", "resource_secured"
             tags = ["no_canonical_keyword"]
