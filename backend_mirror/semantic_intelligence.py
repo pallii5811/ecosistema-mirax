@@ -798,7 +798,9 @@ class AnthropicSemanticModel:
             if task.startswith("semantic_commercial_event")
             else "MIRAX_SEMANTIC_QUERY_MAX_OUTPUT_TOKENS"
         )
-        default_output_tokens = "2000" if task.startswith("semantic_commercial_event") else "1200"
+        # Sonnet 5 query compilation needs room for its structured tool result;
+        # event interpretation remains the high-volume 2k-token Tier 1 path.
+        default_output_tokens = "2000" if task.startswith("semantic_commercial_event") else "3000"
         max_output_tokens = int(
             os.getenv(task_output_env)
             or os.getenv("MIRAX_SEMANTIC_MAX_OUTPUT_TOKENS")
@@ -825,7 +827,6 @@ class AnthropicSemanticModel:
         body = {
             "model": model,
             "max_tokens": max_output_tokens,
-            "temperature": 0,
             "system": system_prompt,
             "messages": [{"role": "user", "content": _stable_json(payload)}],
             "tools": [{
@@ -835,6 +836,11 @@ class AnthropicSemanticModel:
             }],
             "tool_choice": {"type": "tool", "name": "submit_semantic_result"},
         }
+        # Sonnet 5 rejects the legacy temperature parameter.  Tier 1 keeps
+        # deterministic sampling where the provider still supports it; the
+        # Tier 2 query authority is constrained by tool choice and schema.
+        if tier == 1:
+            body["temperature"] = 0
         try:
             import httpx
             async with httpx.AsyncClient(timeout=45.0) as client:
@@ -847,7 +853,16 @@ class AnthropicSemanticModel:
                     },
                     json=body,
                 )
-            response.raise_for_status()
+            if response.is_error:
+                try:
+                    error_payload = response.json().get("error") or {}
+                except (ValueError, AttributeError):
+                    error_payload = {}
+                error_type = _clean(error_payload.get("type")) or f"http_{response.status_code}"
+                error_message = _clean(error_payload.get("message")) or "provider rejected semantic request"
+                raise RuntimeError(
+                    f"ANTHROPIC_SEMANTIC_REQUEST_FAILED:{response.status_code}:{error_type}:{error_message}"
+                )
             raw = response.json()
             usage = raw.get("usage") if isinstance(raw.get("usage"), Mapping) else {}
             input_tokens = int(usage.get("input_tokens") or 0)

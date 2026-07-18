@@ -352,6 +352,16 @@ def test_semantic_provider_call_is_blocked_before_network_when_unaffordable(monk
         reset_current_cost_governor(token)
 
 
+def test_query_authority_reserves_for_three_thousand_output_tokens(monkeypatch) -> None:
+    monkeypatch.delenv("MIRAX_SEMANTIC_QUERY_MAX_OUTPUT_TOKENS", raising=False)
+    monkeypatch.delenv("MIRAX_SEMANTIC_MAX_OUTPUT_TOKENS", raising=False)
+    estimate = AnthropicSemanticModel._estimated_cost(
+        2, input_token_upper_bound=10_000, max_output_tokens=3_000,
+    )
+
+    assert estimate <= 0.09
+
+
 def test_truncated_provider_output_is_charged_and_not_returned(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
@@ -359,6 +369,8 @@ def test_truncated_provider_output_is_charged_and_not_returned(monkeypatch) -> N
     bodies: list[dict[str, Any]] = []
 
     class FakeResponse:
+        is_error = False
+
         def raise_for_status(self) -> None:
             return None
 
@@ -404,6 +416,59 @@ def test_truncated_provider_output_is_charged_and_not_returned(monkeypatch) -> N
         assert bodies[0]["max_tokens"] == 2000
         assert governor.committed_micro_eur == 10_100
         assert next(iter(governor.reservations.values())).status == "settled"
+    finally:
+        reset_current_cost_governor(token)
+
+
+def test_provider_error_is_sanitized_and_reservation_fails(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    class FakeResponse:
+        is_error = True
+        status_code = 400
+
+        def json(self) -> dict[str, Any]:
+            return {"error": {"type": "invalid_request_error", "message": "unsupported field"}}
+
+    bodies: list[dict[str, Any]] = []
+
+    class FakeClient:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeClient":
+            return self
+
+        async def __aexit__(self, *_: Any) -> None:
+            return None
+
+        async def post(self, _url: str, **kwargs: Any) -> FakeResponse:
+            bodies.append(kwargs["json"])
+            return FakeResponse()
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-only-key")
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(AsyncClient=FakeClient))
+    governor = ResearchCostGovernor(target_micro_eur=100_000, hard_micro_eur=100_000)
+    token = set_current_cost_governor(governor)
+    try:
+        model = AnthropicSemanticModel()
+        try:
+            asyncio.run(model.complete_json(
+                task="semantic_query_contract", system_prompt="ground exactly",
+                payload={"query": "find companies"},
+                schema={"type": "object", "properties": {}}, tier=2,
+            ))
+        except RuntimeError as exc:
+            assert str(exc) == (
+                "ANTHROPIC_SEMANTIC_REQUEST_FAILED:400:invalid_request_error:unsupported field"
+            )
+        else:
+            raise AssertionError("provider rejection must fail closed")
+        reservation = next(iter(governor.reservations.values()))
+        assert reservation.status == "failed"
+        assert governor.committed_micro_eur == 0
+        assert "temperature" not in bodies[0]
     finally:
         reset_current_cost_governor(token)
 
