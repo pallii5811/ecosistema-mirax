@@ -789,7 +789,17 @@ class AnthropicSemanticModel:
         model = self.tier2_model if tier == 2 else self.tier1_model
         request_hash = _digest({"task": task, "model": model, "payload": payload, "schema": schema})
         reservation_key = f"semantic:{request_hash}"
-        max_output_tokens = int(os.getenv("MIRAX_SEMANTIC_MAX_OUTPUT_TOKENS") or "1200")
+        task_output_env = (
+            "MIRAX_SEMANTIC_EVENT_MAX_OUTPUT_TOKENS"
+            if task.startswith("semantic_commercial_event")
+            else "MIRAX_SEMANTIC_QUERY_MAX_OUTPUT_TOKENS"
+        )
+        default_output_tokens = "2000" if task.startswith("semantic_commercial_event") else "1200"
+        max_output_tokens = int(
+            os.getenv(task_output_env)
+            or os.getenv("MIRAX_SEMANTIC_MAX_OUTPUT_TOKENS")
+            or default_output_tokens
+        )
         # UTF-8 bytes are a conservative upper bound for provider input tokens;
         # include fixed tool/message overhead.  Refuse oversized input before
         # the provider call so settlement cannot breach the hard cap.
@@ -835,19 +845,13 @@ class AnthropicSemanticModel:
                 )
             response.raise_for_status()
             raw = response.json()
-            result: Optional[Mapping[str, Any]] = None
-            for item in raw.get("content") or ():
-                if isinstance(item, Mapping) and item.get("type") == "tool_use" and item.get("name") == "submit_semantic_result":
-                    candidate = item.get("input")
-                    if isinstance(candidate, Mapping):
-                        result = candidate
-                        break
-            if result is None:
-                raise ValueError("semantic model omitted required tool result")
             usage = raw.get("usage") if isinstance(raw.get("usage"), Mapping) else {}
             input_tokens = int(usage.get("input_tokens") or 0)
             output_tokens = int(usage.get("output_tokens") or 0)
             actual = self._actual_cost(input_tokens, output_tokens, tier)
+            # The provider has charged once a response exists. Settle before
+            # validating completeness so truncated/invalid outputs remain in
+            # cost accounting and cannot be silently retried.
             governor.settle(
                 reservation_key, actual,
                 metadata={"task": task, "tier": tier, "input_tokens": input_tokens, "output_tokens": output_tokens},
@@ -857,6 +861,17 @@ class AnthropicSemanticModel:
                     "task": task, "tier": tier, "model": model,
                     "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_eur": actual,
                 })
+            if raw.get("stop_reason") == "max_tokens":
+                raise ValueError("SEMANTIC_OUTPUT_TRUNCATED")
+            result: Optional[Mapping[str, Any]] = None
+            for item in raw.get("content") or ():
+                if isinstance(item, Mapping) and item.get("type") == "tool_use" and item.get("name") == "submit_semantic_result":
+                    candidate = item.get("input")
+                    if isinstance(candidate, Mapping):
+                        result = candidate
+                        break
+            if result is None:
+                raise ValueError("semantic model omitted required tool result")
             return result
         except Exception as exc:
             try:

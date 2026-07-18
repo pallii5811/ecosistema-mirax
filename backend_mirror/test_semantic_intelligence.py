@@ -334,6 +334,62 @@ def test_semantic_provider_call_is_blocked_before_network_when_unaffordable(monk
         reset_current_cost_governor(token)
 
 
+def test_truncated_provider_output_is_charged_and_not_returned(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    bodies: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "stop_reason": "max_tokens",
+                "usage": {"input_tokens": 100, "output_tokens": 2000},
+                "content": [{"type": "tool_use", "name": "submit_semantic_result", "input": {}}],
+            }
+
+    class FakeClient:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeClient":
+            return self
+
+        async def __aexit__(self, *_: Any) -> None:
+            return None
+
+        async def post(self, _url: str, **kwargs: Any) -> FakeResponse:
+            bodies.append(kwargs["json"])
+            return FakeResponse()
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-only-key")
+    monkeypatch.delenv("MIRAX_SEMANTIC_MAX_OUTPUT_TOKENS", raising=False)
+    monkeypatch.delenv("MIRAX_SEMANTIC_EVENT_MAX_OUTPUT_TOKENS", raising=False)
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(AsyncClient=FakeClient))
+    governor = ResearchCostGovernor(target_micro_eur=100_000, hard_micro_eur=100_000)
+    token = set_current_cost_governor(governor)
+    try:
+        model = AnthropicSemanticModel()
+        try:
+            asyncio.run(model.complete_json(
+                task="semantic_commercial_event", system_prompt="ground exactly",
+                payload={"source_text": "Beta grows"},
+                schema={"type": "object", "properties": {}}, tier=1,
+            ))
+        except ValueError as exc:
+            assert str(exc) == "SEMANTIC_OUTPUT_TRUNCATED"
+        else:
+            raise AssertionError("truncated tool output must fail closed")
+        assert bodies[0]["max_tokens"] == 2000
+        assert governor.committed_micro_eur == 10_100
+        assert next(iter(governor.reservations.values())).status == "settled"
+    finally:
+        reset_current_cost_governor(token)
+
+
 def test_tier_one_actual_cost_uses_economy_rates() -> None:
     assert AnthropicSemanticModel._actual_cost(1_000_000, 1_000_000, tier=1) == 6.0
     assert AnthropicSemanticModel._actual_cost(1_000_000, 1_000_000, tier=2) == 18.0
