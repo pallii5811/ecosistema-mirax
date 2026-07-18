@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict
 
@@ -43,6 +44,17 @@ def _role_is_correct(case: Dict[str, Any], interpretation: Any) -> bool:
     return interpretation.target_entity_role.casefold() == str(expected).casefold()
 
 
+def _maximum_age_days(contract: Any) -> int | None:
+    constraints = contract.temporal_constraints
+    for key in ("maximum_age_days", "max_age_days", "within_days"):
+        value = constraints.get(key) if isinstance(constraints, dict) else None
+        if isinstance(value, (int, float)) and value >= 0:
+            return int(value)
+    text = f"{contract.original_query} {json.dumps(constraints, ensure_ascii=False)}"
+    match = re.search(r"(?:ultim[ei]|last|within)\s+(\d+)\s+(?:giorn\w*|days?)", text, re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
 async def evaluate(split: str, cap: float, cache_path: Path) -> Dict[str, Any]:
     cases = [case for case in SEMANTIC_GOLD_CASES if split == "all" or case["split"] == split]
     model = AnthropicSemanticModel()
@@ -71,7 +83,7 @@ async def evaluate(split: str, cap: float, cache_path: Path) -> Dict[str, Any]:
                 official_domain_verified=case["official_domain_verified"],
                 official_domain_confidence=case["official_domain_confidence"],
                 entity_class=case["target_entity_type"], candidate_company=case["target_company"],
-                maximum_age_days=case["maximum_age_days"],
+                maximum_age_days=_maximum_age_days(contract),
             )
         except Exception as exc:
             # A malformed/ambiguous model result is a fail-closed prediction,
@@ -92,11 +104,26 @@ async def evaluate(split: str, cap: float, cache_path: Path) -> Dict[str, Any]:
             "predicted": predicted,
             "rejection_code": verdict.rejection_code if verdict else "SEMANTIC_EVALUATION_FAILED",
             "evaluation_error": evaluation_error,
+            "grounding_reasons": list(verdict.reasons) if verdict else [],
+            "grounding_checks": dict(verdict.checks) if verdict else {},
             "expected_role": case["target_role"],
             "predicted_role": interpretation.target_entity_role if interpretation else None,
+            "target_company": interpretation.target_company if interpretation else None,
+            "query_match": interpretation.query_match if interpretation else None,
+            "satisfied_relationships": list(interpretation.satisfied_relationships) if interpretation else [],
+            "acceptance_rubric_passed": list(interpretation.acceptance_rubric_passed) if interpretation else [],
+            "evidence_excerpt": interpretation.evidence_excerpt if interpretation else None,
+            "evidence_start": interpretation.evidence_start if interpretation else None,
+            "evidence_end": interpretation.evidence_end if interpretation else None,
             "role_correct": _role_is_correct(case, interpretation),
             "literal_grounding": bool(verdict and verdict.checks.get("excerpt_literal") is True),
-            "invented_fact": bool(interpretation and (not excerpt_in_source or not target_in_source)),
+            "invented_fact": bool(
+                interpretation
+                and (
+                    (bool(interpretation.evidence_excerpt) and not excerpt_in_source)
+                    or (bool(interpretation.target_company) and not target_in_source)
+                )
+            ),
             "publisher_as_company": bool(
                 interpretation and interpretation.target_company.casefold() == case["publisher"].casefold()
             ),
@@ -108,6 +135,7 @@ async def evaluate(split: str, cap: float, cache_path: Path) -> Dict[str, Any]:
     fp = sum(not row["expected"] and row["predicted"] for row in rows)
     positives = sum(row["expected"] for row in rows)
     modalities = [row for row in rows if row["unsafe_modality_rejected"] is not None]
+    accepted = [row for row in rows if row["predicted"]]
     return {
         "dataset": composition(), "split": split, "cases": len(rows),
         "metrics": {
@@ -118,7 +146,9 @@ async def evaluate(split: str, cap: float, cache_path: Path) -> Dict[str, Any]:
                 sum(row["unsafe_modality_rejected"] is True for row in modalities) / len(modalities)
                 if modalities else 1.0
             ),
-            "grounding_rate": sum(row["literal_grounding"] for row in rows) / len(rows) if rows else 0.0,
+            "grounding_rate": (
+                sum(row["literal_grounding"] for row in accepted) / len(accepted) if accepted else 0.0
+            ),
             "invented_facts": sum(row["invented_fact"] for row in rows),
             "publisher_as_company": sum(row["publisher_as_company"] for row in rows),
         },

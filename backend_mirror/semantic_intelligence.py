@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Iterable, Mapping, Optional, Protocol, Sequence, Tuple
 
 
-QUERY_SCHEMA_VERSION = "semantic-query-contract-v3"
-EVENT_SCHEMA_VERSION = "semantic-commercial-event-v1"
+QUERY_SCHEMA_VERSION = "semantic-query-contract-v4"
+EVENT_SCHEMA_VERSION = "semantic-commercial-event-v2"
 GROUNDING_SCHEMA_VERSION = "semantic-grounding-v1"
 
 
@@ -414,6 +414,10 @@ for _name in ("certainty", "confidence"):
     EVENT_OUTPUT_SCHEMA["properties"][_name] = {"type": "number", "minimum": 0, "maximum": 1}
 for _name in ("evidence_start", "evidence_end"):
     EVENT_OUTPUT_SCHEMA["properties"][_name] = {"type": "integer"}
+EVENT_OUTPUT_SCHEMA["properties"]["event_status"] = {
+    "type": "string",
+    "enum": ["observed", "active", "completed", "announced", "stale", "hypothetical", "negated", "rumor", "unknown"],
+}
 
 
 QUERY_SYSTEM_PROMPT = """You are MIRAX's semantic authority for commercial query understanding.
@@ -430,7 +434,8 @@ required by the user; never put synonyms or alternative event phrasings in requi
 resource type, source type, result-count or other constraints absent from the query. The acceptance rubric is evaluated
 per candidate and may contain only facts necessary to prove the user's literal request; never include whole-search
 requirements such as requested_count. Build relationship IDs that the event interpreter can return verbatim and an
-acceptance rubric made of objectively checkable per-candidate statements."""
+acceptance rubric made of objectively checkable per-candidate statements. Preserve action/capacity wording: do not
+replace a request about strengthening a function with a stricter realized-outcome metric unless the user asked for it."""
 
 
 EVENT_SYSTEM_PROMPT = """You are MIRAX's semantic authority for understanding commercial events in acquired text.
@@ -440,7 +445,9 @@ publisher and authority. A publisher or source host is never automatically the t
 voice, negation, hypothetical, conditional, rumor and historical context explicitly. The target_company must be
 an operating company in exactly the role required by the semantic query contract. Return an evidence excerpt
 copied literally from source_text and exact Python string offsets. Return the contract's relationship/rubric IDs
-verbatim only when the excerpt supports them. Missing information stays null/empty. Never invent."""
+verbatim only when the excerpt supports them. If query_match=true, evidence_excerpt, satisfied_relationships and
+acceptance_rubric_passed must all be non-empty and jointly prove every required condition. Otherwise set
+query_match=false with a rejection reason. Missing information stays null/empty. Never invent."""
 
 
 class SemanticCommercialQueryInterpreter:
@@ -615,9 +622,8 @@ class SemanticEvidenceGroundingVerifier:
         target_in_source = bool(target_name) and target_name in _canonical_name(source_text)
         relationships = set(interpretation.satisfied_relationships)
         relationships_pass = set(contract.required_relationships).issubset(relationships)
-        target_in_required_relation = any(
+        target_in_relation = any(
             isinstance(relation, Mapping)
-            and _clean(relation.get("relation_type") or relation.get("predicate")) in set(contract.required_relationships)
             and any(
                 _canonical_name(value) == target_name
                 for key, value in relation.items()
@@ -627,7 +633,7 @@ class SemanticEvidenceGroundingVerifier:
         )
         role_match = bool(interpretation.target_entity_role) and (
             interpretation.target_entity_role == contract.target_role_in_event
-            or (relationships_pass and target_in_required_relation)
+            or (relationships_pass and target_in_relation)
         )
         excluded_role = interpretation.target_entity_role in set(contract.excluded_roles)
         rubric_pass = set(contract.acceptance_rubric).issubset(set(interpretation.acceptance_rubric_passed))
@@ -651,7 +657,9 @@ class SemanticEvidenceGroundingVerifier:
             "acceptance_rubric_satisfied": rubric_pass,
             "query_match": interpretation.query_match,
             "not_negated_hypothetical_conditional_or_rumor": not unsafe_modality,
-            "event_status_observed": interpretation.event_status in {"observed", "active", "completed", "announced"},
+            "event_status_observed": interpretation.event_status.casefold() in {
+                "observed", "active", "completed", "announced", "occurred", "confirmed",
+            },
             "temporal_evidence_valid": temporal,
             "source_url_present": str(source_url).startswith(("http://", "https://")),
             "publisher_present": bool(_clean(source_publisher)),

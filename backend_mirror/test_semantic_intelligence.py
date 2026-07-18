@@ -224,6 +224,7 @@ def test_grounder_accepts_descriptive_role_when_required_relation_is_grounded(tm
     raw = event_payload(
         text,
         target_entity_role="Recipient of funding or resources for growth",
+        event_status="occurred",
         relations=[{
             "subject": "Beta Srl",
             "predicate": "capital_or_financing_received_by_target_company",
