@@ -161,6 +161,61 @@ def test_passive_recipient_is_grounded_without_keyword_authority(tmp_path: Path)
     assert verdict.rejection_code is None
 
 
+def test_grounder_derives_exact_offsets_for_unique_literal_excerpt(tmp_path: Path) -> None:
+    excerpt = "Beta Srl ha ricevuto nuove risorse."
+    text = f"Prefisso. {excerpt} Suffisso."
+    contract = SemanticQueryContract.from_model(
+        query_payload(), original_query="Trova aziende finanziate", requested_count=5,
+    )
+    raw = event_payload(
+        excerpt, target_company="Beta Srl", recipient="Beta Srl",
+        evidence_start=0, evidence_end=len(excerpt),
+    )
+    interpretation = asyncio.run(SemanticCommercialEventInterpreter(
+        QueueModel(raw), cache=cache(tmp_path),
+    ).interpret(
+        contract, title="Risorse per Beta", snippet=excerpt, source_text=text,
+        source_url="https://example.test/evento", publisher="Editore",
+    ))
+    verdict = SemanticEvidenceGroundingVerifier().verify(
+        contract, interpretation, source_text=text,
+        source_url="https://example.test/evento", source_publisher="Editore",
+        official_domain_verified=True, official_domain_confidence=0.95,
+        entity_class="operating_company", candidate_company="Beta Srl",
+        maximum_age_days=3650,
+    )
+    assert verdict.accepted is True
+    assert verdict.evidence_start == text.index(excerpt)
+    assert verdict.evidence_end == text.index(excerpt) + len(excerpt)
+
+
+def test_grounder_rejects_ambiguous_repeated_excerpt_with_wrong_offsets(tmp_path: Path) -> None:
+    excerpt = "Beta Srl ha ricevuto nuove risorse."
+    text = f"{excerpt} {excerpt}"
+    contract = SemanticQueryContract.from_model(
+        query_payload(), original_query="Trova aziende finanziate", requested_count=5,
+    )
+    raw = event_payload(
+        excerpt, target_company="Beta Srl", recipient="Beta Srl",
+        evidence_start=1, evidence_end=len(excerpt) + 1,
+    )
+    interpretation = asyncio.run(SemanticCommercialEventInterpreter(
+        QueueModel(raw), cache=cache(tmp_path),
+    ).interpret(
+        contract, title="Risorse per Beta", snippet=excerpt, source_text=text,
+        source_url="https://example.test/evento", publisher="Editore",
+    ))
+    verdict = SemanticEvidenceGroundingVerifier().verify(
+        contract, interpretation, source_text=text,
+        source_url="https://example.test/evento", source_publisher="Editore",
+        official_domain_verified=True, official_domain_confidence=0.95,
+        entity_class="operating_company", candidate_company="Beta Srl",
+        maximum_age_days=3650,
+    )
+    assert verdict.accepted is False
+    assert verdict.rejection_code == "EVIDENCE_GROUNDING_FAILED"
+
+
 def test_financing_provider_is_not_recipient(tmp_path: Path) -> None:
     text = "Gamma Banca mette a disposizione credito per le imprese italiane."
     contract = SemanticQueryContract.from_model(
@@ -190,7 +245,7 @@ def test_financing_provider_is_not_recipient(tmp_path: Path) -> None:
     assert verdict.rejection_code == "TARGET_ROLE_UNVERIFIED"
 
 
-def test_negation_hypothesis_and_wrong_offsets_fail_closed(tmp_path: Path) -> None:
+def test_negation_hypothesis_fail_closed_after_safe_offset_recovery(tmp_path: Path) -> None:
     text = "Delta potrebbe ricevere capitale, ma il round non e stato concluso."
     contract = SemanticQueryContract.from_model(
         query_payload(), original_query="aziende che hanno ricevuto capitale", requested_count=5,
@@ -211,7 +266,7 @@ def test_negation_hypothesis_and_wrong_offsets_fail_closed(tmp_path: Path) -> No
         entity_class="operating_company", candidate_company="Delta",
     )
     assert verdict.accepted is False
-    assert verdict.rejection_code == "EVIDENCE_GROUNDING_FAILED"
+    assert verdict.rejection_code == "SEMANTIC_QUERY_MISMATCH"
 
 
 def test_callable_model_rejects_non_object() -> None:

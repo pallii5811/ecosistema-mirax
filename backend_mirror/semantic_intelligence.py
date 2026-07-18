@@ -248,6 +248,8 @@ class GroundingVerdict:
     event_type: str
     event_date: Optional[str]
     evidence_excerpt: str
+    evidence_start: int
+    evidence_end: int
     source_url: str
     source_publisher: str
     verified_at: str
@@ -595,6 +597,14 @@ class SemanticEvidenceGroundingVerifier:
         excerpt = interpretation.evidence_excerpt
         start, end = interpretation.evidence_start, interpretation.evidence_end
         literal = bool(excerpt) and start >= 0 and end == start + len(excerpt) and source_text[start:end] == excerpt
+        if excerpt and not literal:
+            # Models frequently count bytes/tokens rather than Python string
+            # offsets. Recover only when the claimed literal excerpt occurs
+            # exactly once; ambiguity remains fail-closed.
+            derived_start = source_text.find(excerpt)
+            if derived_start >= 0 and source_text.find(excerpt, derived_start + 1) < 0:
+                start, end = derived_start, derived_start + len(excerpt)
+                literal = True
         target_name = _canonical_name(interpretation.target_company)
         candidate_name = _canonical_name(candidate_company or interpretation.target_company)
         target_identity = bool(target_name) and target_name == candidate_name
@@ -655,6 +665,8 @@ class SemanticEvidenceGroundingVerifier:
             event_type=interpretation.event_type,
             event_date=interpretation.event_date,
             evidence_excerpt=excerpt,
+            evidence_start=start,
+            evidence_end=end,
             source_url=source_url,
             source_publisher=source_publisher,
             verified_at=datetime.now(timezone.utc).isoformat(),

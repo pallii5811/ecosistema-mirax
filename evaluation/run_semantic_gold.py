@@ -25,6 +25,24 @@ def _governor(cap: float) -> ResearchCostGovernor:
     return ResearchCostGovernor(target_micro_eur=micro, hard_micro_eur=micro)
 
 
+def _canonical_name(value: Any) -> str:
+    return "".join(char.casefold() for char in str(value or "") if char.isalnum())
+
+
+def _role_is_correct(case: Dict[str, Any], interpretation: Any) -> bool:
+    if interpretation is None:
+        return False
+    target = _canonical_name(interpretation.target_company)
+    expected = case["target_role"]
+    if expected == "recipient":
+        return target in {_canonical_name(interpretation.recipient), _canonical_name(interpretation.beneficiary)}
+    if expected == "employer":
+        return target == _canonical_name(interpretation.employer)
+    if expected in {"subject_company", "expanding_company", "technology_adopter"}:
+        return target == _canonical_name(interpretation.actor)
+    return interpretation.target_entity_role.casefold() == str(expected).casefold()
+
+
 async def evaluate(split: str, cap: float, cache_path: Path) -> Dict[str, Any]:
     cases = [case for case in SEMANTIC_GOLD_CASES if split == "all" or case["split"] == split]
     model = AnthropicSemanticModel()
@@ -61,6 +79,14 @@ async def evaluate(split: str, cap: float, cache_path: Path) -> Dict[str, Any]:
             evaluation_error = f"{type(exc).__name__}:{exc}"
         predicted = bool(verdict and verdict.accepted)
         expected = bool(case["expected_accept"])
+        excerpt_in_source = bool(
+            interpretation and interpretation.evidence_excerpt
+            and interpretation.evidence_excerpt in case["source_text"]
+        )
+        target_in_source = bool(
+            interpretation and _canonical_name(interpretation.target_company)
+            and _canonical_name(interpretation.target_company) in _canonical_name(case["source_text"])
+        )
         rows.append({
             "id": case["id"], "split": case["split"], "expected": expected,
             "predicted": predicted,
@@ -68,8 +94,9 @@ async def evaluate(split: str, cap: float, cache_path: Path) -> Dict[str, Any]:
             "evaluation_error": evaluation_error,
             "expected_role": case["target_role"],
             "predicted_role": interpretation.target_entity_role if interpretation else None,
-            "role_correct": bool(interpretation and interpretation.target_entity_role == case["target_role"]),
+            "role_correct": _role_is_correct(case, interpretation),
             "literal_grounding": bool(verdict and verdict.checks.get("excerpt_literal") is True),
+            "invented_fact": bool(interpretation and (not excerpt_in_source or not target_in_source)),
             "publisher_as_company": bool(
                 interpretation and interpretation.target_company.casefold() == case["publisher"].casefold()
             ),
@@ -92,7 +119,7 @@ async def evaluate(split: str, cap: float, cache_path: Path) -> Dict[str, Any]:
                 if modalities else 1.0
             ),
             "grounding_rate": sum(row["literal_grounding"] for row in rows) / len(rows) if rows else 0.0,
-            "invented_facts": sum(not row["literal_grounding"] for row in rows),
+            "invented_facts": sum(row["invented_fact"] for row in rows),
             "publisher_as_company": sum(row["publisher_as_company"] for row in rows),
         },
         "rows": rows,
