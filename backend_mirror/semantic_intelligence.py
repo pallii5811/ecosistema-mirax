@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Iterable, Mapping, Optional, Protocol, Sequence, Tuple
 
 
-QUERY_SCHEMA_VERSION = "semantic-query-contract-v1"
+QUERY_SCHEMA_VERSION = "semantic-query-contract-v2"
 EVENT_SCHEMA_VERSION = "semantic-commercial-event-v1"
 GROUNDING_SCHEMA_VERSION = "semantic-grounding-v1"
 
@@ -420,7 +420,10 @@ signal exists.  Canonical signal IDs are optional routing hints, never a substit
 Explicitly identify the role the target company must have in the event and exclude inverse roles.  For funding,
 for example, recipient is different from lender/provider/investor/publisher/advisor.  Never invent a company,
 fact, source, URL or constraint.  If meaning needed for safe research is genuinely missing, set
-clarification_required=true.  Build relationship IDs that the event interpreter can return verbatim and an
+clarification_required=true. Open-world paraphrases of an observable commercial condition are actionable, not
+ambiguous: do not request clarification merely because the wording lacks a canonical signal ID, named industry,
+geography or amount. Clarification is required only when no target entity role or objectively testable predicate
+can be derived without inventing meaning. Build relationship IDs that the event interpreter can return verbatim and an
 acceptance rubric made of objectively checkable statements."""
 
 

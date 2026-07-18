@@ -34,32 +34,45 @@ async def evaluate(split: str, cap: float, cache_path: Path) -> Dict[str, Any]:
     verifier = SemanticEvidenceGroundingVerifier()
     rows = []
     for case in cases:
-        contract = await query_interpreter.interpret(case["query"], 5)
-        interpretation = await event_interpreter.interpret(
-            contract,
-            title=case["source_text"], snippet=case["source_text"],
-            source_text=case["source_text"], source_url=case["source_url"],
-            publisher=case["publisher"],
-            structured_metadata={"target_organization": {"name": case["target_company"]}},
-            entity_hints=(case["target_company"],),
-        )
-        verdict = verifier.verify(
-            contract, interpretation, source_text=case["source_text"],
-            source_url=case["source_url"], source_publisher=case["publisher"],
-            official_domain_verified=case["official_domain_verified"],
-            official_domain_confidence=case["official_domain_confidence"],
-            entity_class=case["target_entity_type"], candidate_company=case["target_company"],
-            maximum_age_days=case["maximum_age_days"],
-        )
-        predicted = verdict.accepted
+        interpretation = None
+        verdict = None
+        evaluation_error = None
+        try:
+            contract = await query_interpreter.interpret(case["query"], 5)
+            interpretation = await event_interpreter.interpret(
+                contract,
+                title=case["source_text"], snippet=case["source_text"],
+                source_text=case["source_text"], source_url=case["source_url"],
+                publisher=case["publisher"],
+                structured_metadata={"target_organization": {"name": case["target_company"]}},
+                entity_hints=(case["target_company"],),
+            )
+            verdict = verifier.verify(
+                contract, interpretation, source_text=case["source_text"],
+                source_url=case["source_url"], source_publisher=case["publisher"],
+                official_domain_verified=case["official_domain_verified"],
+                official_domain_confidence=case["official_domain_confidence"],
+                entity_class=case["target_entity_type"], candidate_company=case["target_company"],
+                maximum_age_days=case["maximum_age_days"],
+            )
+        except Exception as exc:
+            # A malformed/ambiguous model result is a fail-closed prediction,
+            # not a reason to discard the remainder of the measured cohort.
+            evaluation_error = f"{type(exc).__name__}:{exc}"
+        predicted = bool(verdict and verdict.accepted)
         expected = bool(case["expected_accept"])
         rows.append({
             "id": case["id"], "split": case["split"], "expected": expected,
-            "predicted": predicted, "rejection_code": verdict.rejection_code,
-            "expected_role": case["target_role"], "predicted_role": interpretation.target_entity_role,
-            "role_correct": interpretation.target_entity_role == case["target_role"],
-            "literal_grounding": verdict.checks.get("excerpt_literal") is True,
-            "publisher_as_company": interpretation.target_company.casefold() == case["publisher"].casefold(),
+            "predicted": predicted,
+            "rejection_code": verdict.rejection_code if verdict else "SEMANTIC_EVALUATION_FAILED",
+            "evaluation_error": evaluation_error,
+            "expected_role": case["target_role"],
+            "predicted_role": interpretation.target_entity_role if interpretation else None,
+            "role_correct": bool(interpretation and interpretation.target_entity_role == case["target_role"]),
+            "literal_grounding": bool(verdict and verdict.checks.get("excerpt_literal") is True),
+            "publisher_as_company": bool(
+                interpretation and interpretation.target_company.casefold() == case["publisher"].casefold()
+            ),
             "unsafe_modality_rejected": (
                 not predicted if any(case.get(flag) for flag in ("negated", "hypothetical", "conditional", "rumor")) else None
             ),
