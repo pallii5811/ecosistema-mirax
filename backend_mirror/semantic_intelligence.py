@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Iterable, Mapping, Optional, Protocol, Sequence, Tuple
 
 
-QUERY_SCHEMA_VERSION = "semantic-query-contract-v4"
+QUERY_SCHEMA_VERSION = "semantic-query-contract-v5"
 EVENT_SCHEMA_VERSION = "semantic-commercial-event-v2"
 GROUNDING_SCHEMA_VERSION = "semantic-grounding-v1"
 
@@ -488,9 +488,13 @@ class SemanticCommercialQueryInterpreter:
             self.telemetry.semantic_cache_hits += 1
             return SemanticQueryContract.from_model(cached, original_query=original, requested_count=requested_count)
         self.telemetry.semantic_calls += 1
+        # Query meaning controls every downstream source and qualification
+        # decision.  Compile it once with the stronger tier, then amortise the
+        # result through the persistent query-contract cache.  Tier 1 remains
+        # the high-volume page/event interpreter.
         result = await self.model.complete_json(
             task="semantic_query_contract", system_prompt=QUERY_SYSTEM_PROMPT,
-            payload=payload, schema=QUERY_OUTPUT_SCHEMA, tier=1,
+            payload=payload, schema=QUERY_OUTPUT_SCHEMA, tier=2,
         )
         contract = SemanticQueryContract.from_model(result, original_query=original, requested_count=requested_count)
         self.cache.set(key, dict(result))

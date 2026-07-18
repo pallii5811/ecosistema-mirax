@@ -104,9 +104,11 @@ class QueueModel:
     def __init__(self, *responses: Mapping[str, Any]) -> None:
         self.responses = list(responses)
         self.calls = 0
+        self.requests: list[dict[str, Any]] = []
 
-    async def complete_json(self, **_: Any) -> Mapping[str, Any]:
+    async def complete_json(self, **kwargs: Any) -> Mapping[str, Any]:
         self.calls += 1
+        self.requests.append(dict(kwargs))
         return self.responses.pop(0)
 
 
@@ -128,6 +130,22 @@ def test_query_interpreter_preserves_open_world_predicate_and_roles(tmp_path: Pa
     assert contract.target_role_in_event == "recipient"
     assert contract.canonical_signal_hints == ()
     assert model.calls == 1
+    assert model.requests[0]["tier"] == 2
+
+
+def test_event_interpretation_remains_on_economical_tier_one(tmp_path: Path) -> None:
+    text = "Beta Srl ha ricevuto nuove risorse il 10 luglio 2026."
+    contract = SemanticQueryContract.from_model(
+        query_payload(), original_query="Trova aziende finanziate", requested_count=5,
+    )
+    model = QueueModel(event_payload(text))
+
+    asyncio.run(SemanticCommercialEventInterpreter(model, cache=cache(tmp_path)).interpret(
+        contract, title="Risorse per Beta", snippet=text, source_text=text,
+        source_url="https://example.test/evento", publisher="Editore",
+    ))
+
+    assert model.requests[0]["tier"] == 1
 
 
 def test_query_contract_cache_uses_query_model_and_schema(tmp_path: Path) -> None:
