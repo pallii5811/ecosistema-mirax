@@ -216,6 +216,36 @@ def test_grounder_rejects_ambiguous_repeated_excerpt_with_wrong_offsets(tmp_path
     assert verdict.rejection_code == "EVIDENCE_GROUNDING_FAILED"
 
 
+def test_grounder_accepts_descriptive_role_when_required_relation_is_grounded(tmp_path: Path) -> None:
+    text = "Beta Srl ha ricevuto nuove risorse il 10 luglio 2026."
+    contract = SemanticQueryContract.from_model(
+        query_payload(), original_query="Trova aziende finanziate", requested_count=5,
+    )
+    raw = event_payload(
+        text,
+        target_entity_role="Recipient of funding or resources for growth",
+        relations=[{
+            "subject": "Beta Srl",
+            "predicate": "capital_or_financing_received_by_target_company",
+            "object": "new resources",
+        }],
+    )
+    interpretation = asyncio.run(SemanticCommercialEventInterpreter(
+        QueueModel(raw), cache=cache(tmp_path),
+    ).interpret(
+        contract, title="Risorse per Beta", snippet=text, source_text=text,
+        source_url="https://example.test/evento", publisher="Editore",
+    ))
+    verdict = SemanticEvidenceGroundingVerifier().verify(
+        contract, interpretation, source_text=text,
+        source_url="https://example.test/evento", source_publisher="Editore",
+        official_domain_verified=True, official_domain_confidence=0.95,
+        entity_class="operating_company", candidate_company="Beta Srl",
+        maximum_age_days=3650,
+    )
+    assert verdict.accepted is True
+
+
 def test_financing_provider_is_not_recipient(tmp_path: Path) -> None:
     text = "Gamma Banca mette a disposizione credito per le imprese italiane."
     contract = SemanticQueryContract.from_model(

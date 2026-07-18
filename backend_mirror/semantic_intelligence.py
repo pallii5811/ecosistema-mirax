@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Iterable, Mapping, Optional, Protocol, Sequence, Tuple
 
 
-QUERY_SCHEMA_VERSION = "semantic-query-contract-v2"
+QUERY_SCHEMA_VERSION = "semantic-query-contract-v3"
 EVENT_SCHEMA_VERSION = "semantic-commercial-event-v1"
 GROUNDING_SCHEMA_VERSION = "semantic-grounding-v1"
 
@@ -425,8 +425,12 @@ fact, source, URL or constraint.  If meaning needed for safe research is genuine
 clarification_required=true. Open-world paraphrases of an observable commercial condition are actionable, not
 ambiguous: do not request clarification merely because the wording lacks a canonical signal ID, named industry,
 geography or amount. Clarification is required only when no target entity role or objectively testable predicate
-can be derived without inventing meaning. Build relationship IDs that the event interpreter can return verbatim and an
-acceptance rubric made of objectively checkable statements."""
+can be derived without inventing meaning. Each required_relationship is a distinct conjunctive condition explicitly
+required by the user; never put synonyms or alternative event phrasings in required_relationships. Do not add amount,
+resource type, source type, result-count or other constraints absent from the query. The acceptance rubric is evaluated
+per candidate and may contain only facts necessary to prove the user's literal request; never include whole-search
+requirements such as requested_count. Build relationship IDs that the event interpreter can return verbatim and an
+acceptance rubric made of objectively checkable per-candidate statements."""
 
 
 EVENT_SYSTEM_PROMPT = """You are MIRAX's semantic authority for understanding commercial events in acquired text.
@@ -609,12 +613,23 @@ class SemanticEvidenceGroundingVerifier:
         candidate_name = _canonical_name(candidate_company or interpretation.target_company)
         target_identity = bool(target_name) and target_name == candidate_name
         target_in_source = bool(target_name) and target_name in _canonical_name(source_text)
-        role_match = bool(interpretation.target_entity_role) and (
-            interpretation.target_entity_role == contract.target_role_in_event
-        )
-        excluded_role = interpretation.target_entity_role in set(contract.excluded_roles)
         relationships = set(interpretation.satisfied_relationships)
         relationships_pass = set(contract.required_relationships).issubset(relationships)
+        target_in_required_relation = any(
+            isinstance(relation, Mapping)
+            and _clean(relation.get("relation_type") or relation.get("predicate")) in set(contract.required_relationships)
+            and any(
+                _canonical_name(value) == target_name
+                for key, value in relation.items()
+                if key not in {"relation_type", "predicate", "direction"} and isinstance(value, str)
+            )
+            for relation in interpretation.relations
+        )
+        role_match = bool(interpretation.target_entity_role) and (
+            interpretation.target_entity_role == contract.target_role_in_event
+            or (relationships_pass and target_in_required_relation)
+        )
+        excluded_role = interpretation.target_entity_role in set(contract.excluded_roles)
         rubric_pass = set(contract.acceptance_rubric).issubset(set(interpretation.acceptance_rubric_passed))
         unsafe_modality = any((
             interpretation.negated, interpretation.hypothetical, interpretation.conditional,
