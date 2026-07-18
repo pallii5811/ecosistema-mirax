@@ -22,7 +22,8 @@ from backend_mirror.source_adapters import (
     UniversalSourceOrchestrator,
     request_from_plan,
 )
-from backend_mirror.source_adapters.generic_web import GenericWebResearchAdapter, _gate_serp_hits
+import backend_mirror.source_adapters.generic_web as generic_web
+from backend_mirror.source_adapters.generic_web import GenericWebProviderResult, GenericWebResearchAdapter, _gate_serp_hits
 from backend_mirror.source_adapters.cheap_discovery_prefilter import DiscoveryHit, prefilter_discovery_hit
 from backend_mirror.source_adapters.shadow_runtime import execute_source_adapter_shadow
 from backend_mirror.source_adapters.universal_query_spec import canary_plan_from_seed
@@ -218,6 +219,92 @@ def test_gate_serp_hits_reduces_fetch_set():
     assert telemetry["prefilter_accepted"] == 1
     assert telemetry["prefilter_rejected"] == 2
     assert telemetry["pages_opened_after_prefilter"] == 0
+
+
+def test_live_generic_prefilter_uses_real_snippet_not_query(monkeypatch):
+    fetches: list[str] = []
+    monkeypatch.setattr(
+        "backend_mirror.agents.search_serp.search_hits_http",
+        lambda *args, **kwargs: [{
+            "title": "Acme Industrie Srl",
+            "url": "https://acme-industrie.it/chi-siamo",
+            "snippet": "Storia, persone e valori della società.",
+            "source_type": "search",
+            "provider": "serper",
+        }],
+    )
+    request = AdapterDiscoveryRequest(
+        intent="commercial_search", signal_ids=("funding",), signal_match_mode="any",
+        geographies=("Italia",), freshness_max_age_days=365, requested_count=1,
+        budget_eur=0.005, query="aziende con finanziamento",
+        technical_filters={
+            "universal_engine": True,
+            "universal_search_queries": ("aziende con finanziamento",),
+            "universal_page_fetch": lambda url: (fetches.append(url) or ("", url)),
+            "universal_prefilter_telemetry": {},
+        },
+    )
+    result = asyncio.run(GenericWebResearchAdapter().discover(request))
+    assert result.candidates == ()
+    assert fetches == []
+    telemetry = request.technical_filters["universal_prefilter_telemetry"]
+    assert telemetry["prefilter_rejection_codes"] == {"no_event_hint": 1}
+
+
+def test_empty_title_and_page_without_company_identity_rejects(monkeypatch):
+    monkeypatch.setattr(
+        "backend_mirror.agents.search_serp.search_hits_http",
+        lambda *args, **kwargs: [{
+            "title": "",
+            "url": "https://news.example.it/round-2026",
+            "snippet": "Annunciato un finanziamento il 12 marzo 2026.",
+            "source_type": "news",
+            "provider": "serper",
+        }],
+    )
+    request = AdapterDiscoveryRequest(
+        intent="commercial_search", signal_ids=("funding",), signal_match_mode="any",
+        geographies=("Italia",), freshness_max_age_days=365, requested_count=1,
+        budget_eur=0.005, query="finanziamenti recenti",
+        technical_filters={
+            "universal_engine": True,
+            "universal_search_queries": ("finanziamenti recenti",),
+            "universal_page_fetch": lambda url: ("<html><body>Annunciato un finanziamento il 12 marzo 2026.</body></html>", url),
+            "universal_prefilter_telemetry": {},
+        },
+    )
+    result = asyncio.run(GenericWebResearchAdapter().discover(request))
+    assert result.candidates == ()
+    assert "COMPANY_IDENTITY_UNRESOLVED" in result.warnings
+    assert "Nova Spa" not in repr(result)
+
+
+def test_universal_record_without_explicit_matched_signal_is_not_promoted(monkeypatch):
+    async def provider(request, offset, limit):
+        return GenericWebProviderResult(({
+            "company_name": "Acme Industrie Srl",
+            "official_domain": "acme-industrie.it",
+            "official_domain_verified": True,
+            "entity_class": "operating_company",
+            "matched_signal_ids": (),
+            "published_at": date.today().isoformat(),
+            "source_url": "https://acme-industrie.it/news/evento",
+            "source_publisher": "Acme Industrie Srl",
+            "source_class": "official_company_website",
+            "evidence_excerpt": "Acme Industrie Srl annuncia un evento verificabile.",
+            "why_now": "Evento verificabile",
+            "buyer_fit": 0.8,
+        },), 0.0)
+
+    monkeypatch.setattr(generic_web, "_valid_record", lambda *args: (True, ""))
+    request = AdapterDiscoveryRequest(
+        intent="commercial_search", signal_ids=("funding",), signal_match_mode="any",
+        geographies=("Italia",), freshness_max_age_days=365, requested_count=1,
+        budget_eur=0.0, query="funding", technical_filters={"universal_engine": True},
+    )
+    result = asyncio.run(GenericWebResearchAdapter((provider,)).discover(request))
+    assert result.candidates == ()
+    assert "NO_REQUESTED_SIGNAL_EVIDENCE" in result.warnings
 
 
 @pytest.mark.parametrize(

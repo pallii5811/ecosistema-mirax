@@ -298,17 +298,72 @@ def _gate_serp_hits(
 
 
 def _hits_from_urls(urls: Sequence[str], *, query: str) -> List[Dict[str, str]]:
+    """Normalize legacy URL-only providers without fabricating SERP evidence."""
     out: List[Dict[str, str]] = []
     for url in urls:
-        path = (urlparse(url).path or "").replace("/", " ").replace("-", " ").replace("_", " ")
-        out.append({"url": url, "title": "", "snippet": f"{path} {query}"})
+        out.append({"url": url, "title": "", "snippet": "", "source_type": "search", "provider": "legacy_url"})
     return out
+
+
+_GENERIC_TITLE_RE = re.compile(
+    r"\b(?:news|notizie|comunicato|stampa|evento|eventi|home|homepage|blog|"
+    r"finanziamento|funding|round|nomina|partnership|tecnologia|marketing)\b",
+    re.I,
+)
+_LEGAL_ENTITY_RE = re.compile(
+    r"\b([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,5}"
+    r"\s+(?:S\.?\s?p\.?\s?A\.?|S\.?\s?r\.?\s?l\.?|Srl|Spa|S\.p\.A\.))\b"
+)
+
+
+def _structured_subject_company(html: str) -> str:
+    soup = BeautifulSoup(html or "", "html.parser")
+    for script in soup.find_all("script", attrs={"type": re.compile("ld\\+json", re.I)}):
+        try:
+            payload = json.loads(script.string or script.get_text() or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        for item in _iter_json(payload):
+            subjects: List[Any] = []
+            for key in ("about", "mentions", "hiringOrganization"):
+                value = item.get(key)
+                subjects.extend(value if isinstance(value, list) else [value])
+            for subject in subjects:
+                if not isinstance(subject, Mapping):
+                    continue
+                raw_type = subject.get("@type")
+                types = raw_type if isinstance(raw_type, list) else [raw_type]
+                name = _text(subject.get("name"))
+                if name and any(value in {"Organization", "Corporation", "LocalBusiness"} for value in types):
+                    return name
+    return ""
+
+
+def _company_identity_hint(*, title: str, snippet: str, html: str) -> str:
+    """Return only an identity explicitly present in acquired evidence."""
+    structured = _structured_subject_company(html)
+    if structured:
+        return structured
+    visible = _text(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)) or ""
+    combined = f"{title} {snippet} {visible[:100_000]}"
+    legal = _LEGAL_ENTITY_RE.search(combined)
+    if legal:
+        return legal.group(1).strip()
+    leading = re.split(r"\s+[|–—-]\s+|:\s+", title or "", maxsplit=1)[0].strip()
+    if (
+        2 <= len(leading) <= 90
+        and not _GENERIC_TITLE_RE.search(leading)
+        and re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", leading)
+        and leading.casefold() in snippet.casefold()
+    ):
+        return leading
+    return ""
 
 
 async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: int, limit: int) -> GenericWebProviderResult:
     import asyncio
     import httpx
-    from backend_mirror.agents.search_serp import search_urls_http
+    from backend_mirror.agents.search_serp import search_hits_http, search_urls_http
     from .universal_evidence import extract_evidence_from_text
 
     queries = diversified_queries(request)
@@ -322,6 +377,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
     spent = 0.0
     accepted_hits: List[Any] = []
     seen: set[str] = set()
+    provider_warnings: List[str] = []
 
     for index, query in enumerate(queries[:max_queries]):
         if spent + _QUERY_COST_EUR > request.budget_eur + 1e-9:
@@ -332,18 +388,37 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
             if found_hits and isinstance(found_hits[0], str):
                 found_hits = _hits_from_urls(found_hits, query=query)
         else:
-            found_urls = await asyncio.to_thread(
-                search_urls_http, query, target, cost_scope=f"generic-web:{scope}:{index}",
-            )
+            if universal:
+                found_hits = await asyncio.to_thread(
+                    search_hits_http, query, target, cost_scope=f"generic-web:{scope}:{index}",
+                )
+            else:
+                found_urls = await asyncio.to_thread(
+                    search_urls_http, query, target, cost_scope=f"generic-web:{scope}:{index}",
+                )
+                found_hits = _hits_from_urls(found_urls, query=query)
             spent += _QUERY_COST_EUR
-            found_hits = _hits_from_urls(found_urls, query=query)
         if universal:
             gated = _gate_serp_hits(request, found_hits, provider_query=query)
+            rich_by_url = {
+                str(item.get("url") or item.get("link") or "").lower().rstrip("/"): item
+                for item in found_hits
+                if isinstance(item, Mapping)
+            }
             for hit in gated:
                 key = hit.url.lower().rstrip("/")
                 if key not in seen:
                     seen.add(key)
-                    accepted_hits.append(hit)
+                    original = rich_by_url.get(key) or {}
+                    accepted_hits.append({
+                        "url": hit.url,
+                        "title": hit.title,
+                        "snippet": hit.snippet,
+                        "publisher": hit.publisher,
+                        "source_type": str(original.get("source_type") or "search"),
+                        "provider": str(original.get("provider") or "unknown"),
+                        "provider_query": query,
+                    })
         else:
             for item in found_hits:
                 url = str(item.get("url") or "")
@@ -361,6 +436,8 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
             url = item.url if hasattr(item, "url") else str(item.get("url") or "")
             title = item.title if hasattr(item, "title") else str(item.get("title") or "")
             snippet = item.snippet if hasattr(item, "snippet") else str(item.get("snippet") or "")
+            search_provider = str(item.get("provider") or "unknown") if isinstance(item, Mapping) else "unknown"
+            provider_query = str(item.get("provider_query") or request.query) if isinstance(item, Mapping) else request.query
             try:
                 if callable(page_fetch):
                     html, final_url = await asyncio.to_thread(page_fetch, url)
@@ -372,12 +449,16 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                     final_url = str(response.url)
                 pages_opened += 1
                 if universal:
+                    company_hint = _company_identity_hint(title=title, snippet=snippet, html=html)
+                    if not company_hint:
+                        provider_warnings.append("COMPANY_IDENTITY_UNRESOLVED")
+                        continue
                     events = extract_evidence_from_text(
                         text=html,
                         source_url=final_url,
                         source_class="recognized_news",
                         publisher=title or _host(final_url),
-                        company_name_hint=(title.split("–")[0].split("-")[0].split("—")[0].strip() if title else "") or "Nova Spa",
+                        company_name_hint=company_hint,
                         requested_signals=(),
                     )
                     if not events and snippet:
@@ -386,7 +467,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             source_url=final_url,
                             source_class="recognized_news",
                             publisher=title or _host(final_url),
-                            company_name_hint=(title.split("–")[0].split("-")[0].split("—")[0].strip() if title else "") or "Nova Spa",
+                            company_name_hint=company_hint,
                             requested_signals=(),
                         )
                     for event in events:
@@ -428,7 +509,8 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             "query_origin": request.technical_filters.get("query_origin") or request.query,
                             "parent_query": request.technical_filters.get("parent_query") or request.query,
                             "discovery_round": int(request.technical_filters.get("discovery_round") or 1),
-                            "provider_query": (request.technical_filters.get("universal_search_queries") or (request.query,))[0],
+                            "provider_query": provider_query,
+                            "search_provider": search_provider,
                         })
                 else:
                     records.extend(parse_primary_evidence_page(html, final_url, request))
@@ -436,7 +518,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                 continue
     if universal:
         _record_prefilter(request, raw=0, accepted=0, rejected=0, codes={}, pages=pages_opened)
-    return GenericWebProviderResult(tuple(records), spent)
+    return GenericWebProviderResult(tuple(records), spent, tuple(provider_warnings))
 
 
 def _cursor_offset(cursor: Optional[DiscoveryCursor]) -> int:
@@ -614,8 +696,9 @@ class GenericWebResearchAdapter:
                     continue
                 seen.add(domain)
                 matched = tuple(str(item) for item in record.get("matched_signal_ids") or () if str(item) in request.signal_ids)
-                if not matched and universal:
-                    matched = tuple(request.signal_ids[:1])
+                if not matched:
+                    warnings.append("NO_REQUESTED_SIGNAL_EVIDENCE")
+                    continue
                 published = _iso_date(record.get("published_at")) or ""
                 source_url = _text(record.get("source_url")) or ""
                 publisher = _text(record.get("source_publisher")) or ""

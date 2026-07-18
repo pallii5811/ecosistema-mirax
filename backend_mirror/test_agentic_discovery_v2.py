@@ -19,7 +19,8 @@ from agents.portal_blacklist import (
     is_extraction_blocked_source,
 )
 from agents.search_serp import _extract_links_from_html
-from agents.search_serp import _dedupe_urls, search_urls_http
+import agents.search_serp as search_serp
+from agents.search_serp import _dedupe_urls, search_hits_http, search_urls_http
 from agents.data_extractor import _heuristic_extract_companies
 from agents.web_researcher import (
     WebResearcher,
@@ -73,6 +74,70 @@ def test_search_provider_prefers_api_and_blocks_code_hosts() -> None:
         return_value=api_urls,
     ), patch("agents.search_serp._ddg_pages", side_effect=AssertionError("html fallback should not run")):
         assert search_urls_http("Business Developer Italia", 5) == api_urls
+
+
+def test_serper_rich_hit_preserves_title_url_snippet(monkeypatch) -> None:
+    monkeypatch.setenv("SERPER_API_KEY", "test-key")
+    monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
+    calls: list[tuple[str, str]] = []
+
+    def rows(endpoint: str, query: str, **kwargs):
+        calls.append((endpoint, query))
+        return [
+            {"link": "https://acme-industrie.it/news/round", "title": "Acme Industrie Srl raccoglie un round", "snippet": "Acme Industrie Srl ha raccolto un finanziamento nel 2026."},
+            {"link": "https://beta-industrie.it/news/round", "title": "Beta Industrie Srl raccoglie capitale", "snippet": "Beta Industrie Srl ha raccolto un investimento nel 2026."},
+        ]
+
+    monkeypatch.setattr(search_serp, "_serper_rows", rows)
+    hits = search_hits_http("aziende finanziamento 2026", 1)
+    assert hits == [{
+        "url": "https://acme-industrie.it/news/round",
+        "title": "Acme Industrie Srl raccoglie un round",
+        "snippet": "Acme Industrie Srl ha raccolto un finanziamento nel 2026.",
+        "source_type": "search",
+        "provider": "serper",
+    }]
+    assert calls == [("search", "aziende finanziamento 2026")]
+
+
+def test_brave_rich_hit_preserves_metadata(monkeypatch) -> None:
+    monkeypatch.delenv("SERPER_API_KEY", raising=False)
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "test-key")
+    monkeypatch.setattr(search_serp, "_get_json", lambda *args, **kwargs: {
+        "web": {"results": [{
+            "url": "https://acme-tech.it/news/crm",
+            "title": "Acme Tech Srl adotta un CRM",
+            "description": "Acme Tech Srl implementa la piattaforma CRM il 12 marzo 2026.",
+        }]}
+    })
+    hits = search_hits_http("adozione CRM", 1)
+    assert hits[0] == {
+        "url": "https://acme-tech.it/news/crm",
+        "title": "Acme Tech Srl adotta un CRM",
+        "snippet": "Acme Tech Srl implementa la piattaforma CRM il 12 marzo 2026.",
+        "source_type": "search",
+        "provider": "brave",
+    }
+
+
+def test_search_urls_projects_one_rich_provider_execution(monkeypatch) -> None:
+    calls = 0
+
+    def rich(query: str, target: int):
+        nonlocal calls
+        calls += 1
+        return [{"url": "https://acme.it/news", "title": "Acme", "snippet": "evento", "source_type": "news", "provider": "serper"}]
+
+    monkeypatch.setattr(search_serp, "_search_serper_hits", rich)
+    monkeypatch.setattr(search_serp, "_search_brave_hits", lambda *args: (_ for _ in ()).throw(AssertionError("second provider called")))
+    monkeypatch.setenv("SERPER_API_KEY", "test-key")
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "test-key")
+    monkeypatch.setattr(search_serp, "_search_openai_web", lambda *args: [])
+    monkeypatch.setattr(search_serp, "_ddg_pages", lambda *args: [])
+    monkeypatch.setattr(search_serp, "_bing_pages", lambda *args: [])
+    monkeypatch.setattr(search_serp, "_brave_page", lambda *args: [])
+    assert search_urls_http("query", 2) == ["https://acme.it/news"]
+    assert calls == 1
 
 
 def test_extractor_has_evidence_first_fallback_for_rate_limits() -> None:

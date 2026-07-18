@@ -205,11 +205,15 @@ def _result_score(query: str, url: str, title: str = "", snippet: str = "", sour
     return score
 
 
-def _dedupe_ranked_candidates(candidates: Iterable[Tuple[str, str, str, str]], limit: int, query: str = "") -> List[str]:
-    """Deduplicate by URL and cap host dominance after ranking."""
-    scored: List[Tuple[int, str]] = []
+def _dedupe_ranked_hits(
+    candidates: Iterable[Tuple[str, str, str, str, str]],
+    limit: int,
+    query: str = "",
+) -> List[Dict[str, str]]:
+    """Deduplicate rich SERP hits by URL and cap host dominance after ranking."""
+    scored: List[Tuple[int, Dict[str, str]]] = []
     seen: Set[str] = set()
-    for raw_url, title, snippet, source_type in candidates:
+    for raw_url, title, snippet, source_type, provider in candidates:
         url = _clean_result_url(str(raw_url or ""))
         if not url or not _allowed(url):
             continue
@@ -217,23 +221,39 @@ def _dedupe_ranked_candidates(candidates: Iterable[Tuple[str, str, str, str]], l
         if key in seen:
             continue
         seen.add(key)
-        scored.append((_result_score(query, url, title, snippet, source_type), url))
+        scored.append((
+            _result_score(query, url, title, snippet, source_type),
+            {
+                "url": url,
+                "title": str(title or ""),
+                "snippet": str(snippet or ""),
+                "source_type": str(source_type or "search"),
+                "provider": str(provider or "unknown"),
+            },
+        ))
 
     scored.sort(key=lambda item: item[0], reverse=True)
-    out: List[str] = []
+    out: List[Dict[str, str]] = []
     host_counts: Dict[str, int] = {}
     max_per_host = max(2, int(os.getenv("SERPER_MAX_URLS_PER_HOST", "4") or "4"))
-    for score, url in scored:
+    for score, hit in scored:
         if score < -100:
             continue
+        url = hit["url"]
         host = _candidate_host(url)
         if host_counts.get(host, 0) >= max_per_host:
             continue
         host_counts[host] = host_counts.get(host, 0) + 1
-        out.append(url)
+        out.append(hit)
         if len(out) >= limit:
             break
     return out
+
+
+def _dedupe_ranked_candidates(candidates: Iterable[Tuple[str, str, str, str]], limit: int, query: str = "") -> List[str]:
+    """Backward-compatible URL projection of ranked SERP candidates."""
+    rich = ((url, title, snippet, source_type, "unknown") for url, title, snippet, source_type in candidates)
+    return [hit["url"] for hit in _dedupe_ranked_hits(rich, limit, query)]
 
 
 def _clean_result_url(raw_url: str) -> str:
@@ -346,14 +366,14 @@ def _serper_query_variants(query: str) -> List[str]:
     return variants
 
 
-def _search_serper_api(query: str, target: int) -> List[str]:
+def _search_serper_hits(query: str, target: int) -> List[Dict[str, str]]:
     key = os.getenv("SERPER_API_KEY", "").strip()
     if not key:
         return []
     last_error: Optional[Exception] = None
     for active_query in _serper_query_variants(query):
         retry_next_variant = False
-        candidates: List[Tuple[str, str, str, str]] = []
+        candidates: List[Tuple[str, str, str, str, str]] = []
         per_page = min(SERPER_RESULTS_PER_PAGE, max(10, target))
         pages = min(SERPER_MAX_PAGES, max(1, (target + per_page - 1) // per_page + 1))
         for page in range(1, pages + 1):
@@ -382,6 +402,7 @@ def _search_serper_api(query: str, target: int) -> List[str]:
                     str(row.get("title") or ""),
                     str(row.get("snippet") or ""),
                     "search",
+                    "serper",
                 ))
             if len(candidates) >= target * 2:
                 break
@@ -389,7 +410,7 @@ def _search_serper_api(query: str, target: int) -> List[str]:
         if retry_next_variant:
             continue
 
-        if SERPER_NEWS_ENABLED and _NEWSY_QUERY_RE.search(active_query):
+        if SERPER_NEWS_ENABLED and len(candidates) < target and _NEWSY_QUERY_RE.search(active_query):
             try:
                 for row in _serper_rows("news", active_query, num=min(10, max(3, target // 3)), page=1):
                     candidates.append((
@@ -397,11 +418,12 @@ def _search_serper_api(query: str, target: int) -> List[str]:
                         str(row.get("title") or ""),
                         str(row.get("snippet") or ""),
                         "news",
+                        "serper",
                     ))
             except Exception as exc:
                 logger.debug("SERPER news failed query=%r: %s", active_query[:70], exc)
 
-        found = _dedupe_ranked_candidates(candidates, target, active_query)
+        found = _dedupe_ranked_hits(candidates, target, active_query)
         if found:
             logger.info("SERPER API: %s ranked urls for query=%r candidates=%s", len(found), active_query[:70], len(candidates))
         return found
@@ -410,7 +432,11 @@ def _search_serper_api(query: str, target: int) -> List[str]:
     return []
 
 
-def _search_brave_api(query: str, target: int) -> List[str]:
+def _search_serper_api(query: str, target: int) -> List[str]:
+    return [hit["url"] for hit in _search_serper_hits(query, target)]
+
+
+def _search_brave_hits(query: str, target: int) -> List[Dict[str, str]]:
     key = os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
     if not key:
         return []
@@ -421,14 +447,28 @@ def _search_brave_api(query: str, target: int) -> List[str]:
         )
         data = _get_json(url, {"X-Subscription-Token": key, "Accept": "application/json", "User-Agent": USER_AGENT})
         rows = ((data.get("web") or {}).get("results") or []) if isinstance(data, dict) else []
-        urls = [str(row.get("url") or "") for row in rows if isinstance(row, dict)]
-        found = _dedupe_urls(urls, target)
+        candidates = [
+            (
+                str(row.get("url") or ""),
+                str(row.get("title") or ""),
+                str(row.get("description") or ""),
+                "search",
+                "brave",
+            )
+            for row in rows
+            if isinstance(row, dict)
+        ]
+        found = _dedupe_ranked_hits(candidates, target, query)
         if found:
             logger.info("BRAVE API: %s urls for query=%r", len(found), query[:70])
         return found
     except Exception as exc:
         logger.warning("BRAVE API failed query=%r: %s", query[:70], exc)
         return []
+
+
+def _search_brave_api(query: str, target: int) -> List[str]:
+    return [hit["url"] for hit in _search_brave_hits(query, target)]
 
 
 def _openai_web_search_payload(query: str, target: int, model: str, tool_type: str) -> Dict[str, Any]:
@@ -635,12 +675,20 @@ def _brave_page(
     return _extract_links_from_html(html, search_url, seen_urls, host_counts)[:target]
 
 
-def search_urls_http(
+def _url_hits(urls: Iterable[str], provider: str) -> List[Dict[str, str]]:
+    return [
+        {"url": url, "title": "", "snippet": "", "source_type": "search", "provider": provider}
+        for url in urls
+        if url
+    ]
+
+
+def search_hits_http(
     query: str,
     max_results: int = DEFAULT_SERP_TARGET,
     *,
     cost_scope: Optional[str] = None,
-) -> List[str]:
+) -> List[Dict[str, str]]:
     """
     API/browsing first, HTML fallback last.
     Target default 25 URL; non blocca se una sorgente SERP fallisce.
@@ -675,43 +723,77 @@ def search_urls_http(
             if reservation.status != "reserved":
                 reservation_key = None
                 logger.info("supplemental SERP idempotency hit status=%s; paid providers skipped", reservation.status)
-    collected: List[str] = []
+    collected: List[Dict[str, str]] = []
+    collected_keys: Set[str] = set()
     seen_urls: Set[str] = set()
     host_counts: Dict[str, int] = {}
 
-    paid_providers = (
-        (_search_serper_api, _search_brave_api, _search_openai_web)
-        if not cost_scope or reservation_key
-        else ()
-    )
+    paid_providers = ()
+    if not cost_scope or reservation_key:
+        if os.getenv("SERPER_API_KEY", "").strip():
+            paid_providers = (_search_serper_hits,)
+        elif os.getenv("BRAVE_SEARCH_API_KEY", "").strip():
+            paid_providers = (_search_brave_hits,)
     for provider in paid_providers:
-        for url in provider(query, target):
-            if url not in collected:
-                collected.append(url)
+        for hit in provider(query, target):
+            key = hit["url"].lower().rstrip("/")
+            if key not in collected_keys:
+                collected_keys.add(key)
+                collected.append(hit)
             if len(collected) >= target:
                 if reservation_key and governor:
                     governor.settle(reservation_key, estimated_cost, metadata={"result_count": len(collected)})
                 return collected[:target]
 
+    if (not cost_scope or reservation_key) and len(collected) < target:
+        for hit in _url_hits(_search_openai_web(query, target), "openai_web_search"):
+            key = hit["url"].lower().rstrip("/")
+            if key not in collected_keys:
+                collected_keys.add(key)
+                collected.append(hit)
+            if len(collected) >= target:
+                break
+
+    if len(collected) >= target:
+        if reservation_key and governor:
+            governor.settle(reservation_key, estimated_cost, metadata={"result_count": len(collected)})
+        return collected[:target]
+
     if reservation_key and governor:
         governor.settle(reservation_key, estimated_cost, metadata={"result_count": len(collected)})
 
-    for url in _ddg_pages(query, target):
-        if url not in collected:
-            collected.append(url)
+    for hit in _url_hits(_ddg_pages(query, target), "duckduckgo_html"):
+        key = hit["url"].lower().rstrip("/")
+        if key not in collected_keys:
+            collected_keys.add(key)
+            collected.append(hit)
         if len(collected) >= target:
             return collected[:target]
 
-    for url in _bing_pages(query, target - len(collected)):
-        if url not in collected:
-            collected.append(url)
+    for hit in _url_hits(_bing_pages(query, target - len(collected)), "bing_html"):
+        key = hit["url"].lower().rstrip("/")
+        if key not in collected_keys:
+            collected_keys.add(key)
+            collected.append(hit)
         if len(collected) >= target:
             return collected[:target]
 
-    for url in _brave_page(query, target - len(collected), seen_urls, host_counts):
-        if url not in collected:
-            collected.append(url)
+    for hit in _url_hits(_brave_page(query, target - len(collected), seen_urls, host_counts), "brave_html"):
+        key = hit["url"].lower().rstrip("/")
+        if key not in collected_keys:
+            collected_keys.add(key)
+            collected.append(hit)
         if len(collected) >= target:
             break
 
     return collected[:target]
+
+
+def search_urls_http(
+    query: str,
+    max_results: int = DEFAULT_SERP_TARGET,
+    *,
+    cost_scope: Optional[str] = None,
+) -> List[str]:
+    """Backward-compatible URL projection. Performs exactly one SERP execution."""
+    return [hit["url"] for hit in search_hits_http(query, max_results, cost_scope=cost_scope)]
