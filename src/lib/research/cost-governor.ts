@@ -73,17 +73,14 @@ export class ResearchCostGovernor {
     const actualMicroEur = toMicroEur(actualCostEur)
     const withoutCurrent = this.committedMicroEur - (reservation.actualMicroEur ?? reservation.estimatedMicroEur)
     const remainingForActual = this.hardMicroEur - withoutCurrent
-    // Clamp: never let settled+reservations exceed hard_cap (S1 €0.0656 class).
-    const clamped = Math.min(actualMicroEur, Math.max(0, remainingForActual))
+    // Provider actual is never clamped. Overspend prevention is reserve() before the call.
+    reservation.actualMicroEur = actualMicroEur
+    reservation.status = 'settled'
     if (actualMicroEur > remainingForActual) {
-      reservation.actualMicroEur = clamped
-      reservation.status = 'settled'
       throw new ResearchBudgetExceededError(
-        'Actual operation cost exceeded hard budget; settled clamped; termination=partial_budget_exhausted',
+        'Actual operation cost exceeded hard budget; provider actual recorded; termination=partial_budget_exhausted',
       )
     }
-    reservation.actualMicroEur = clamped
-    reservation.status = 'settled'
     return reservation
   }
 

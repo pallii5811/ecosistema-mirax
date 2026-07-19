@@ -100,8 +100,8 @@ def test_governor_fails_closed_when_persistent_reservation_fails():
         governor.reserve("search:round:1", "web_search", 0.01)
     assert governor.snapshot()["committed_cost_eur"] == 0
 
-def test_settle_clamps_actual_so_committed_never_exceeds_hard_cap():
-    # S1 regression: actual>estimate must not push committed above hard (0.0656 class).
+def test_settle_records_full_provider_actual_without_clamp():
+    # Provider actual must remain integral even when it overshoots the residual hard cap.
     governor = ResearchCostGovernor.from_plan(
         {"canonical_plan": {"budget_policy": {"target_cost_eur": 0.042, "hard_cost_eur": 0.05}}},
         2,
@@ -112,8 +112,8 @@ def test_settle_clamps_actual_so_committed_never_exceeds_hard_cap():
     governor.settle("search:1", 0.02)
     governor.reserve("search:2", "search_web", 0.02)
     with pytest.raises(ResearchBudgetExceeded, match="partial_budget_exhausted"):
-        governor.settle("search:2", 0.0306)  # would have made 0.0556 historically
-    assert governor.snapshot()["committed_cost_eur"] <= 0.05 + 1e-9
+        governor.settle("search:2", 0.0306)  # 0.0556 total > 0.05 hard
+    assert governor.snapshot()["committed_cost_eur"] == pytest.approx(0.0556)
     with pytest.raises(ResearchBudgetExceeded):
         governor.reserve("search:3", "web_search", 0.005)
 

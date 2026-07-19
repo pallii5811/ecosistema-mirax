@@ -35,6 +35,7 @@ from .shadow_runtime import (
     candidate_to_lifecycle_shadow_payload,
     execute_source_adapter_shadow,
     serialize_shadow_qualified_leads,
+    source_adapter_orchestrator_requested,
     source_adapter_shadow_decision,
 )
 from .universal_query_spec import UniversalQuerySpec, compile_universal_query_spec, CANARY_QUERY_SPECS
@@ -95,5 +96,6 @@ __all__ = [
     "candidate_to_lifecycle_shadow_payload",
     "execute_source_adapter_shadow",
     "serialize_shadow_qualified_leads",
+    "source_adapter_orchestrator_requested",
     "source_adapter_shadow_decision",
 ]

@@ -59,8 +59,6 @@ def revalidate_hiring_payload_geographies(
             payload["geography_revalidated"] = True
             rejected.append(payload)
     return accepted, rejected
-def _truthy(value: object) -> bool:
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -69,12 +67,39 @@ class ShadowRuntimeDecision:
     reason: str
 
 
+EXECUTION_RUNTIME_SOURCE_ADAPTER = "source_adapter_orchestrator"
+
+
+def _truthy(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _execution_runtime(intent: object) -> str:
+    if not isinstance(intent, Mapping):
+        return ""
+    explicit = str(intent.get("execution_runtime") or "").strip()
+    if explicit:
+        return explicit
+    if (
+        intent.get("source_adapter_shadow") is True
+        and str(intent.get("lifecycle_stage") or "") == "v5_shadow"
+    ):
+        return EXECUTION_RUNTIME_SOURCE_ADAPTER
+    return ""
+
+
+def source_adapter_orchestrator_requested(intent: object) -> bool:
+    return _execution_runtime(intent) == EXECUTION_RUNTIME_SOURCE_ADAPTER
+
+
 def source_adapter_shadow_decision(
     intent: object,
     *,
     environ: Optional[Mapping[str, str]] = None,
 ) -> ShadowRuntimeDecision:
     env = environ or os.environ
+    if not source_adapter_orchestrator_requested(intent):
+        return ShadowRuntimeDecision(False, "SOURCE_ADAPTER_RUNTIME_NOT_REQUESTED")
     if not _truthy(env.get("MIRAX_SOURCE_ADAPTER_SHADOW_ENABLED")):
         return ShadowRuntimeDecision(False, "SOURCE_ADAPTER_SHADOW_DISABLED")
     if _truthy(env.get("MIRAX_SEARCH_DISABLED", "1")):
@@ -86,7 +111,6 @@ def source_adapter_shadow_decision(
         intent.get("customer_visible") is False,
         intent.get("prepare_only") is False,
         intent.get("execution_authorized") is True,
-        intent.get("source_adapter_shadow") is True,
     )
     if not all(checks):
         return ShadowRuntimeDecision(False, "SOURCE_ADAPTER_SHADOW_NOT_AUTHORIZED")
@@ -94,7 +118,7 @@ def source_adapter_shadow_decision(
     plan = uqe.get("canonical_plan") if isinstance(uqe.get("canonical_plan"), Mapping) else intent.get("canonical_plan")
     if not isinstance(plan, Mapping):
         return ShadowRuntimeDecision(False, "CANONICAL_PLAN_MISSING")
-    return ShadowRuntimeDecision(True, "AUTHORIZED_SHADOW_ONLY")
+    return ShadowRuntimeDecision(True, "AUTHORIZED_SOURCE_ADAPTER_ORCHESTRATOR")
 
 
 def _canonical_plan(intent: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -113,13 +137,16 @@ def _hard_cap(plan: Mapping[str, Any], environ: Mapping[str, str]) -> float:
 
 
 def _mandatory_adapter_ids(intent: Mapping[str, Any], plan: Mapping[str, Any]) -> Tuple[str, ...]:
+    explicit = intent.get("mandatory_adapter_ids")
+    if isinstance(explicit, list) and explicit:
+        return tuple(dict.fromkeys(str(item).strip() for item in explicit if str(item).strip()))
     uqe = intent.get("uqe_plan") if isinstance(intent.get("uqe_plan"), Mapping) else {}
     source_coverage = uqe.get("source_coverage") if isinstance(uqe.get("source_coverage"), Mapping) else {}
     adapter_ids = source_coverage.get("adapter_ids")
-    if isinstance(adapter_ids, list) and adapter_ids:
-        return tuple(dict.fromkeys(str(item).strip() for item in adapter_ids if str(item).strip()))
-    source_plan = uqe.get("source_plan") if isinstance(uqe.get("source_plan"), list) else []
     collected: list[str] = []
+    if isinstance(adapter_ids, list) and adapter_ids:
+        collected.extend(str(item).strip() for item in adapter_ids if str(item).strip())
+    source_plan = uqe.get("source_plan") if isinstance(uqe.get("source_plan"), list) else []
     for lane in source_plan:
         if not isinstance(lane, Mapping) or lane.get("execution_mode") != "adapter":
             continue
@@ -127,9 +154,15 @@ def _mandatory_adapter_ids(intent: Mapping[str, Any], plan: Mapping[str, Any]) -
             text = str(adapter_id).strip()
             if text:
                 collected.append(text)
-    if collected:
-        return tuple(dict.fromkeys(collected))
-    return ()
+    # Prefer structured hiring ahead of generic when both are present.
+    ordered = list(dict.fromkeys(item for item in collected if item))
+    if "structured_hiring_v1" in ordered and "generic_web_research_v1" in ordered:
+        ordered = [
+            "structured_hiring_v1",
+            *[item for item in ordered if item not in {"structured_hiring_v1", "generic_web_research_v1"}],
+            "generic_web_research_v1",
+        ]
+    return tuple(ordered)
 
 
 async def execute_source_adapter_shadow(

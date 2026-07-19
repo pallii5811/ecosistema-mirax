@@ -186,9 +186,20 @@ class ResearchCostGovernor:
         )
         remaining_for_actual = self.hard_micro_eur - without_current
         requested = _micro(actual_eur)
-        # Preventive clamp: settled + active reservations must never exceed hard_cap.
-        amount = min(requested, max(0, remaining_for_actual))
+        # Provider actual is never clamped. Budget recognition / overshoot are metadata only;
+        # overspend prevention is reserve(upper_bound) before the paid call.
+        amount = requested
         overshot = requested > remaining_for_actual
+        budget_recognized = min(requested, max(0, remaining_for_actual))
+        budget_overshoot = max(0, requested - budget_recognized)
+        settle_metadata = {
+            "runtime": "python_worker",
+            "partial_budget_exhausted": overshot,
+            "provider_actual_cost_eur": requested / 1_000_000,
+            "budget_recognized_cost_eur": budget_recognized / 1_000_000,
+            "budget_overshoot_eur": budget_overshoot / 1_000_000,
+            **(metadata or {}),
+        }
         if self.persistent_client is not None and self.search_id:
             try:
                 response = self.persistent_client.rpc(
@@ -197,12 +208,7 @@ class ResearchCostGovernor:
                         "p_search_id": self.search_id,
                         "p_idempotency_key": key,
                         "p_actual_cost_eur": amount / 1_000_000,
-                        "p_metadata": {
-                            "runtime": "python_worker",
-                            "partial_budget_exhausted": overshot,
-                            "requested_actual_cost_eur": requested / 1_000_000,
-                            **(metadata or {}),
-                        },
+                        "p_metadata": settle_metadata,
                     },
                 ).execute()
                 if getattr(response, "data", None) is None:

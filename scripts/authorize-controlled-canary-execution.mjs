@@ -35,6 +35,11 @@ try {
   if (intent.prepare_only !== true || intent.execution_authorized !== false) {
     throw new Error('prepare authorization state invalid')
   }
+  const runtime = String(intent.execution_runtime || '').trim()
+  const legacyShadow = intent.source_adapter_shadow === true
+  if (runtime !== 'source_adapter_orchestrator' && !legacyShadow) {
+    throw new Error('source_adapter_orchestrator execution_runtime required for v5_shadow canary')
+  }
   if (Number(row.hard_budget_eur) > 0.125 || Number(row.hard_budget_eur) <= 0) {
     throw new Error(`invalid hard budget ${row.hard_budget_eur}`)
   }
@@ -68,12 +73,21 @@ try {
   await client.query(
     `update public.searches
         set status='pending',
-            intent=jsonb_set(jsonb_set(intent,'{prepare_only}','false'::jsonb,true),
-                             '{execution_authorized}','true'::jsonb,true),
+            intent=jsonb_set(
+              jsonb_set(
+                jsonb_set(
+                  jsonb_set(intent,'{prepare_only}','false'::jsonb,true),
+                  '{execution_authorized}','true'::jsonb,true
+                ),
+                '{execution_runtime}','"source_adapter_orchestrator"'::jsonb,true
+              ),
+              '{source_adapter_shadow}','true'::jsonb,true
+            ),
             progress=coalesce(progress,'{}'::jsonb) || jsonb_build_object(
               'prepare_complete',true,
               'execution_authorized',true,
-              'execution_authorized_at',now()
+              'execution_authorized_at',now(),
+              'requested_execution_runtime','source_adapter_orchestrator'
             ),
             updated_at=now()
       where id=$1`,

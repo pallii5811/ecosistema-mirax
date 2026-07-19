@@ -64,10 +64,24 @@ def test_shadow_worker_requires_explicit_post_prepare_authorization():
 
 def test_source_adapter_shadow_never_matches_legacy_or_customer_jobs():
     assert _source_adapter_shadow_is_requested({
-        "lifecycle_stage": "v5_shadow", "source_adapter_shadow": True,
+        "lifecycle_stage": "v5_shadow",
+        "customer_visible": False,
+        "execution_runtime": "source_adapter_orchestrator",
     }) is True
     assert _source_adapter_shadow_is_requested({
-        "lifecycle_stage": "v5_shadow", "source_adapter_shadow": False,
+        "lifecycle_stage": "v5_shadow",
+        "customer_visible": False,
+        "source_adapter_shadow": True,
+    }) is True
+    assert _source_adapter_shadow_is_requested({
+        "lifecycle_stage": "v5_shadow",
+        "customer_visible": False,
+        "source_adapter_shadow": False,
+    }) is False
+    assert _source_adapter_shadow_is_requested({
+        "lifecycle_stage": "v5_shadow",
+        "customer_visible": True,
+        "execution_runtime": "source_adapter_orchestrator",
     }) is False
 
 
@@ -83,10 +97,15 @@ def test_source_adapter_shadow_worker_branch_cannot_publish_or_sync_graph():
     assert "_publish_job_results_safe" not in branch
     assert "_sync_neo4j" not in branch
     assert "_sync_search_leads" not in branch
+    assert "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED" in branch
+    assert "fallback_used" in branch
     assert _source_adapter_shadow_is_requested({
         "lifecycle_stage": "customer_search", "source_adapter_shadow": True,
     }) is False
-
+    assert _source_adapter_shadow_is_requested({
+        "lifecycle_stage": "v5_shadow",
+        "customer_visible": False,
+    }) is False
 
 def test_llm_extraction_budget_is_allocated_once_per_required_lane(monkeypatch):
     monkeypatch.setenv("MIRAX_LLM_MAX_CHUNKS_PER_PAGE", "1")

@@ -213,9 +213,21 @@ async function prepare() {
       const codes = compilerDiagnostics.flatMap((event) => event.issues.map((issue) => issue.code))
       throw new Error(`SHADOW_SOURCE_PLAN_INVALID${codes.length ? `:${[...new Set(codes)].join(',')}` : ''}`)
     }
+    const coverageAdapters = (plan.source_coverage?.adapter_ids || [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+    const hiringFamily = requiredSignals.some((signal) => signal.startsWith('hiring'))
+      || coverageAdapters.includes('structured_hiring_v1')
+    const mandatoryAdapterIds = [...new Set([
+      ...coverageAdapters,
+      ...(hiringFamily ? ['structured_hiring_v1', 'generic_web_research_v1'] : []),
+    ])]
     const intent = {
       original_query: spec.query, query: spec.query, requested_leads: maxLeads, max_leads: maxLeads,
       lead_target: maxLeads, customer_visible: false, lifecycle_stage: 'v5_shadow',
+      execution_runtime: 'source_adapter_orchestrator',
+      source_adapter_shadow: true,
+      mandatory_adapter_ids: mandatoryAdapterIds,
       required_signals: plan.required_signals, signals: plan.required_signals.map((type) => ({ type, params: {} })),
       source_plan: plan.source_plan, search_strategy: plan.search_strategy, uqe_plan: plan,
       query_compiler_telemetry: compilerTelemetry,

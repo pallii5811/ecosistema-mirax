@@ -39,6 +39,7 @@ def _intent():
         "customer_visible": False,
         "prepare_only": False,
         "execution_authorized": True,
+        "execution_runtime": "source_adapter_orchestrator",
         "source_adapter_shadow": True,
         "uqe_plan": {"canonical_plan": PLAN},
     }

@@ -4393,11 +4393,31 @@ def _bootstrap_shadow_resume_from_progress(job: Dict[str, Any], *, supabase: Any
 
 
 def _source_adapter_shadow_is_requested(intent: Any) -> bool:
-    return bool(
-        isinstance(intent, dict)
-        and str(intent.get("lifecycle_stage") or "") == "v5_shadow"
-        and intent.get("source_adapter_shadow") is True
-    )
+    """v5_shadow canaries that explicitly request the SourceAdapter orchestrator."""
+    if not isinstance(intent, dict):
+        return False
+    if str(intent.get("lifecycle_stage") or "") != "v5_shadow":
+        return False
+    if intent.get("customer_visible") is True:
+        return False
+    try:
+        from source_adapters.shadow_runtime import source_adapter_orchestrator_requested
+    except Exception:
+        from backend_mirror.source_adapters.shadow_runtime import (  # type: ignore
+            source_adapter_orchestrator_requested,
+        )
+    return source_adapter_orchestrator_requested(intent)
+
+
+def _requested_execution_runtime(intent: Any) -> str:
+    if not isinstance(intent, dict):
+        return ""
+    explicit = str(intent.get("execution_runtime") or "").strip()
+    if explicit:
+        return explicit
+    if intent.get("source_adapter_shadow") is True:
+        return "source_adapter_orchestrator"
+    return ""
 
 
 def main() -> None:
@@ -5363,7 +5383,9 @@ def main() -> None:
                     "qualified_lead_payloads": prior_qualified_payloads,
                     "geography_revalidation_rejections": geography_rejected_payloads,
                 }
+                requested_runtime = _requested_execution_runtime(intent)
                 if not shadow_decision.enabled:
+                    # Explicit runtime was requested: never fall through to Maps/agentic.
                     _heartbeat_stop.set()
                     supabase.table("searches").update({
                         "status": "error",
@@ -5373,7 +5395,15 @@ def main() -> None:
                         "lease_expires_at": None,
                         "progress": {
                             "stage": "source_adapter_shadow_blocked",
-                            "stop_reason": shadow_decision.reason,
+                            "stop_reason": "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED",
+                            "termination": "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED",
+                            "termination_reason": "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED",
+                            "requested_execution_runtime": requested_runtime,
+                            "actual_execution_runtime": None,
+                            "selected_adapter_ids": [],
+                            "executed_adapter_ids": [],
+                            "fallback_used": False,
+                            "fallback_reason": shadow_decision.reason,
                             "target": job_max,
                             "found": len(prior_qualified_payloads),
                             "unique_lifecycle_accepted_count": unique_prior_count,
@@ -5522,9 +5552,22 @@ def main() -> None:
                     final_status = "completed" if len(unique_lifecycle_keys) >= int(job_max) or not resumable else "pending"
                     cumulative_raw = int(shadow_resume.get("cumulative_raw_unique") or 0)
                     cumulative_audited = int(shadow_resume.get("cumulative_audited") or 0)
+                    selected_adapter_ids = list(shadow_result.coverage.adapter_ids)
+                    executed_adapter_ids = [
+                        item.adapter_id
+                        for item in shadow_result.adapter_progress
+                        if int(getattr(item, "calls", 0) or 0) > 0
+                    ]
                     final_shadow_progress = {
                         "stage": "source_adapter_shadow_resumable" if resumable else "source_adapter_shadow_completed",
                         "stop_reason": shadow_result.status if len(unique_lifecycle_keys) >= int(job_max) else "UNIQUE_EMPLOYER_TARGET_NOT_REACHED",
+                        "execution_runtime": "source_adapter_orchestrator",
+                        "requested_execution_runtime": requested_runtime,
+                        "actual_execution_runtime": "source_adapter_orchestrator",
+                        "selected_adapter_ids": selected_adapter_ids,
+                        "executed_adapter_ids": executed_adapter_ids,
+                        "fallback_used": False,
+                        "fallback_reason": None,
                         "target": int(job_max),
                         "found": len(unique_lifecycle_keys),
                         "discovered": cumulative_raw,
@@ -5543,20 +5586,32 @@ def main() -> None:
                             **({"GEO_OUT_OF_SCOPE": len(geography_rejected_payloads)} if geography_rejected_payloads else {}),
                         },
                         "coverage_status": shadow_result.coverage.status,
-                        "selected_adapters": list(shadow_result.coverage.adapter_ids),
+                        "selected_adapters": selected_adapter_ids,
                         "missing_signals": list(shadow_result.coverage.missing_signals),
                         "coverage_reasons": list(shadow_result.coverage.reasons),
                         "adapter_telemetry": [
                             (
-                                item.to_root_cause_telemetry()
+                                {
+                                    **item.to_root_cause_telemetry(),
+                                    "execution_runtime": "source_adapter_orchestrator",
+                                    "actual_cost": round(float(item.cost_eur or 0.0), 6),
+                                    "estimated_cost": round(float(item.estimated_cost_eur or 0.0), 6),
+                                    "domains_resolved": int(
+                                        getattr(item, "official_domains_resolved", 0) or 0
+                                    ),
+                                    "termination": item.exhaustion_reason or shadow_result.status,
+                                }
                                 if hasattr(item, "to_root_cause_telemetry")
                                 else {
                                     "adapter_id": item.adapter_id,
+                                    "execution_runtime": "source_adapter_orchestrator",
                                     "calls": item.calls,
                                     "operations": item.operations,
                                     "raw_candidates": item.raw_candidates,
                                     "unique_candidates": item.unique_candidates,
                                     "qualified": item.qualified,
+                                    "estimated_cost": round(float(getattr(item, "estimated_cost_eur", 0.0) or 0.0), 6),
+                                    "actual_cost": round(float(item.cost_eur or 0.0), 6),
                                     "cost_eur": item.cost_eur,
                                     "exhausted": item.exhausted,
                                     "exhaustion_authoritative": bool(getattr(item, "exhaustion_authoritative", False)),
@@ -5565,6 +5620,7 @@ def main() -> None:
                                     "warnings": list(item.warnings),
                                     "acquisition": dict(getattr(item, "acquisition_telemetry", {}) or {}),
                                     "next_cursor": item.next_cursor.value if item.next_cursor else None,
+                                    "termination": item.exhaustion_reason or shadow_result.status,
                                 }
                             )
                             for item in shadow_result.adapter_progress
@@ -5574,6 +5630,7 @@ def main() -> None:
                             for item in shadow_result.adapter_progress
                             for trace in (getattr(item, "projection_traces", None) or [])
                         ],
+                        "termination": shadow_result.status,
                         "termination_reason": shadow_result.status,
                         "provider_exhausted": provider_exhausted,
                         "provider_exhausted_authoritative": provider_exhausted,
@@ -5609,7 +5666,15 @@ def main() -> None:
                         "lease_expires_at": None,
                         "progress": {
                             "stage": "source_adapter_shadow_failed",
-                            "stop_reason": "SOURCE_ADAPTER_SHADOW_FAILED",
+                            "stop_reason": "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED",
+                            "termination": "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED",
+                            "termination_reason": "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED",
+                            "requested_execution_runtime": requested_runtime,
+                            "actual_execution_runtime": None,
+                            "selected_adapter_ids": [],
+                            "executed_adapter_ids": [],
+                            "fallback_used": False,
+                            "fallback_reason": f"{shadow_error.__class__.__name__}:{str(shadow_error)[:200]}",
                             "error_type": shadow_error.__class__.__name__,
                             "error_message": str(shadow_error)[:500],
                             "target": job_max,

@@ -826,7 +826,19 @@ class UniversalSourceOrchestrator:
                 await outcome
 
         while round_index < self.max_rounds and time.monotonic() - start_clock < self.max_seconds:
-            active = [state for state in states.values() if not state.exhausted]
+            if mandatory:
+                # Mandatory order is sequential: earlier adapters consume budget first.
+                # generic_web (and later peers) start only after prior adapters are exhausted
+                # and the unique target is still unmet.
+                active = []
+                for adapter_id in mandatory:
+                    state = states.get(adapter_id)
+                    if state is None or state.exhausted:
+                        continue
+                    active = [state]
+                    break
+            else:
+                active = [state for state in states.values() if not state.exhausted]
             if not active:
                 terminal = (
                     "provider_exhausted_authoritative"
@@ -849,6 +861,9 @@ class UniversalSourceOrchestrator:
                     continue
                 active_left = max(1, len([item for item in active if not item.exhausted]))
                 allocation = min(remaining, max(min_cost, remaining / active_left))
+                # Sequential mandatory: give the current adapter the residual budget.
+                if mandatory:
+                    allocation = remaining
                 signals = _signal_subset(adapter, request)
                 if not signals:
                     state.exhausted = True
