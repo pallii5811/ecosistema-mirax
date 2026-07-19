@@ -72,8 +72,12 @@ globalThis.fetch = async () => {
 }
 
 const settled: Array<{ key: string; actual: number }> = []
+const reservedEstimates: number[] = []
 const meter = {
-  async reserve() { return { status: 'reserved' } },
+  async reserve(input: { estimatedCostEur: number }) {
+    reservedEstimates.push(input.estimatedCostEur)
+    return { status: 'reserved' }
+  },
   async settle(_searchId: string, key: string, actual: number) {
     settled.push({ key, actual })
     return { status: 'settled' }
@@ -292,7 +296,7 @@ try {
   const semanticOnly = await compileCommercialSearchPlan(
     'aziende lombarde che stanno ampliando la squadra commerciale',
     {
-      searchId: '00000000-0000-0000-0000-000000000008', requestedLeadCount: 5,
+      searchId: '00000000-0000-0000-0000-000000000008', requestedLeadCount: 2,
       costMeter: meter, allowRepair: false,
     },
   )
@@ -302,8 +306,9 @@ try {
   assert.ok(semanticOnlyQueryContract.required_relationships.includes('sales_hiring_by_target_company'))
   assert.ok(semanticOnly.signal_policy.required_signals.includes('hiring_sales'))
   assert.ok(semanticOnly.source_policy.allowed_source_classes.some((source) => sourceSupportsSignal(source, 'hiring_sales')))
-  assert.equal(semanticOnly.budget_policy.hard_cost_eur, 0.125)
+  assert.equal(semanticOnly.budget_policy.hard_cost_eur, 0.05)
   assert.ok(semanticOnly.budget_policy.maximum_llm_evaluations >= 6)
+  assert.ok(reservedEstimates.at(-1)! <= 0.05, 'two-lead semantic compilation must fit its €0.05 hard cap')
   assert.equal(fetchCalls, 7, 'semantic-only output must require one provider call and no repair')
 
   const exactDigitalQuery = 'Trova imprese di pulizia a Milano con sito ufficiale, criticità SEO e assenza di strumenti di tracciamento pubblicitario.'

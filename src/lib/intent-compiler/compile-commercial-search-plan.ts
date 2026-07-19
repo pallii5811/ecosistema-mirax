@@ -100,6 +100,7 @@ Rules:
 - Search snippets, directories and generic blogs are never publishable proof.
 - Require official domain, source URL and observation date for publication.
 - Use concise arrays and at most 5 strong commercial hypotheses.
+- Keep every semantic array concise (normally 1-5 items) and discovery_hypotheses to at most 3 entries.
 - semantic_query_contract is the lossless, open-world meaning of the request. Preserve dynamic predicates even
   when no canonical signal exists. Explicitly state the target company's event role and inverse/excluded roles.
 - Canonical signal IDs are routing hints only. They never replace event_or_state_description, relationships,
@@ -823,7 +824,7 @@ async function callCompiler(
   }
   const idempotencyKey = `intent:${COMMERCIAL_INTENT_PROMPT_VERSION}:${callKind}`
   const configuredMax = Number(process.env.ANTHROPIC_COMPILER_MAX_CALL_EUR || 0.05)
-  const maxOutputTokens = 3_000
+  const maxOutputTokens = 1_600
   const modelIsEconomy = /haiku/i.test(model)
   const inputRate = Number(process.env.ANTHROPIC_INPUT_EUR_PER_MILLION || (modelIsEconomy ? 1 : 3))
   const outputRate = Number(process.env.ANTHROPIC_OUTPUT_EUR_PER_MILLION || (modelIsEconomy ? 5 : 15))
@@ -831,8 +832,11 @@ async function callCompiler(
     `${SYSTEM_PROMPT}\n${query}${repair}\n${JSON.stringify((canonicalSchema as unknown as { $defs: { semanticQueryContract: JsonSchemaNode } }).$defs.semanticQueryContract)}`,
     'utf8',
   ) + 4_096
+  // The payload is JSON/Italian prose: two UTF-8 bytes per token is a
+  // deliberately conservative bound without treating every byte as a token.
+  const inputTokenUpperBound = Math.ceil(serializedUpperBound / 2)
   const computedUpperBound = 1.15 * (
-    serializedUpperBound * inputRate + maxOutputTokens * outputRate
+    inputTokenUpperBound * inputRate + maxOutputTokens * outputRate
   ) / 1_000_000
   // Configuration may reserve more, never less than the computed payload bound.
   const estimatedCostEur = Math.max(

@@ -400,6 +400,12 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error))
+  console.error(JSON.stringify(
+    error instanceof Error
+      ? { name: error.name, message: error.message, stack: error.stack }
+      : error,
+    null,
+    2,
+  ))
   process.exitCode = 1
 })
