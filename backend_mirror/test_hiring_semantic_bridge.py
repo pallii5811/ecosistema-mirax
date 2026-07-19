@@ -145,7 +145,7 @@ def _verify(text: str, company: str = "VitalAire", meta=None, **interp_overrides
 
 
 def test_schema_versions_bumped_for_cache_invalidation():
-    assert EVENT_SCHEMA_VERSION.endswith("v3")
+    assert EVENT_SCHEMA_VERSION.endswith("v4")
     assert GROUNDING_SCHEMA_VERSION.endswith("v2")
 
 
