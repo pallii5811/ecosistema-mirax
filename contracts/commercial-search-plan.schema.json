@@ -224,6 +224,7 @@
         "canonical_signal_hints"
       ],
       "properties": {
+        "original_query": { "type": "string", "minLength": 1, "maxLength": 4000 },
         "query_goal": { "type": "string", "minLength": 1, "maxLength": 1000 },
         "seller": { "type": "object", "additionalProperties": true },
         "offer": { "type": "object", "additionalProperties": true },

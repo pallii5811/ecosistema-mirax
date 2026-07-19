@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import canonicalSchema from '../../../contracts/commercial-search-plan.schema.json'
 import {
   COMMERCIAL_SEARCH_PLAN_SCHEMA_VERSION,
@@ -7,7 +9,7 @@ import {
   type CommercialSearchPlan,
 } from '@/lib/contracts/commercial-search-plan'
 import { SOURCE_BY_ID, sourceSupportsSignal } from '@/lib/source-intelligence/registry'
-import { getSignalDefinition, SIGNAL_ONTOLOGY } from '@/lib/signal-ontology/ontology'
+import { getSignalDefinition } from '@/lib/signal-ontology/ontology'
 import { parseSignalIntentHeuristic } from '@/lib/signal-intent/parse-heuristic'
 import { inferSellerBuyerProfile } from '@/lib/signal-intent/seller-buyer-inference'
 import {
@@ -16,7 +18,19 @@ import {
   setSemanticQueryCache,
 } from './semantic-query-cache'
 
-export const COMMERCIAL_INTENT_PROMPT_VERSION = 'commercial-intent-v1.3.0' as const
+export const COMMERCIAL_INTENT_PROMPT_VERSION = 'commercial-intent-v1.4.0' as const
+
+export type QueryCompilerTelemetry = {
+  query_tier1_calls: number
+  query_tier2_calls: number
+  query_cache_hits: number
+  query_input_tokens: number
+  query_output_tokens: number
+  query_compilation_cost: number
+  query_compilation_status: 'cache_hit' | 'tier1_accepted' | 'tier2_patched' | 'clarification' | 'failed'
+  tier2_escalation_reason: string | null
+  contract_hash: string | null
+}
 
 function cleanProviderEnv(value: string | undefined): string {
   return String(value || '').replace(/\\[rn]/g, '').trim()
@@ -33,6 +47,8 @@ export type CommercialIntentCompilerOptions = {
   requestedLeadCount?: number
   language?: string
   allowRepair?: boolean
+  allowTier2?: boolean
+  onTelemetry?: (telemetry: QueryCompilerTelemetry) => void
   onDiagnostic?: (event: {
     stage: 'initial' | 'repair'
     issues: PlanValidationIssue[]
@@ -79,40 +95,21 @@ export function detectQueryContradictions(query: string): PlanValidationIssue[] 
   return issues
 }
 
-const SYSTEM_PROMPT = `You are the semantic intent compiler for MIRAX, a B2B sales-intelligence system.
-Convert the user's commercial objective into the provided lossless semantic query contract. Deterministic code builds sources, budgets and ranking afterwards. The user may describe what they SELL rather than the buyer category.
-
-Reason causally: seller offer -> problem solved -> buyer condition -> recent triggering event -> observable signal -> best source class -> evidence needed.
-
-Rules:
-- Never invent companies, URLs, contacts or observed facts. This output is a research plan, not search results.
-- The query can be Italian. If the user says "Sono un/una ...", that phrase identifies the SELLER, not the buyer.
-- For seller-framed queries, seller.offer_category, products_or_services, problems_solved and preferred_buyer_roles MUST be explicit and non-empty.
-- Never copy the full raw query into seller.offer_description. State only the offer actually sold.
-- Every required relationship must be a distinct condition explicitly required by the user; synonyms and alternatives are optional, never additional conjuncts.
-- Do not use placeholders such as "implicit commercial need", "need to be verified", "coherence with the user objective" or paraphrases of the raw query.
-- preferred_buyer_roles are the people/functions likely to own the problem or buying decision (for example owner, CFO, operations, HR, IT), not generic invented contacts.
-- The plan must explain why the observed event makes outreach timely. A target category alone is never a buying signal.
-- Preserve literal geography, size and exclusions.
-- Prefer local micro/small/medium businesses unless the user explicitly asks for enterprise.
-- A seller category is not automatically the buyer industry.
-- Use composable signal names, not vague labels such as "hot" or "interesting".
-- Search snippets, directories and generic blogs are never publishable proof.
-- Require official domain, source URL and observation date for publication.
-- Use concise arrays and at most 5 strong commercial hypotheses.
-- Keep every semantic array concise (normally 1-5 items) and discovery_hypotheses to at most 3 entries.
-- semantic_query_contract is the lossless, open-world meaning of the request. Preserve dynamic predicates even
-  when no canonical signal exists. Explicitly state the target company's event role and inverse/excluded roles.
-- Canonical signal IDs are routing hints only. They never replace event_or_state_description, relationships,
-  forbidden inferences or acceptance rubric.
-- For every relationship use a stable descriptive ID that the event interpreter can return verbatim. For example,
-  a company receiving finance is recipient; lender/provider/investor/publisher/advisor are excluded inverse roles.
-- Output only through the required tool.
-
-OPTIONAL CANONICAL ROUTING HINT IDS (open-world relationships remain authoritative):
-${SIGNAL_ONTOLOGY.map((signal) => signal.id).join(', ')}`
-
 const TOOL_NAME = 'submit_commercial_search_plan'
+const ADJUDICATOR_TOOL_NAME = 'submit_semantic_query_patch'
+
+const TIER1_SYSTEM_PROMPT = `Compile the user's B2B search request into a compact, open-world semantic contract.
+Preserve who sells, the target company, the target company's role, every explicitly required relationship,
+geography, exclusions, negative conditions and time constraints. Relationships are semantic predicates, not
+keyword synonyms. Never invent companies, facts, URLs or evidence. Canonical signal IDs are optional routing
+hints only. When the user states an offer, preserve its category, products/services, problems solved and likely
+buyer roles in seller/offer; never treat the seller as the target. Keep strings under 160 characters and arrays
+to the minimum needed. Output only via the tool.`
+
+const TIER2_SYSTEM_PROMPT = `Adjudicate a compact semantic query contract. Do not regenerate it.
+Return accept, clarification, or a patch containing only fields that are missing or invalid. Preserve the
+original open-world predicate and event direction. Never replace meaning with keywords or invent facts.
+Output only via the tool.`
 
 function disabledFlag(value: string | undefined): boolean {
   return ['0', 'false', 'no', 'off', 'disabled'].includes(String(value ?? '').trim().toLowerCase())
@@ -133,6 +130,9 @@ type JsonSchemaNode = {
   minLength?: number
   maxLength?: number
   additionalProperties?: boolean | JsonSchemaNode
+  enum?: string[]
+  minimum?: number
+  maximum?: number
   $defs?: Record<string, JsonSchemaNode>
   properties?: Record<string, JsonSchemaNode>
   items?: JsonSchemaNode
@@ -190,6 +190,212 @@ export function semanticCompilerToolSchema(): JsonSchemaNode {
   return schema
 }
 
+const compactStringSchema = (maxLength = 180): JsonSchemaNode => ({
+  type: 'string', minLength: 1, maxLength,
+})
+
+const compactStringArraySchema = (): JsonSchemaNode => ({
+  type: 'array', maxItems: 4, items: compactStringSchema(180),
+})
+
+export function tier1SemanticQueryToolSchema(): JsonSchemaNode {
+  const properties: Record<string, JsonSchemaNode> = {
+    query_goal: compactStringSchema(),
+    seller: {
+      type: 'object', maxProperties: 4, additionalProperties: false,
+      properties: {
+        offer_category: compactStringSchema(100),
+        products_or_services: compactStringArraySchema(),
+        problems_solved: compactStringArraySchema(),
+        preferred_buyer_roles: compactStringArraySchema(),
+      },
+    },
+    offer: {
+      type: 'object', maxProperties: 2, additionalProperties: false,
+      properties: {
+        description: compactStringSchema(160),
+        sales_motion: compactStringSchema(80),
+      },
+    },
+    target_entity_types: compactStringArraySchema(),
+    target_company_description: compactStringSchema(),
+    event_or_state_description: compactStringSchema(),
+    target_role_in_event: compactStringSchema(80),
+    required_relationships: compactStringArraySchema(),
+    excluded_roles: compactStringArraySchema(),
+    excluded_entities: compactStringArraySchema(),
+    geography: compactStringArraySchema(),
+    industry: compactStringArraySchema(),
+    size_constraints: { type: 'object', maxProperties: 4, additionalProperties: true },
+    temporal_constraints: { type: 'object', maxProperties: 4, additionalProperties: true },
+    positive_conditions: compactStringArraySchema(),
+    negative_conditions: compactStringArraySchema(),
+    clarification_required: { type: 'boolean' },
+    confidence: { type: 'number', minimum: 0, maximum: 1 },
+    canonical_signal_hints: compactStringArraySchema(),
+  }
+  return {
+    type: 'object', additionalProperties: false,
+    required: [
+      'query_goal', 'seller', 'offer', 'target_entity_types', 'target_company_description',
+      'event_or_state_description', 'target_role_in_event', 'required_relationships',
+      'excluded_roles', 'excluded_entities', 'geography', 'industry', 'size_constraints',
+      'temporal_constraints', 'positive_conditions', 'negative_conditions',
+      'clarification_required', 'confidence', 'canonical_signal_hints',
+    ],
+    properties,
+  }
+}
+
+export function tier2SemanticPatchToolSchema(): JsonSchemaNode {
+  const tier1Properties = tier1SemanticQueryToolSchema().properties || {}
+  return {
+    type: 'object', additionalProperties: false,
+    required: ['decision', 'patch', 'reason', 'confidence'],
+    properties: {
+      decision: { type: 'string', enum: ['accept', 'patch', 'clarification'] },
+      patch: {
+        type: 'object', additionalProperties: false, maxProperties: 12,
+        properties: tier1Properties,
+      },
+      reason: compactStringSchema(240),
+      confidence: { type: 'number', minimum: 0, maximum: 1 },
+    },
+  }
+}
+
+function uniqueStrings(value: unknown, maximum = 20): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.map(String).map((item) => item.trim()).filter(Boolean))].slice(0, maximum)
+    : []
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function unwrapSemanticInput(input: unknown): Record<string, unknown> {
+  const root = recordValue(input)
+  return Object.keys(recordValue(root.semantic_query_contract)).length
+    ? recordValue(root.semantic_query_contract)
+    : root
+}
+
+function completeSemanticContract(query: string, input: unknown): SemanticQueryContract | null {
+  const seed = unwrapSemanticInput(input)
+  const role = String(seed.target_role_in_event || '').trim()
+  const relationships = uniqueStrings(seed.required_relationships)
+  const confidence = Math.max(0, Math.min(1, Number(seed.confidence) || 0))
+  const candidate = {
+    original_query: query.trim(),
+    query_goal: String(seed.query_goal || '').trim(),
+    seller: recordValue(seed.seller),
+    offer: recordValue(seed.offer),
+    target_entity_types: uniqueStrings(seed.target_entity_types).length
+      ? uniqueStrings(seed.target_entity_types)
+      : ['operating_company'],
+    target_company_description: String(seed.target_company_description || '').trim(),
+    event_or_state_description: String(seed.event_or_state_description || '').trim(),
+    target_role_in_event: role,
+    required_relationships: relationships,
+    optional_relationships: uniqueStrings(seed.optional_relationships),
+    excluded_roles: uniqueStrings(seed.excluded_roles),
+    excluded_entities: uniqueStrings(seed.excluded_entities),
+    geography: uniqueStrings(seed.geography),
+    industry: uniqueStrings(seed.industry),
+    size_constraints: recordValue(seed.size_constraints),
+    temporal_constraints: recordValue(seed.temporal_constraints),
+    positive_conditions: uniqueStrings(seed.positive_conditions),
+    negative_conditions: uniqueStrings(seed.negative_conditions),
+    must_have_facts: uniqueStrings(seed.must_have_facts).length
+      ? uniqueStrings(seed.must_have_facts)
+      : ['target_company_identity', 'source_evidence'],
+    forbidden_inferences: uniqueStrings(seed.forbidden_inferences).length
+      ? uniqueStrings(seed.forbidden_inferences)
+      : ['publisher_is_target_company', 'source_domain_is_event_recipient'],
+    data_requirements: uniqueStrings(seed.data_requirements).length
+      ? uniqueStrings(seed.data_requirements)
+      : ['official_domain', 'source_url', 'observed_at'],
+    ranking_objective: String(seed.ranking_objective || 'Rank verified target-role evidence by freshness and confidence').trim(),
+    acceptance_rubric: uniqueStrings(seed.acceptance_rubric).length
+      ? uniqueStrings(seed.acceptance_rubric)
+      : [
+          `target_role_${role || 'unverified'}_grounded`,
+          ...relationships.map((relationship) => `${relationship}_grounded`),
+        ],
+    discovery_hypotheses: Array.isArray(seed.discovery_hypotheses)
+      ? seed.discovery_hypotheses.filter((item) => Object.keys(recordValue(item)).length).slice(0, 4)
+      : [],
+    clarification_required: seed.clarification_required === true,
+    confidence,
+    canonical_signal_hints: uniqueStrings(seed.canonical_signal_hints),
+  }
+  const parsed = SemanticQueryContractSchema.safeParse(candidate)
+  if (!parsed.success) return null
+  // The original wording remains authoritative at the enclosing canonical
+  // plan's raw_query boundary; never replace it with generated keywords.
+  if (!query.trim()) return null
+  return parsed.data
+}
+
+function semanticContractIssues(
+  query: string,
+  contract: SemanticQueryContract | null,
+): PlanValidationIssue[] {
+  const issues = [...detectQueryContradictions(query)]
+  if (!contract) {
+    const missingCore = [
+      'query_goal', 'target_company_description', 'event_or_state_description',
+      'target_role_in_event', 'required_relationships', 'excluded_roles',
+      'geography', 'negative_conditions', 'temporal_constraints', 'confidence',
+    ]
+    issues.push(...missingCore.map((path) => ({
+      code: 'SEMANTIC_CONTRACT_FIELD_MISSING',
+      path,
+      message: `Tier-1 did not produce a valid ${path} field.`,
+    })))
+    return issues
+  }
+  if (contract.original_query !== query.trim()) {
+    issues.push({ code: 'ORIGINAL_QUERY_MISMATCH', path: 'original_query', message: 'The lossless original query must remain in the semantic contract.' })
+  }
+  if (!contract.target_role_in_event.trim()) {
+    issues.push({ code: 'TARGET_ROLE_MISSING', path: 'target_role_in_event', message: 'Target event role is required.' })
+  }
+  if (contract.required_relationships.length === 0) {
+    issues.push({ code: 'REQUIRED_RELATIONSHIP_MISSING', path: 'required_relationships', message: 'At least one semantic relationship is required.' })
+  }
+  if (contract.confidence < 0.72) {
+    issues.push({ code: 'SEMANTIC_CONFIDENCE_LOW', path: 'confidence', message: 'Tier-1 confidence is below 0.72.' })
+  }
+  if (contract.clarification_required) {
+    issues.push({ code: 'SEMANTIC_CLARIFICATION_REQUIRED', path: 'clarification_required', message: 'Tier-1 requires clarification.' })
+  }
+  return issues
+}
+
+function applySemanticPatch(
+  base: unknown,
+  patch: unknown,
+  issues: PlanValidationIssue[],
+): Record<string, unknown> {
+  const seed = { ...unwrapSemanticInput(base) }
+  const schemaFields = new Set(Object.keys(tier1SemanticQueryToolSchema().properties || {}))
+  const allowed = new Set(
+    issues.map((issue) => issue.path.split('.')[0]).filter((field) => schemaFields.has(field)),
+  )
+  for (const [key, value] of Object.entries(recordValue(patch))) {
+    if (allowed.has(key)) seed[key] = value
+  }
+  return seed
+}
+
+function semanticContractHash(contract: SemanticQueryContract): string {
+  return createHash('sha256').update(JSON.stringify(contract)).digest('hex')
+}
+
 function resolveSchemaNode(node: JsonSchemaNode): JsonSchemaNode {
   if (!node.$ref?.startsWith('#/$defs/')) return node
   const name = node.$ref.slice('#/$defs/'.length)
@@ -239,14 +445,19 @@ function semanticPlanEnvelope(query: string, input: unknown): unknown {
   const preferred = [...new Set(definitions.flatMap((item) => item.preferredSourceClasses))]
     .filter((source) => allowed.includes(source))
   const offerDescription = String(
-    (semantic.offer as Record<string, unknown>)?.description || semantic.query_goal,
+    (semantic.offer as Record<string, unknown>)?.description || '',
   ).trim()
+  const semanticSeller = recordValue(semantic.seller)
+  const semanticOffer = recordValue(semantic.offer)
   return {
     semantic_query_contract: semantic,
     seller: {
-      offer_category: null, offer_description: offerDescription,
-      products_or_services: [], problems_solved: [], sales_motion: null,
-      preferred_buyer_roles: [],
+      offer_category: String(semanticSeller.offer_category || '').trim() || null,
+      offer_description: offerDescription,
+      products_or_services: uniqueStrings(semanticSeller.products_or_services),
+      problems_solved: uniqueStrings(semanticSeller.problems_solved),
+      sales_motion: String(semanticOffer.sales_motion || '').trim() || null,
+      preferred_buyer_roles: uniqueStrings(semanticSeller.preferred_buyer_roles),
     },
     target: {
       entity_types: semantic.target_entity_types.length ? semantic.target_entity_types : ['company'],
@@ -257,8 +468,9 @@ function semanticPlanEnvelope(query: string, input: unknown): unknown {
     commercial_hypotheses: [{
       id: 'semantic-open-world', buyer_problem: semantic.event_or_state_description,
       triggering_events: [semantic.event_or_state_description], signals,
-      implied_need: semantic.positive_conditions[0] || semantic.event_or_state_description,
-      relevance_to_offer: `La relazione osservata rende attuale l'obiettivo commerciale: ${semantic.query_goal}`,
+      implied_need: semantic.positive_conditions[0]
+        || `Respond to verified ${semantic.required_relationships[0] || 'commercial change'}`,
+      relevance_to_offer: `Verified evidence that the target acts as ${semantic.target_role_in_event} in ${semantic.required_relationships[0] || 'the requested relationship'} supports timely outreach.`,
       confidence: semantic.confidence,
     }],
     signal_policy: {
@@ -827,45 +1039,58 @@ export function validateCommercialPlanSemantics(plan: CommercialSearchPlan): Pla
   return issues
 }
 
-async function callCompiler(
-  query: string,
-  model: string,
-  apiKey: string,
-  options: CommercialIntentCompilerOptions,
-  callKind: 'initial' | 'repair',
-  repairIssues?: PlanValidationIssue[],
-): Promise<unknown | null> {
-  const repair = repairIssues?.length
-    ? `\nThe previous plan failed validation. Repair only these errors:\n${repairIssues
-        .map((issue) => `${issue.code} at ${issue.path}: ${issue.message}`)
-        .join('\n')}`
-    : ''
+type QueryCompilerStage = 'tier1' | 'tier2'
+type StageCallResult = {
+  input: unknown | null
+  status: 'completed' | 'truncated' | 'provider_error'
+  inputTokens: number
+  outputTokens: number
+  costEur: number
+}
+
+async function callCompilerStage(input: {
+  query: string
+  model: string
+  apiKey: string
+  options: CommercialIntentCompilerOptions
+  stage: QueryCompilerStage
+  tier1Contract?: unknown
+  issues?: PlanValidationIssue[]
+}): Promise<StageCallResult> {
+  const { query, model, apiKey, options, stage } = input
   const searchId = options.searchId
   const meter = options.costMeter
   if (!searchId || !meter) {
     console.warn('[commercial-intent-compiler] paid_call_blocked_without_cost_governor')
-    return null
+    return { input: null, status: 'provider_error', inputTokens: 0, outputTokens: 0, costEur: 0 }
   }
-  const idempotencyKey = `intent:${COMMERCIAL_INTENT_PROMPT_VERSION}:${callKind}`
-  const configuredMax = Number(process.env.ANTHROPIC_COMPILER_MAX_CALL_EUR || 0.05)
-  const maxOutputTokens = 1_800
-  const modelIsEconomy = /haiku/i.test(model)
-  const inputRate = Number(process.env.ANTHROPIC_INPUT_EUR_PER_MILLION || (modelIsEconomy ? 1 : 3))
-  const outputRate = Number(process.env.ANTHROPIC_OUTPUT_EUR_PER_MILLION || (modelIsEconomy ? 5 : 15))
-  const toolSchema = semanticCompilerToolSchema()
+  const tier = stage === 'tier1' ? 1 : 2
+  const idempotencyKey = `intent:${COMMERCIAL_INTENT_PROMPT_VERSION}:${stage}`
+  const prefix = stage === 'tier1' ? 'UQE_ANTHROPIC_TIER1' : 'UQE_ANTHROPIC_TIER2'
+  const configuredMax = Number(process.env[`${prefix}_MAX_CALL_EUR`] || 0)
+  const maxOutputTokens = Number(process.env[`${prefix}_MAX_OUTPUT_TOKENS`] || (tier === 1 ? 1_000 : 700))
+  const inputRate = Number(process.env[`${prefix}_INPUT_EUR_PER_MILLION`] || (tier === 1 ? 1 : 3))
+  const outputRate = Number(process.env[`${prefix}_OUTPUT_EUR_PER_MILLION`] || (tier === 1 ? 5 : 15))
+  const toolSchema = tier === 1 ? tier1SemanticQueryToolSchema() : tier2SemanticPatchToolSchema()
+  const systemPrompt = tier === 1 ? TIER1_SYSTEM_PROMPT : TIER2_SYSTEM_PROMPT
+  const messagePayload = tier === 1
+    ? { original_query: query }
+    : {
+        original_query: query,
+        tier1_contract: unwrapSemanticInput(input.tier1Contract),
+        validation_issues: (input.issues || []).map(({ code, path, message }) => ({ code, path, message })),
+        fields_to_correct: [...new Set((input.issues || []).map((issue) => issue.path.split('.')[0]).filter(Boolean))],
+      }
   const serializedUpperBound = Buffer.byteLength(
-    `${SYSTEM_PROMPT}\n${query}${repair}\n${JSON.stringify(toolSchema)}`,
+    `${systemPrompt}\n${JSON.stringify(messagePayload)}\n${JSON.stringify(toolSchema)}`,
     'utf8',
-  ) + 4_096
-  // The payload is JSON/Italian prose: two UTF-8 bytes per token is a
-  // deliberately conservative bound without treating every byte as a token.
+  ) + 1_024
   const inputTokenUpperBound = Math.ceil(serializedUpperBound / 2)
   const computedUpperBound = 1.15 * (
     inputTokenUpperBound * inputRate + maxOutputTokens * outputRate
   ) / 1_000_000
-  // Configuration may reserve more, never less than the computed payload bound.
   const estimatedCostEur = Math.max(
-    Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 0.05,
+    Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 0,
     computedUpperBound,
   )
   const reservation = await meter.reserve({
@@ -875,7 +1100,7 @@ async function callCompiler(
     estimatedCostEur,
     provider: 'anthropic',
     model,
-    metadata: { call_kind: callKind, prompt_version: COMMERCIAL_INTENT_PROMPT_VERSION },
+    metadata: { call_kind: stage, tier, prompt_version: COMMERCIAL_INTENT_PROMPT_VERSION },
   })
   if (
     reservation &&
@@ -884,7 +1109,7 @@ async function callCompiler(
     String((reservation as { status?: unknown }).status || 'reserved') !== 'reserved'
   ) {
     console.warn('[commercial-intent-compiler] idempotency_hit_without_cached_payload')
-    return null
+    return { input: null, status: 'provider_error', inputTokens: 0, outputTokens: 0, costEur: 0 }
   }
 
   let response: Response
@@ -899,16 +1124,19 @@ async function callCompiler(
     body: JSON.stringify({
       model,
       max_tokens: maxOutputTokens,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       tools: [
         {
-          name: TOOL_NAME,
-          description: 'Submit the lossless open-world semantic query contract.',
+          name: tier === 1 ? TOOL_NAME : ADJUDICATOR_TOOL_NAME,
+          description: tier === 1
+            ? 'Submit the compact lossless open-world semantic query contract.'
+            : 'Submit a decision and only the semantic fields that require correction.',
           input_schema: toolSchema,
         },
       ],
-      tool_choice: { type: 'tool', name: TOOL_NAME },
-      messages: [{ role: 'user', content: `Commercial objective:\n${query}${repair}` }],
+      tool_choice: { type: 'tool', name: tier === 1 ? TOOL_NAME : ADJUDICATOR_TOOL_NAME },
+      messages: [{ role: 'user', content: JSON.stringify(messagePayload) }],
+      ...(/haiku/i.test(model) ? { temperature: 0 } : {}),
     }),
     signal: AbortSignal.timeout(28_000),
     })
@@ -922,7 +1150,7 @@ async function callCompiler(
   if (!response.ok) {
     await meter.release(searchId, idempotencyKey, `provider_http_${response.status}`)
     console.warn('[commercial-intent-compiler] provider_http_error', { status: response.status })
-    return null
+    return { input: null, status: 'provider_error', inputTokens: 0, outputTokens: 0, costEur: 0 }
   }
   const data = (await response.json()) as {
     content?: Array<{ type?: string; name?: string; input?: unknown }>
@@ -933,12 +1161,20 @@ async function callCompiler(
   const outputTokens = Math.max(0, Number(data.usage?.output_tokens || 0))
   const actualCostEur = (inputTokens * inputRate + outputTokens * outputRate) / 1_000_000
   await meter.settle(searchId, idempotencyKey, actualCostEur, {
+    tier,
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     pricing_mode: 'token_rates_with_model_safe_defaults',
   })
-  if (data.stop_reason === 'max_tokens') throw new Error('SEMANTIC_QUERY_OUTPUT_TRUNCATED')
-  return data.content?.find((block) => block.type === 'tool_use' && block.name === TOOL_NAME)?.input ?? null
+  const toolName = tier === 1 ? TOOL_NAME : ADJUDICATOR_TOOL_NAME
+  const toolInput = data.content?.find((block) => block.type === 'tool_use' && block.name === toolName)?.input ?? null
+  return {
+    input: toolInput,
+    status: data.stop_reason === 'max_tokens' ? 'truncated' : 'completed',
+    inputTokens,
+    outputTokens,
+    costEur: actualCostEur,
+  }
 }
 
 export async function compileCommercialSearchPlan(
@@ -948,64 +1184,137 @@ export async function compileCommercialSearchPlan(
   if (disabledFlag(process.env.UQE_ANTHROPIC_ENABLED)) return null
   const apiKey = cleanProviderEnv(process.env.ANTHROPIC_API_KEY)
   if (!apiKey) return null
-  const model = cleanProviderEnv(
-    process.env.UQE_ANTHROPIC_MODEL ||
-    process.env.ANTHROPIC_MODEL ||
-    process.env.SEMANTIC_MODEL ||
-    'claude-sonnet-5',
+  const tier1Model = cleanProviderEnv(process.env.UQE_ANTHROPIC_TIER1_MODEL || 'claude-haiku-4-5')
+  const tier2Model = cleanProviderEnv(
+    process.env.UQE_ANTHROPIC_TIER2_MODEL || process.env.UQE_ANTHROPIC_MODEL || 'claude-sonnet-5',
   )
+  const modelVersion = `${tier1Model}|${tier2Model}`
+  const telemetry: QueryCompilerTelemetry = {
+    query_tier1_calls: 0, query_tier2_calls: 0, query_cache_hits: 0,
+    query_input_tokens: 0, query_output_tokens: 0, query_compilation_cost: 0,
+    query_compilation_status: 'failed', tier2_escalation_reason: null, contract_hash: null,
+  }
+  const emitTelemetry = () => options.onTelemetry?.({ ...telemetry })
   const cacheKey = semanticQueryCacheKey({
     query,
     requestedCount: normalizedLeadCount(options.requestedLeadCount),
     language: options.language || 'it',
-    modelVersion: model,
+    modelVersion,
     interpreterSchemaVersion: COMMERCIAL_INTENT_PROMPT_VERSION,
   })
   const cached = await getSemanticQueryCache(cacheKey)
   if (cached) {
     const parsed = safeParseCommercialSearchPlan(cached)
-    if (parsed.success && validateCommercialPlanSemantics(parsed.data).length === 0) return parsed.data
+    if (parsed.success && validateCommercialPlanSemantics(parsed.data).length === 0) {
+      telemetry.query_cache_hits = 1
+      telemetry.query_compilation_status = 'cache_hit'
+      telemetry.contract_hash = parsed.data.semantic_query_contract
+        ? semanticContractHash(parsed.data.semantic_query_contract)
+        : null
+      emitTelemetry()
+      return parsed.data
+    }
   }
 
-  const firstRaw = await callCompiler(query, model, apiKey, options, 'initial')
-  if (!firstRaw) return null
-  const first = safeParseCommercialSearchPlan(normalizePayload(semanticPlanEnvelope(query, firstRaw), query, model, options, 'llm'))
-  const firstIssues = first.success
-    ? validateCommercialPlanSemantics(first.data)
-    : first.error.issues.map((issue) => ({
-        code: 'CONTRACT_VALIDATION_ERROR',
-        path: issue.path.join('.'),
-        message: issue.message,
+  try {
+    const tier1 = await callCompilerStage({ query, model: tier1Model, apiKey, options, stage: 'tier1' })
+    telemetry.query_tier1_calls = 1
+    telemetry.query_input_tokens += tier1.inputTokens
+    telemetry.query_output_tokens += tier1.outputTokens
+    telemetry.query_compilation_cost += tier1.costEur
+    let semanticInput: unknown = tier1.input
+    let contract = completeSemanticContract(query, semanticInput)
+    let issues = semanticContractIssues(query, contract)
+    if (tier1.status === 'truncated') {
+      issues.unshift({
+        code: 'SEMANTIC_QUERY_OUTPUT_TRUNCATED', path: 'semantic_query_contract',
+        message: 'Tier-1 output was truncated; compact adjudication is required.',
+      })
+    } else if (tier1.status === 'provider_error') {
+      issues.unshift({
+        code: 'SEMANTIC_QUERY_TIER1_FAILED', path: 'semantic_query_contract',
+        message: 'Tier-1 provider did not return a semantic contract.',
+      })
+    }
+
+    const needsTier2 = issues.length > 0
+    let planner: 'llm' | 'repaired_llm' = 'llm'
+    let finalModel = tier1Model
+    if (needsTier2) {
+      options.onDiagnostic?.({ stage: 'initial', issues })
+      telemetry.tier2_escalation_reason = [...new Set(issues.map((issue) => issue.code))].join(',')
+      const tier2Allowed = options.allowTier2 ?? options.allowRepair !== false
+      if (!tier2Allowed) {
+        emitTelemetry()
+        return null
+      }
+      const tier2 = await callCompilerStage({
+        query, model: tier2Model, apiKey, options, stage: 'tier2',
+        tier1Contract: semanticInput, issues,
+      })
+      telemetry.query_tier2_calls = 1
+      telemetry.query_input_tokens += tier2.inputTokens
+      telemetry.query_output_tokens += tier2.outputTokens
+      telemetry.query_compilation_cost += tier2.costEur
+      if (tier2.status !== 'completed') {
+        telemetry.query_compilation_status = 'failed'
+        emitTelemetry()
+        throw new Error('SEMANTIC_QUERY_COMPILATION_FAILED')
+      }
+      const adjudication = recordValue(tier2.input)
+      const decision = String(adjudication.decision || '').trim()
+      if (decision === 'clarification') {
+        telemetry.query_compilation_status = 'clarification'
+        emitTelemetry()
+        return null
+      }
+      if (decision === 'patch') semanticInput = applySemanticPatch(semanticInput, adjudication.patch, issues)
+      else if (decision !== 'accept') {
+        telemetry.query_compilation_status = 'failed'
+        emitTelemetry()
+        return null
+      }
+      contract = completeSemanticContract(query, semanticInput)
+      issues = semanticContractIssues(query, contract)
+      if (issues.length > 0) {
+        options.onDiagnostic?.({ stage: 'repair', issues })
+        telemetry.query_compilation_status = 'failed'
+        emitTelemetry()
+        return null
+      }
+      planner = 'repaired_llm'
+      finalModel = `${tier1Model}+${tier2Model}`
+    }
+
+    if (!contract) {
+      emitTelemetry()
+      return null
+    }
+    const parsed = safeParseCommercialSearchPlan(
+      normalizePayload(semanticPlanEnvelope(query, contract), query, finalModel, options, planner),
+    )
+    if (!parsed.success) {
+      const planIssues = parsed.error.issues.map((issue) => ({
+        code: 'CONTRACT_VALIDATION_ERROR', path: issue.path.join('.'), message: issue.message,
       }))
-  if (firstIssues.length > 0) options.onDiagnostic?.({ stage: 'initial', issues: firstIssues })
-  if (first.success && firstIssues.length === 0) {
-    await setSemanticQueryCache(cacheKey, first.data)
-    return first.data
+      options.onDiagnostic?.({ stage: planner === 'llm' ? 'initial' : 'repair', issues: planIssues })
+      emitTelemetry()
+      return null
+    }
+    const planIssues = validateCommercialPlanSemantics(parsed.data)
+    if (planIssues.length > 0) {
+      options.onDiagnostic?.({ stage: planner === 'llm' ? 'initial' : 'repair', issues: planIssues })
+      emitTelemetry()
+      return null
+    }
+    telemetry.contract_hash = semanticContractHash(contract)
+    telemetry.query_compilation_status = planner === 'llm' ? 'tier1_accepted' : 'tier2_patched'
+    await setSemanticQueryCache(cacheKey, parsed.data)
+    emitTelemetry()
+    return parsed.data
+  } catch (error) {
+    telemetry.query_compilation_status = 'failed'
+    emitTelemetry()
+    throw error
   }
-
-  if (options.allowRepair === false) return null
-
-  const repairedRaw = await callCompiler(query, model, apiKey, options, 'repair', firstIssues)
-  if (!repairedRaw) return null
-  const repaired = safeParseCommercialSearchPlan(
-    normalizePayload(semanticPlanEnvelope(query, repairedRaw), query, model, options, 'repaired_llm'),
-  )
-  if (!repaired.success) {
-    options.onDiagnostic?.({
-      stage: 'repair',
-      issues: repaired.error.issues.map((issue) => ({
-        code: 'CONTRACT_VALIDATION_ERROR',
-        path: issue.path.join('.'),
-        message: issue.message,
-      })),
-    })
-    return null
-  }
-  const repairedIssues = validateCommercialPlanSemantics(repaired.data)
-  if (repairedIssues.length > 0) options.onDiagnostic?.({ stage: 'repair', issues: repairedIssues })
-  if (repairedIssues.length === 0) {
-    await setSemanticQueryCache(cacheKey, repaired.data)
-    return repaired.data
-  }
-  return null
 }

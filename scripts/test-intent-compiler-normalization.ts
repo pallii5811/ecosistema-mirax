@@ -111,7 +111,7 @@ try {
   )
   assert.ok(plan, 'canonical plan must survive safe deterministic normalization')
   assert.equal(fetchCalls, 1, 'normalizable payload must not spend a repair call')
-  assert.equal(plan.planner_metadata.model, 'claude-sonnet-5')
+  assert.equal(plan.planner_metadata.model, 'claude-haiku-4-5')
   assert.deepEqual(plan.signal_policy.required_signals, ['contract_awarded'])
   assert.ok(plan.signal_policy.maximum_age_days_by_signal.contract_awarded > 0)
   assert.ok(plan.commercial_hypotheses.some((item) => item.signals.includes('contract_awarded')))

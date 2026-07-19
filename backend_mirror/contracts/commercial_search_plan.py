@@ -163,6 +163,7 @@ class PlannerMetadata(StrictModel):
 
 
 class SemanticQueryContractModel(StrictModel):
+    original_query: Optional[str] = Field(default=None, min_length=1, max_length=4000)
     query_goal: str = Field(min_length=1, max_length=1000)
     seller: Dict[str, Any]
     offer: Dict[str, Any]

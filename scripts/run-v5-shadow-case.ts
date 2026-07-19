@@ -3,6 +3,7 @@ import { config } from 'dotenv'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 import { buildMiraxQueryPlan } from '../src/lib/uqe/mirax-query-planner'
+import type { QueryCompilerTelemetry } from '../src/lib/intent-compiler/compile-commercial-search-plan'
 import { PersistentResearchCostGovernor } from '../src/lib/research/persistent-cost-governor'
 import { MIRAX_RELEASE_ID } from '../src/app/api/ops/release/route'
 import { SOURCE_BY_ID, sourceSupportsSignal } from '../src/lib/source-intelligence/registry'
@@ -130,13 +131,15 @@ async function prepare() {
   if (canaryError || !canary?.id) throw new Error(canaryError?.message || 'canary insert failed')
   const canaryId = String(canary.id)
   const compilerDiagnostics: Array<{ stage: string; issues: Array<{ code: string; path: string; message: string }> }> = []
+  let compilerTelemetry: QueryCompilerTelemetry | null = null
   let sourcePlanDiagnostics: Record<string, unknown> = {}
   try {
     const meter = new PersistentResearchCostGovernor(service)
     await meter.initialize(searchId, maxLeads)
     const plan = await buildMiraxQueryPlan(spec.query, {
-      requestedLeadCount: maxLeads, searchId, costMeter: meter, allowRepair: false,
+      requestedLeadCount: maxLeads, searchId, costMeter: meter, allowRepair: false, allowTier2: true,
       onDiagnostic: (event) => compilerDiagnostics.push(event),
+      onTelemetry: (event) => { compilerTelemetry = event },
     })
     const canonical = plan.canonical_plan
     const requiredSignals = canonical?.signal_policy.required_signals || []
@@ -172,6 +175,7 @@ async function prepare() {
       allowed_sources: allowedSources,
       search_strategy: plan.search_strategy,
       parse_source: plan.parse_source,
+      query_compiler_telemetry: compilerTelemetry,
     }
     const sourcePlanReady = Object.values(checks).every(Boolean)
     if (!sourcePlanReady || plan.parse_source !== 'llm') {
@@ -183,6 +187,7 @@ async function prepare() {
       lead_target: maxLeads, customer_visible: false, lifecycle_stage: 'v5_shadow',
       required_signals: plan.required_signals, signals: plan.required_signals.map((type) => ({ type, params: {} })),
       source_plan: plan.source_plan, search_strategy: plan.search_strategy, uqe_plan: plan,
+      query_compiler_telemetry: compilerTelemetry,
     }
     const { error: readyError } = await service.from('searches').update({
       category: plan.sector || `Evaluation shadow ${vertical}`, location: plan.location || 'Italia',
@@ -215,6 +220,7 @@ async function prepare() {
     console.error(JSON.stringify({
       ok: false, action: 'prepare', vertical, run_id: runId, canary_id: canaryId,
       search_id: searchId, error: message, compiler_diagnostics: compilerDiagnostics,
+      query_compiler_telemetry: compilerTelemetry,
       source_plan_diagnostics: sourcePlanDiagnostics,
     }, null, 2))
     throw error

@@ -7,6 +7,7 @@ const uniqueStrings = z.array(cleanString).max(100).transform((items) => [...new
 
 export const SemanticQueryContractSchema = z
   .object({
+    original_query: z.string().trim().min(1).max(4000).optional(),
     query_goal: z.string().trim().min(1).max(1000),
     seller: z.record(z.string(), z.unknown()),
     offer: z.record(z.string(), z.unknown()),
