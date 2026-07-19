@@ -907,12 +907,14 @@ class UniversalSourceOrchestrator:
                 state.operations += result.operations
                 state.estimated_cost_eur += float(allocation)
                 state.cost_eur += result.cost_eur
-                state.provider_queries += int(
-                    ((result.telemetry or {}).get("provider_queries")
-                     if isinstance(result.telemetry, Mapping)
-                     else None)
-                    or 0
-                ) or 1
+                telemetry = result.telemetry if isinstance(result.telemetry, Mapping) else {}
+                raw_provider_queries = telemetry.get("provider_queries_executed", telemetry.get("provider_queries"))
+                if isinstance(raw_provider_queries, (int, float)):
+                    state.provider_queries += max(0, int(raw_provider_queries))
+                elif isinstance(raw_provider_queries, (list, tuple)):
+                    state.provider_queries += len(raw_provider_queries)
+                else:
+                    state.provider_queries += 1 if result.operations or result.cost_eur else 0
                 state.raw_candidates += len(result.candidates)
                 state.warnings.extend(result.warnings)
                 state.exhausted = result.exhaustion.exhausted

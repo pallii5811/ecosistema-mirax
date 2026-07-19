@@ -809,6 +809,10 @@ async def _default_hiring_provider(
         for query_key, query, query_source in pending_queries[:max_queries]:
             if state.discovery_remaining_eur() + 1e-9 < QUERY_COST_EUR:
                 break
+            from cost_context import current_cost_governor
+            governor = current_cost_governor()
+            if governor is not None and float(getattr(governor, "remaining_eur", 0.0) or 0.0) + 1e-9 < QUERY_COST_EUR:
+                break
             # Stop discovery once enough accepted URLs are queued for this batch.
             pending_now = sum(1 for url in urls if url not in set(state.processed_terminal_urls))
             if pending_now >= max(limit, URLS_PER_BATCH // 2) and queries_run >= 1:
