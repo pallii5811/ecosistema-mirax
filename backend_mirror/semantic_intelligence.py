@@ -23,7 +23,7 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, Mapping, Optional, 
 
 
 QUERY_SCHEMA_VERSION = "semantic-query-contract-v5"
-EVENT_SCHEMA_VERSION = "semantic-commercial-event-v3"
+EVENT_SCHEMA_VERSION = "semantic-commercial-event-v4"
 GROUNDING_SCHEMA_VERSION = "semantic-grounding-v2"
 HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP = "sales_customer_acquisition_team_expansion_by_target_company"
 
@@ -558,6 +558,18 @@ class SemanticCommercialEventInterpreter:
         if cached is not None:
             self.telemetry.semantic_cache_hits += 1
             return SemanticEventInterpretation.from_model(cached)
+        deterministic = _deterministic_hiring_interpretation(
+            contract,
+            source_text=content,
+            source_url=str(source_url),
+            publisher=str(publisher or ""),
+            structured_metadata=structured_metadata,
+            entity_hints=entity_hints,
+        )
+        if deterministic is not None:
+            # No paid model call: structured vacancy + literal duty already prove the proxy.
+            self.cache.set(key, deterministic.to_dict())
+            return deterministic
         self.telemetry.semantic_calls += 1
         result = await self.model.complete_json(
             task="semantic_commercial_event", system_prompt=EVENT_SYSTEM_PROMPT,
@@ -621,6 +633,101 @@ def _hiring_bridge_helpers():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module.find_customer_acquisition_duty, module.looks_sales_role
+
+
+def _deterministic_hiring_interpretation(
+    contract: SemanticQueryContract,
+    *,
+    source_text: str,
+    source_url: str,
+    publisher: str,
+    structured_metadata: Optional[Mapping[str, Any]],
+    entity_hints: Sequence[str],
+) -> Optional[SemanticEventInterpretation]:
+    """Build an interpretation from structured hiring evidence without a paid model call."""
+    if HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP not in contract.required_relationships:
+        return None
+    find_customer_acquisition_duty, looks_sales_role = _hiring_bridge_helpers()
+    meta = dict(structured_metadata or {})
+    bundle = meta.get("hiring_semantic_evidence_bundle") if isinstance(meta.get("hiring_semantic_evidence_bundle"), Mapping) else meta
+    duty_excerpt, duty_start, duty_end = find_customer_acquisition_duty(source_text)
+    if not duty_excerpt or duty_start < 0:
+        return None
+    title = _clean(bundle.get("vacancy_title") or bundle.get("object") or "")
+    duties = _clean(bundle.get("role_duties") or "")
+    if not looks_sales_role(title=title, description=duties):
+        return None
+    if bundle.get("vacancy_active") is not True:
+        return None
+    if bundle.get("employer_is_direct") is False:
+        return None
+    company = _clean(
+        bundle.get("subject")
+        or next((hint for hint in entity_hints if _clean(hint)), "")
+    )
+    if not company:
+        return None
+    location = _clean(bundle.get("location") or "")
+    event_date = _clean(bundle.get("event_date") or "") or None
+    rubric = []
+    for item in contract.acceptance_rubric:
+        if item.startswith("target_role_employer") or "sales_customer_acquisition" in item:
+            rubric.append(item)
+    return SemanticEventInterpretation(
+        entities=({"name": company, "type": "operating_company", "role": "employer"},),
+        events=({"type": "active_job_opening", "status": "active"},),
+        relations=({
+            "relationship_id": HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP,
+            "supported": True,
+            "subject": company,
+            "subject_role": "employer",
+            "object": title or "ruolo commerciale",
+            "direction": "employer_to_role",
+            "supporting_excerpt": duty_excerpt,
+            "excerpt_start": duty_start,
+            "excerpt_end": duty_end,
+            "reason": "literal customer-acquisition duty on active direct-employer vacancy",
+            "confidence": 0.96,
+        },),
+        target_company=company,
+        target_entity_role="employer",
+        event_type="active_job_opening",
+        open_predicate="active sales vacancy with customer-acquisition duties",
+        actor=company,
+        recipient=None,
+        provider=None,
+        beneficiary=None,
+        investor=None,
+        employer=company,
+        recruiter=None,
+        publisher=_clean(publisher) or None,
+        authority=None,
+        predicate="hires_for_customer_acquisition",
+        direction="employer_to_role",
+        event_status="active",
+        event_date=event_date,
+        amount=None,
+        location=location or None,
+        technology=None,
+        role=title or "commerciale",
+        negated=False,
+        hypothetical=False,
+        conditional=False,
+        rumor=False,
+        historical=False,
+        certainty=0.96,
+        query_match=True,
+        query_match_reason="deterministic hiring observables: active direct-employer sales vacancy with literal customer-acquisition duty",
+        satisfied_relationships=(HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP,),
+        acceptance_rubric_passed=tuple(sorted(set(rubric))),
+        buyer_need="sales capacity for new-customer acquisition",
+        why_now=f"Active vacancy {title}".strip(),
+        evidence_excerpt=duty_excerpt,
+        evidence_start=duty_start,
+        evidence_end=duty_end,
+        confidence=0.96,
+        rejection_reason=None,
+    )
 
 
 def _hiring_acquisition_observables(
