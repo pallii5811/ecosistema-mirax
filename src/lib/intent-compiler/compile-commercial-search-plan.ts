@@ -18,7 +18,7 @@ import {
   setSemanticQueryCache,
 } from './semantic-query-cache'
 
-export const COMMERCIAL_INTENT_PROMPT_VERSION = 'commercial-intent-v1.4.1' as const
+export const COMMERCIAL_INTENT_PROMPT_VERSION = 'commercial-intent-v1.4.2' as const
 
 export type QueryCompilerTelemetry = {
   query_tier1_calls: number
@@ -103,13 +103,17 @@ Preserve who sells, the target company, the target company's role, every explici
 geography, exclusions, negative conditions and time constraints. Relationships are semantic predicates, not
 keyword synonyms. Never invent companies, facts, URLs or evidence.
 
-target_role_in_event is the company's role in the event (employer, recipient, expanding_company,
-contract_winner, technology_adopter, former_customer), never a person, job title, function, or buyer persona.
+target_role_in_event is the company's role in the event, never a person, job title, function, or buyer persona.
+When the event is staffing, hiring, or team/personnel expansion, target_role_in_event must be employer
+(not expanding_company). Prefer target_entity_types operating_company for operating businesses.
+For sales/customer-acquisition team expansion use relationship
+sales_customer_acquisition_team_expansion_by_target_company.
 
-canonical_signal_hints are execution routing only, not semantic truth. When a required relationship clearly
-matches an existing canonical capability, emit that hint (for example sales/customer-acquisition hiring →
-hiring_sales; funding received → funding; geographic expansion → geographic_expansion). Do not force an
-open-world relationship into a wrong signal ID; leave hints empty when no capability matches.
+canonical_signal_hints are execution routing only, not semantic truth. Derive hints from the whole semantic
+contract (role + relationships + event), never from an isolated geography word. Sales/customer-acquisition
+hiring → hiring_sales. Emit geographic_expansion only when the event itself is territorial (new site, area,
+region, province, market geography, physical presence). A target geography filter alone (e.g. Lombardia)
+is not geographic_expansion; "ampliare la squadra" is staffing, not geographic expansion.
 
 When the user states an offer, preserve its category, products/services, problems solved and likely
 buyer roles in seller/offer; never treat the seller as the target. Keep strings under 160 characters and arrays
@@ -120,6 +124,10 @@ Return accept, clarification, or a patch containing only fields that are missing
 original open-world predicate and event direction. Never replace meaning with keywords or invent facts.
 If TARGET_ROLE_ENTITY_TYPE_MISMATCH is reported, patch only target_role_in_event (and required_relationships
 only if needed) so the role describes the company in the event, not a person or job title.
+If TARGET_ROLE_STAFFING_MISMATCH is reported, set target_role_in_event to employer and align
+required_relationships to the staffing/hiring event (e.g. sales_customer_acquisition_team_expansion_by_target_company).
+If ROUTING_HINT_GEOGRAPHY_MISMATCH is reported, remove geographic_expansion from canonical_signal_hints
+and keep hiring-family hints when the event is staffing/team expansion.
 Output only via the tool.`
 
 function disabledFlag(value: string | undefined): boolean {
@@ -379,6 +387,75 @@ export function isPersonOrJobTitleTargetRole(role: string): boolean {
   return false
 }
 
+/** Relationship predicates that mean staffing/hiring/team expansion (semantic contract, not query regex). */
+export function relationshipImpliesStaffing(relationship: string): boolean {
+  const value = String(relationship || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (!value) return false
+  if (value.includes('sales_customer_acquisition_team_expansion')) return true
+  if (value.includes('sales_team_expansion')) return true
+  if (/(^|_)(hiring|staffing|recruit|personnel|workforce)(_|$)/.test(value)) return true
+  if (value.includes('team_expansion') || value.includes('expanding_sales_team')) return true
+  if (value.includes('hiring_customer') || value.includes('customer_development_staff')) return true
+  if (value.includes('scaling_customer_acquisition') && value.includes('hiring')) return true
+  // Free-form contract predicates from Tier-1 that still encode staffing events.
+  if (/\b(hiring|staff|team)\b/.test(value.replace(/_/g, ' ')) &&
+      /\b(sales|customer|client|commerc|acquisit)\b/.test(value.replace(/_/g, ' '))) {
+    return true
+  }
+  return false
+}
+
+/** Relationship predicates that mean territorial / geographic expansion events. */
+export function relationshipImpliesGeographicExpansion(relationship: string): boolean {
+  const value = String(relationship || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (!value) return false
+  if (value.includes('territorial') || value.includes('geographic_expansion')) return true
+  if (value.includes('market_entry') || value.includes('new_location') || value.includes('new_office')) return true
+  if (value.includes('new_sede') || value.includes('presence_expanded')) return true
+  if (value.includes('geo_expansion') || value.includes('coverage_territor')) return true
+  const words = value.replace(/_/g, ' ')
+  if (/\b(territorial|geographic|province|region|sede|presenza)\b/.test(words) &&
+      /\b(expand|expansion|open|apert|allarg|estend)\b/.test(words)) {
+    return true
+  }
+  return false
+}
+
+export function contractImpliesStaffingEvent(contract: Pick<SemanticQueryContract, 'required_relationships' | 'event_or_state_description' | 'canonical_signal_hints'>): boolean {
+  if ((contract.required_relationships || []).some(relationshipImpliesStaffing)) return true
+  if ((contract.canonical_signal_hints || []).some((hint) => String(hint).startsWith('hiring'))) return true
+  const event = String(contract.event_or_state_description || '').toLowerCase()
+  return /\b(hiring|staffing|team expansion|personnel|squadra|assum)\b/.test(event) &&
+    !relationshipImpliesGeographicExpansion(event)
+}
+
+export function isStaffingRoleMismatch(role: string, contract: Pick<SemanticQueryContract, 'required_relationships' | 'event_or_state_description' | 'canonical_signal_hints'>): boolean {
+  if (!contractImpliesStaffingEvent(contract)) return false
+  const compact = String(role || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (!compact) return true
+  if (compact === 'employer') return false
+  // Combined territorial + sales events may legitimately use expanding_* company roles.
+  if ((contract.required_relationships || []).some(relationshipImpliesGeographicExpansion)) {
+    if (compact.startsWith('expanding')) return false
+  }
+  // expanding_company alone is too generic when the event is explicitly staffing/hiring.
+  if (compact === 'expanding_company' || compact === 'changed_company' || compact === 'operating_company') return true
+  return isPersonOrJobTitleTargetRole(role)
+}
+
+/** Drop geographic_expansion when geography is only a target filter and the event is staffing. */
+export function filterRoutingHintsForContract(
+  hints: readonly string[],
+  contract: Pick<SemanticQueryContract, 'required_relationships' | 'event_or_state_description' | 'canonical_signal_hints'>,
+): string[] {
+  const staffing = contractImpliesStaffingEvent(contract)
+  const geoEvent = (contract.required_relationships || []).some(relationshipImpliesGeographicExpansion)
+  return canonicalSignals(hints).filter((hint) => {
+    if (hint === 'geographic_expansion' && staffing && !geoEvent) return false
+    return true
+  })
+}
+
 function semanticContractIssues(
   query: string,
   contract: SemanticQueryContract | null,
@@ -413,8 +490,27 @@ function semanticContractIssues(
       message: 'target_role_in_event must describe the company\'s role in the event, not a person, job title, or function.',
     })
   }
+  if (isStaffingRoleMismatch(contract.target_role_in_event, contract)) {
+    issues.push({
+      code: 'TARGET_ROLE_STAFFING_MISMATCH',
+      path: 'target_role_in_event',
+      message: 'Staffing/hiring/team-expansion events require target_role_in_event=employer, not a generic expansion role.',
+    })
+  }
   if (contract.required_relationships.length === 0) {
     issues.push({ code: 'REQUIRED_RELATIONSHIP_MISSING', path: 'required_relationships', message: 'At least one semantic relationship is required.' })
+  }
+  const staffing = contractImpliesStaffingEvent(contract)
+  const geoEvent = contract.required_relationships.some(relationshipImpliesGeographicExpansion)
+  if (
+    staffing && !geoEvent &&
+    (contract.canonical_signal_hints || []).some((hint) => canonicalSignals([hint]).includes('geographic_expansion'))
+  ) {
+    issues.push({
+      code: 'ROUTING_HINT_GEOGRAPHY_MISMATCH',
+      path: 'canonical_signal_hints',
+      message: 'geographic_expansion is invalid when the event is staffing/team expansion and geography is only a target filter.',
+    })
   }
   if (contract.confidence < 0.72) {
     issues.push({ code: 'SEMANTIC_CONFIDENCE_LOW', path: 'confidence', message: 'Tier-1 confidence is below 0.72.' })
@@ -435,6 +531,13 @@ function applySemanticPatch(
   const allowed = new Set(
     issues.map((issue) => issue.path.split('.')[0]).filter((field) => schemaFields.has(field)),
   )
+  if (issues.some((issue) => issue.code === 'TARGET_ROLE_STAFFING_MISMATCH')) {
+    allowed.add('required_relationships')
+    allowed.add('target_entity_types')
+  }
+  if (issues.some((issue) => issue.code === 'ROUTING_HINT_GEOGRAPHY_MISMATCH')) {
+    allowed.add('canonical_signal_hints')
+  }
   for (const [key, value] of Object.entries(recordValue(patch))) {
     if (allowed.has(key)) seed[key] = value
   }
@@ -479,11 +582,19 @@ function semanticPlanEnvelope(query: string, input: unknown): unknown {
   ) return input
   const parsed = SemanticQueryContractSchema.safeParse(input)
   if (!parsed.success) return { semantic_query_contract: input }
-  const semantic: SemanticQueryContract = parsed.data
-  const signals = canonicalSignals([
-    ...semantic.canonical_signal_hints,
-    ...parseSignalIntentHeuristic(query).required_signals,
-  ])
+  const semantic: SemanticQueryContract = {
+    ...parsed.data,
+    canonical_signal_hints: filterRoutingHintsForContract(
+      parsed.data.canonical_signal_hints,
+      parsed.data,
+    ),
+  }
+  // Heuristic floor is structural only; contract relationships remain authority for geo vs staffing.
+  const heuristicSignals = canonicalSignals(parseSignalIntentHeuristic(query).required_signals)
+  const signals = filterRoutingHintsForContract(
+    canonicalSignals([...semantic.canonical_signal_hints, ...heuristicSignals]),
+    semantic,
+  )
   const definitions = signals
     .map((signal) => getSignalDefinition(signal))
     .filter((item): item is NonNullable<ReturnType<typeof getSignalDefinition>> => Boolean(item))
@@ -692,10 +803,22 @@ function normalizePayload(
   const signalPolicy = (payload.signal_policy && typeof payload.signal_policy === 'object'
     ? payload.signal_policy
     : {}) as Record<string, unknown>
-  const requiredSignals = [...new Set([
-    ...canonicalSignals(signalPolicy.required_signals),
-    ...deterministicSignalFloor,
-  ])]
+  const semanticEarly = payload.semantic_query_contract && typeof payload.semantic_query_contract === 'object'
+    ? payload.semantic_query_contract as Record<string, unknown>
+    : null
+  const contractForSignals = {
+    required_relationships: stringArray(semanticEarly?.required_relationships),
+    event_or_state_description: String(semanticEarly?.event_or_state_description || ''),
+    canonical_signal_hints: stringArray(semanticEarly?.canonical_signal_hints),
+  }
+  const requiredSignals = filterRoutingHintsForContract(
+    [...new Set([
+      ...canonicalSignals(signalPolicy.required_signals),
+      ...deterministicSignalFloor,
+      ...canonicalSignals(contractForSignals.canonical_signal_hints),
+    ])],
+    contractForSignals,
+  )
   const optionalSignals = canonicalSignals(signalPolicy.optional_signals).filter(
     (signal) => !requiredSignals.includes(signal),
   )
@@ -722,8 +845,60 @@ function normalizePayload(
     ? payload.semantic_query_contract as Record<string, unknown>
     : null
   if (semantic) {
-    semantic.canonical_signal_hints = canonicalSignals(semantic.canonical_signal_hints)
+    const contractView = {
+      required_relationships: stringArray(semantic.required_relationships),
+      event_or_state_description: String(semantic.event_or_state_description || ''),
+      canonical_signal_hints: stringArray(semantic.canonical_signal_hints),
+    }
+    semantic.canonical_signal_hints = filterRoutingHintsForContract(
+      canonicalSignals(semantic.canonical_signal_hints),
+      contractView,
+    )
+    if (isCompanyEntityType(stringArray(semantic.target_entity_types))) {
+      const types = stringArray(semantic.target_entity_types)
+      semantic.target_entity_types = (types.some((item) => /operating_company/i.test(item))
+        ? ['operating_company']
+        : [...new Set(types.map((item) => (
+          /^(company|organization)$/i.test(item) ? 'operating_company' : item
+        )))]) as string[]
+      if (!(semantic.target_entity_types as string[]).length) {
+        semantic.target_entity_types = ['operating_company']
+      }
+    }
+    if (isStaffingRoleMismatch(String(semantic.target_role_in_event || ''), contractView)) {
+      semantic.target_role_in_event = 'employer'
+    }
+    if (
+      contractImpliesStaffingEvent(contractView) &&
+      !contractView.required_relationships.some(relationshipImpliesGeographicExpansion)
+    ) {
+      const staffingRels = contractView.required_relationships.filter(relationshipImpliesStaffing)
+      if (staffingRels.length && !staffingRels.some((rel) =>
+        String(rel).includes('sales_customer_acquisition_team_expansion_by_target_company'))) {
+        semantic.required_relationships = [
+          'sales_customer_acquisition_team_expansion_by_target_company',
+          ...staffingRels,
+        ].slice(0, 4)
+      }
+    }
     payload.semantic_query_contract = semantic
+    // Re-filter signals after role/relationship normalization.
+    const refreshed = filterRoutingHintsForContract(requiredSignals, {
+      required_relationships: stringArray(semantic.required_relationships),
+      event_or_state_description: String(semantic.event_or_state_description || ''),
+      canonical_signal_hints: stringArray(semantic.canonical_signal_hints),
+    })
+    signalPolicy.required_signals = refreshed
+    signalPolicy.maximum_age_days_by_signal = Object.fromEntries(
+      refreshed.map((signal) => {
+        const definition = getSignalDefinition(signal)
+        const raw = Number(rawFreshness[signal])
+        return [signal, Number.isInteger(raw) && raw >= 1 && raw <= 3650 ? raw : definition?.defaultFreshnessDays || 365]
+      }),
+    )
+    payload.signal_policy = signalPolicy
+    requiredSignals.length = 0
+    requiredSignals.push(...refreshed)
   }
 
   const hypotheses = Array.isArray(payload.commercial_hypotheses)

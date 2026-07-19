@@ -5547,22 +5547,26 @@ def main() -> None:
                         "missing_signals": list(shadow_result.coverage.missing_signals),
                         "coverage_reasons": list(shadow_result.coverage.reasons),
                         "adapter_telemetry": [
-                            {
-                                "adapter_id": item.adapter_id,
-                                "calls": item.calls,
-                                "operations": item.operations,
-                                "raw_candidates": item.raw_candidates,
-                                "unique_candidates": item.unique_candidates,
-                                "qualified": item.qualified,
-                                "cost_eur": item.cost_eur,
-                                "exhausted": item.exhausted,
-                                "exhaustion_authoritative": bool(getattr(item, "exhaustion_authoritative", False)),
-                                "exhaustion_scope": getattr(item, "exhaustion_scope", None),
-                                "exhaustion_reason": getattr(item, "exhaustion_reason", None),
-                                "warnings": list(item.warnings),
-                                "acquisition": dict(getattr(item, "acquisition_telemetry", {}) or {}),
-                                "next_cursor": item.next_cursor.value if item.next_cursor else None,
-                            }
+                            (
+                                item.to_root_cause_telemetry()
+                                if hasattr(item, "to_root_cause_telemetry")
+                                else {
+                                    "adapter_id": item.adapter_id,
+                                    "calls": item.calls,
+                                    "operations": item.operations,
+                                    "raw_candidates": item.raw_candidates,
+                                    "unique_candidates": item.unique_candidates,
+                                    "qualified": item.qualified,
+                                    "cost_eur": item.cost_eur,
+                                    "exhausted": item.exhausted,
+                                    "exhaustion_authoritative": bool(getattr(item, "exhaustion_authoritative", False)),
+                                    "exhaustion_scope": getattr(item, "exhaustion_scope", None),
+                                    "exhaustion_reason": getattr(item, "exhaustion_reason", None),
+                                    "warnings": list(item.warnings),
+                                    "acquisition": dict(getattr(item, "acquisition_telemetry", {}) or {}),
+                                    "next_cursor": item.next_cursor.value if item.next_cursor else None,
+                                }
+                            )
                             for item in shadow_result.adapter_progress
                         ],
                         "projection_traces": [

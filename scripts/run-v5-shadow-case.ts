@@ -46,7 +46,7 @@ if (queryOverride && expectedSignalsOverride.length === 0) {
   throw new Error('--expected-signals required with --query')
 }
 const maxLeads = requestedMaxLeads
-const hardBudgetEur = 0.125
+const hardBudgetEur = Math.min(0.125, Number((maxLeads * 0.025).toFixed(4)))
 const datasetVersion = 'mirax-gold-v5'
 
 function required(name: string) {
@@ -219,10 +219,13 @@ async function prepare() {
       required_signals: plan.required_signals, signals: plan.required_signals.map((type) => ({ type, params: {} })),
       source_plan: plan.source_plan, search_strategy: plan.search_strategy, uqe_plan: plan,
       query_compiler_telemetry: compilerTelemetry,
+      prepare_only: true,
+      execution_authorized: false,
     }
     const { error: readyError } = await service.from('searches').update({
       category: plan.sector || `Evaluation shadow ${vertical}`, location: plan.location || 'Italia',
-      intent, status: 'pending', results: [],
+      intent, status: 'planning', results: [],
+      progress: { prepare_complete: true, execution_authorized: false },
     }).eq('id', searchId)
     if (readyError) throw readyError
     const selected = allowedSources.map((sourceId) => {

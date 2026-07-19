@@ -85,7 +85,15 @@ class AdapterProgress:
     raw_candidates: int = 0
     unique_candidates: int = 0
     qualified: int = 0
+    grounded: int = 0
+    estimated_cost_eur: float = 0.0
     cost_eur: float = 0.0
+    provider_queries: int = 0
+    pages_fetched: int = 0
+    official_domains_resolved: int = 0
+    semantic_calls: int = 0
+    semantic_cache_hits: int = 0
+    elapsed_ms: int = 0
     exhausted: bool = False
     exhaustion_authoritative: bool = False
     exhaustion_scope: Optional[str] = None
@@ -94,10 +102,39 @@ class AdapterProgress:
     warnings: List[str] = field(default_factory=list)
     projection_traces: List[Dict[str, Any]] = field(default_factory=list)
     acquisition_telemetry: Dict[str, Any] = field(default_factory=dict)
+    rejection_histogram: Dict[str, int] = field(default_factory=dict)
+    rejected_candidates: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def qualified_per_operation(self) -> float:
         return self.qualified / self.operations if self.operations else 0.0
+
+    def to_root_cause_telemetry(self) -> Dict[str, Any]:
+        return {
+            "adapter_id": self.adapter_id,
+            "provider_queries": self.provider_queries or self.calls,
+            "operations": self.operations,
+            "estimated_cost": round(self.estimated_cost_eur, 6),
+            "settled_cost": round(self.cost_eur, 6),
+            "results_received": self.raw_candidates,
+            "raw_candidates": self.raw_candidates,
+            "unique_candidates": self.unique_candidates,
+            "pages_fetched": self.pages_fetched,
+            "official_domains_resolved": self.official_domains_resolved,
+            "semantic_calls": self.semantic_calls,
+            "semantic_cache_hits": self.semantic_cache_hits,
+            "grounded": self.grounded,
+            "qualified": self.qualified,
+            "rejection_histogram": dict(self.rejection_histogram),
+            "next_cursor": (
+                getattr(self.next_cursor, "value", None)
+                if self.next_cursor is not None
+                else None
+            ),
+            "exhaustion_reason": self.exhaustion_reason,
+            "elapsed_ms": self.elapsed_ms,
+            "rejected_candidates": list(self.rejected_candidates)[:50],
+        }
 
 
 @dataclass(frozen=True)
@@ -859,7 +896,14 @@ class UniversalSourceOrchestrator:
                 spent += result.cost_eur
                 state.calls += 1
                 state.operations += result.operations
+                state.estimated_cost_eur += float(allocation)
                 state.cost_eur += result.cost_eur
+                state.provider_queries += int(
+                    ((result.telemetry or {}).get("provider_queries")
+                     if isinstance(result.telemetry, Mapping)
+                     else None)
+                    or 0
+                ) or 1
                 state.raw_candidates += len(result.candidates)
                 state.warnings.extend(result.warnings)
                 state.exhausted = result.exhaustion.exhausted
@@ -874,6 +918,13 @@ class UniversalSourceOrchestrator:
                     acquisition = result.telemetry.get("acquisition")
                     if isinstance(acquisition, Mapping):
                         state.acquisition_telemetry.update(dict(acquisition))
+                        state.pages_fetched += int(acquisition.get("pages_fetched") or acquisition.get("urls_fetched") or 0)
+                        state.official_domains_resolved += int(
+                            acquisition.get("official_domains_resolved") or acquisition.get("domains_resolved") or 0
+                        )
+                        state.semantic_calls += int(acquisition.get("semantic_calls") or 0)
+                        state.semantic_cache_hits += int(acquisition.get("semantic_cache_hits") or 0)
+                        state.elapsed_ms += int(acquisition.get("elapsed_ms") or 0)
                 discovered += result.operations
                 raw_count += len(result.candidates)
 
@@ -887,11 +938,24 @@ class UniversalSourceOrchestrator:
                     merged = accumulated[key]
                     evidence_signals = {item.signal_id for item in merged.evidence}
                     if not _evidence_satisfies_request(evidence_signals, request):
-                        rejection_by_entity[key] = (
+                        code = (
                             "SIGNAL_GROUP_MISMATCH"
                             if request.technical_filters.get("signal_groups")
                             else "SIGNAL_SET_INCOMPLETE"
                         )
+                        rejection_by_entity[key] = code
+                        state.rejection_histogram[code] = state.rejection_histogram.get(code, 0) + 1
+                        state.rejected_candidates.append({
+                            "entity_hint": str(getattr(merged, "canonical_company_name", "") or "")[:120],
+                            "source_url": str(
+                                (merged.evidence[0].source_url if merged.evidence else "")
+                                or getattr(merged, "official_domain", "")
+                                or ""
+                            )[:300],
+                            "adapter": state.adapter_id,
+                            "rejection_stage": "evidence_match",
+                            "rejection_code": code,
+                        })
                         continue
                     if request.technical_filters.get("semantic_authority_required") is True:
                         decision = await semantic_authority_qualifier(merged, request)
@@ -899,12 +963,28 @@ class UniversalSourceOrchestrator:
                         decision = await self.qualifier(merged)
                     decisions[key] = decision
                     if not decision.qualified:
-                        rejection_by_entity[key] = decision.rejection_code or "QUALIFICATION_FAILED"
+                        code = decision.rejection_code or "QUALIFICATION_FAILED"
+                        rejection_by_entity[key] = code
+                        state.rejection_histogram[code] = state.rejection_histogram.get(code, 0) + 1
+                        state.rejected_candidates.append({
+                            "entity_hint": str(getattr(merged, "canonical_company_name", "") or "")[:120],
+                            "source_url": str(
+                                (merged.evidence[0].source_url if merged.evidence else "")
+                                or getattr(merged, "official_domain", "")
+                                or ""
+                            )[:300],
+                            "adapter": state.adapter_id,
+                            "rejection_stage": "qualification",
+                            "rejection_code": code,
+                        })
                         continue
                     if key in processed_employer_keys:
-                        rejection_by_entity[key] = "DUPLICATE_EMPLOYER_OPPORTUNITY"
+                        code = "DUPLICATE_EMPLOYER_OPPORTUNITY"
+                        rejection_by_entity[key] = code
+                        state.rejection_histogram[code] = state.rejection_histogram.get(code, 0) + 1
                         continue
                     if decision.semantic_grounding:
+                        state.grounded += 1
                         merged = _apply_semantic_enrichment(merged, decision.semantic_grounding)
                         accumulated[key] = merged
                     qualified_by_entity[key] = QualifiedLead(

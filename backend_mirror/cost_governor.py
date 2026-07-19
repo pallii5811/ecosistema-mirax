@@ -181,7 +181,14 @@ class ResearchCostGovernor:
             return item
         if item.status != "reserved":
             raise ResearchBudgetExceeded(f"cost reservation is not settleable: {item.status}")
-        amount = _micro(actual_eur)
+        without_current = self.committed_micro_eur - (
+            item.actual_micro_eur if item.actual_micro_eur is not None else item.estimated_micro_eur
+        )
+        remaining_for_actual = self.hard_micro_eur - without_current
+        requested = _micro(actual_eur)
+        # Preventive clamp: settled + active reservations must never exceed hard_cap.
+        amount = min(requested, max(0, remaining_for_actual))
+        overshot = requested > remaining_for_actual
         if self.persistent_client is not None and self.search_id:
             try:
                 response = self.persistent_client.rpc(
@@ -192,20 +199,26 @@ class ResearchCostGovernor:
                         "p_actual_cost_eur": amount / 1_000_000,
                         "p_metadata": {
                             "runtime": "python_worker",
+                            "partial_budget_exhausted": overshot,
+                            "requested_actual_cost_eur": requested / 1_000_000,
                             **(metadata or {}),
                         },
                     },
                 ).execute()
                 if getattr(response, "data", None) is None:
                     raise RuntimeError("persistent settlement returned no ledger row")
+                if isinstance(response.data, dict) and response.data.get("actual_cost_eur") is not None:
+                    amount = _micro(response.data.get("actual_cost_eur"))
             except Exception as exc:
                 # The provider may already have charged the request. Stop all
                 # subsequent paid work rather than silently losing the debit.
                 raise ResearchBudgetExceeded(f"persistent cost settlement failed: {exc}") from exc
         item.actual_micro_eur = amount
         item.status = "settled"
-        if self.committed_micro_eur > self.hard_micro_eur:
-            raise ResearchBudgetExceeded("actual cost exceeded hard budget; paid work halted")
+        if overshot or self.committed_micro_eur > self.hard_micro_eur:
+            raise ResearchBudgetExceeded(
+                "actual cost exceeded hard budget; paid work halted; termination=partial_budget_exhausted"
+            )
         return item
 
     def release(self, key: str, *, failed: bool = False, error_code: Optional[str] = None) -> None:

@@ -99,3 +99,51 @@ def test_governor_fails_closed_when_persistent_reservation_fails():
     with pytest.raises(ResearchBudgetExceeded, match="persistent cost reservation failed"):
         governor.reserve("search:round:1", "web_search", 0.01)
     assert governor.snapshot()["committed_cost_eur"] == 0
+
+def test_settle_clamps_actual_so_committed_never_exceeds_hard_cap():
+    # S1 regression: actual>estimate must not push committed above hard (0.0656 class).
+    governor = ResearchCostGovernor.from_plan(
+        {"canonical_plan": {"budget_policy": {"target_cost_eur": 0.042, "hard_cost_eur": 0.05}}},
+        2,
+    )
+    governor.reserve("compile", "intent_compilation", 0.005)
+    governor.settle("compile", 0.005)
+    governor.reserve("search:1", "search_web", 0.02)
+    governor.settle("search:1", 0.02)
+    governor.reserve("search:2", "search_web", 0.02)
+    with pytest.raises(ResearchBudgetExceeded, match="partial_budget_exhausted"):
+        governor.settle("search:2", 0.0306)  # would have made 0.0556 historically
+    assert governor.snapshot()["committed_cost_eur"] <= 0.05 + 1e-9
+    with pytest.raises(ResearchBudgetExceeded):
+        governor.reserve("search:3", "web_search", 0.005)
+
+
+def test_sequential_remaining_budget_blocks_next_paid_operation():
+    governor = ResearchCostGovernor.from_plan(
+        {"canonical_plan": {"budget_policy": {"target_cost_eur": 0.04, "hard_cost_eur": 0.05}}},
+        2,
+    )
+    governor.reserve("a", "web_search", 0.03)
+    governor.settle("a", 0.03)
+    governor.reserve("b", "web_search", 0.02)
+    assert governor.remaining_eur == pytest.approx(0.0)
+    with pytest.raises(ResearchBudgetExceeded):
+        governor.reserve("c", "open_page", 0.0001)
+
+
+def test_concurrent_style_reserve_only_one_fits_remaining():
+    governor = ResearchCostGovernor.from_plan(
+        {"canonical_plan": {"budget_policy": {"target_cost_eur": 0.04, "hard_cost_eur": 0.05}}},
+        2,
+    )
+    governor.reserve("seed", "web_search", 0.045)
+    governor.settle("seed", 0.045)
+    winners = []
+    for key in ("x", "y", "z"):
+        try:
+            governor.reserve(key, "web_search", 0.005)
+            winners.append(key)
+        except ResearchBudgetExceeded:
+            pass
+    assert len(winners) == 1
+    assert governor.snapshot()["committed_cost_eur"] <= 0.05 + 1e-9

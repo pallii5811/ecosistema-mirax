@@ -69,13 +69,20 @@ export class ResearchCostGovernor {
   settle(idempotencyKey: string, actualCostEur: number): CostReservation {
     const reservation = this.reservations.get(idempotencyKey)
     if (!reservation) throw new TypeError(`Unknown reservation ${idempotencyKey}`)
+    if (reservation.status === 'settled') return reservation
     const actualMicroEur = toMicroEur(actualCostEur)
     const withoutCurrent = this.committedMicroEur - (reservation.actualMicroEur ?? reservation.estimatedMicroEur)
-    if (withoutCurrent + actualMicroEur > this.hardMicroEur) {
-      reservation.status = 'failed'
-      throw new ResearchBudgetExceededError('Actual operation cost exceeded hard budget')
+    const remainingForActual = this.hardMicroEur - withoutCurrent
+    // Clamp: never let settled+reservations exceed hard_cap (S1 €0.0656 class).
+    const clamped = Math.min(actualMicroEur, Math.max(0, remainingForActual))
+    if (actualMicroEur > remainingForActual) {
+      reservation.actualMicroEur = clamped
+      reservation.status = 'settled'
+      throw new ResearchBudgetExceededError(
+        'Actual operation cost exceeded hard budget; settled clamped; termination=partial_budget_exhausted',
+      )
     }
-    reservation.actualMicroEur = actualMicroEur
+    reservation.actualMicroEur = clamped
     reservation.status = 'settled'
     return reservation
   }
