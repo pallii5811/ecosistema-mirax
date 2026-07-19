@@ -669,7 +669,9 @@ def bootstrap_parsed_and_revalidation_queues(
             )
         )
         return parsed_unique, active_refetch
-    return parsed_unique, reval_unique
+    # Validator epoch advanced: offline-revalidate every successful parse, including
+    # prior ACCEPTED rows that must pass a newer semantic verifier version.
+    return parsed_unique, parsed_unique
 
 
 @dataclass
