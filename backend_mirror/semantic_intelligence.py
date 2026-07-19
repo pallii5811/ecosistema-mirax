@@ -604,10 +604,16 @@ def _hiring_acquisition_observables(
     structured_metadata: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Deterministic observables for the hiring customer-acquisition relationship proxy."""
-    from backend_mirror.source_adapters.hiring_semantic_bridge import (
-        find_customer_acquisition_duty,
-        looks_sales_role,
-    )
+    try:
+        from backend_mirror.source_adapters.hiring_semantic_bridge import (
+            find_customer_acquisition_duty,
+            looks_sales_role,
+        )
+    except ImportError:  # staging worker layout is flat under backend-staging/
+        from source_adapters.hiring_semantic_bridge import (  # type: ignore
+            find_customer_acquisition_duty,
+            looks_sales_role,
+        )
 
     meta = dict(structured_metadata or {})
     bundle = meta.get("hiring_semantic_evidence_bundle") if isinstance(meta.get("hiring_semantic_evidence_bundle"), Mapping) else meta
