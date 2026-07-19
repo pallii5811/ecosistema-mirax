@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 from datetime import date, timedelta
@@ -285,7 +285,7 @@ def test_provider_real_batch_twenty_five_pending(monkeypatch) -> None:
                 await asyncio.sleep(0.15)
             return FakeResponse(url)
 
-    monkeypatch.setattr("backend_mirror.agents.search_serp.search_urls_http", fake_search)
+    monkeypatch.setattr("backend_mirror.agents.search_serp.search_hits_http", fake_search)
     monkeypatch.setattr("httpx.AsyncClient", FakeClient)
 
     start_offset = state.url_offset
@@ -339,7 +339,7 @@ def test_provider_slow_url_does_not_block_batch(monkeypatch) -> None:
                 await asyncio.sleep(0.12)
             return FakeResponse(url)
 
-    monkeypatch.setattr("backend_mirror.agents.search_serp.search_urls_http", lambda *a, **k: [])
+    monkeypatch.setattr("backend_mirror.agents.search_serp.search_hits_http", lambda *a, **k: [])
     monkeypatch.setattr("httpx.AsyncClient", FakeClient)
 
     result = asyncio.run(_default_hiring_provider(_marketing_request(), state, 20))

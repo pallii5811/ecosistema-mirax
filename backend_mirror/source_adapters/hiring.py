@@ -21,7 +21,9 @@ from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, normal
 
 from .hiring_budget import (
     HiringDiscoveryState,
+    INITIAL_SERP_QUERIES,
     QUERY_COST_EUR,
+    URL_ONLY_FETCH_CAP,
     URLS_PER_BATCH,
     canonical_url_key,
     encode_discovery_cursor,
@@ -143,10 +145,15 @@ class HiringProviderResult:
     discovery_state: Optional[HiringDiscoveryState] = None
     urls_processed: int = 0
     urls_discovered_total: int = 0
+    provider_queries_executed: int = 0
 
 
 def _build_hiring_discovery_queries(request: AdapterDiscoveryRequest) -> List[Tuple[str, str, str]]:
-    """Return (query_key, query, source_label) in progressive high-yield order."""
+    """Return (query_key, query, source_label) in progressive high-yield order.
+
+    Prefer a few Lombardia-wide vacancy/ATS queries before province × role expansion.
+    Templates are retrieval hints only — never semantic authority.
+    """
     if "hiring_sales" in request.signal_ids:
         roles = _HIRING_SALES_ROLE_TERMS
     elif "hiring_marketing" in request.signal_ids:
@@ -157,30 +164,70 @@ def _build_hiring_discovery_queries(request: AdapterDiscoveryRequest) -> List[Tu
         roles = ("operaio", "tecnico", "magazziniere", "autista")
     else:
         roles = ("personale", "posizione")
-    priority_geos = list(_LOMBARDIA_GEO_TERMS) if any(
-        geo.casefold() in {"lombardia", "lombardy"} for geo in request.geographies
-    ) else [item for item in request.geographies if item.casefold() not in {"italy", "italia"}] or ["Italia"]
+    lombardia = any(geo.casefold() in {"lombardia", "lombardy"} for geo in request.geographies)
+    primary_geo = "Lombardia" if lombardia else (
+        next((item for item in request.geographies if item.casefold() not in {"italy", "italia"}), None) or "Italia"
+    )
+    province_geos = (
+        [item for item in _LOMBARDIA_GEO_TERMS if item != "Lombardia"]
+        if lombardia
+        else [item for item in request.geographies if item.casefold() not in {"italy", "italia"}]
+    )
     sector = " ".join(request.sectors)
     pairs: List[Tuple[str, str, str]] = []
-    # Universal engine strategies first.
+    primary_role = roles[0]
+
+    def _add(source: str, template: str, *, role: str = primary_role, geo: str = primary_geo) -> None:
+        key = f"{source}:{role}:{geo}:{template}"
+        pairs.append((key, template, source))
+
+    # Wave 1 — high-yield regional vacancy + ATS (2–3 templates).
+    _add(
+        "serp:local_vacancy",
+        f'"{primary_role}" "{primary_geo}" ("posizione aperta" OR candidati OR apply OR assum)',
+    )
+    _add(
+        "serp:ats",
+        f'"{primary_role}" "{primary_geo}" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)',
+    )
+    _add(
+        "serp:careers",
+        f'"{primary_role}" "lavora con noi" {primary_geo}'.strip(),
+    )
+    # Optional second role still regional before province expansion.
+    if len(roles) > 1:
+        _add(
+            "serp:local_vacancy",
+            f'"{roles[1]}" "{primary_geo}" ("posizione aperta" OR candidati OR apply)',
+            role=roles[1],
+        )
+    # Universal engine strategies after the focused wave.
     from .universal_strategy_queries import universal_strategy_queries_from_filters
     for query in universal_strategy_queries_from_filters(
         request.technical_filters,
         signal_ids=request.signal_ids,
-        max_queries=6,
+        max_queries=4,
     ):
         key = f"serp:universal:{query}"
         pairs.append((key, query, "serp:universal"))
-    for role in roles:
-        for geo in priority_geos:
+    # Wave 2 — province expansion only after regional templates.
+    for role in roles[:3]:
+        for geo in province_geos:
             for template, source in (
                 (f'"{role}" "{geo}" ("posizione aperta" OR candidati OR apply)', "serp:local_vacancy"),
                 (f'"{role}" "{geo}" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)', "serp:ats"),
                 (f'"{role}" "lavora con noi" {sector} {geo}'.strip(), "serp:careers"),
             ):
-                key = f"{source}:{role}:{geo}:{template}"
-                pairs.append((key, template, source))
+                _add(source, template, role=role, geo=geo)
     return pairs
+
+
+_HIRING_SERP_CUE_RE = re.compile(
+    r"\b(?:job|jobs|career|careers|vacanc\w*|assum\w*|hiring|hr\b|posizione|posizioni|"
+    r"candidat\w*|commerciale|sales|business developer|account (?:executive|manager)|"
+    r"area manager|\bsdr\b|\bbdr\b|lavora con noi|open role|open position|recruit)\b",
+    re.I,
+)
 
 
 def _trace_url(
@@ -595,15 +642,95 @@ def _merge_url_meta(
     existing: Sequence[Mapping[str, Any]],
     urls: Sequence[str],
     url_query_meta: Mapping[str, Tuple[str, str]],
+    *,
+    rich_by_url: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Tuple[Mapping[str, Any], ...]:
     by_url = {str(item.get("url") or ""): dict(item) for item in existing if isinstance(item, Mapping)}
+    rich = rich_by_url or {}
     merged: list[Mapping[str, Any]] = []
     for url in urls:
         query, query_source = url_query_meta.get(url, ("", "unknown"))
         row = dict(by_url.get(url) or {})
-        row.update({"url": url, "query": query, "query_source": query_source})
+        hit = dict(rich.get(url) or {})
+        title = str(hit.get("title") or row.get("title") or "")
+        snippet = str(hit.get("snippet") or row.get("snippet") or "")
+        metadata_quality = str(
+            hit.get("hit_metadata_quality")
+            or row.get("hit_metadata_quality")
+            or ("rich" if (title.strip() or snippet.strip()) else "url_only")
+        )
+        row.update({
+            "url": url,
+            "query": query,
+            "query_source": query_source,
+            "title": title,
+            "snippet": snippet,
+            "publisher": str(hit.get("publisher") or row.get("publisher") or ""),
+            "rank": int(hit.get("rank") or row.get("rank") or 0),
+            "source_type": str(hit.get("source_type") or row.get("source_type") or "search"),
+            "provider": str(hit.get("provider") or row.get("provider") or "unknown"),
+            "hit_metadata_quality": metadata_quality,
+        })
         merged.append(row)
     return tuple(merged)
+
+
+def _normalize_serp_hit(item: Mapping[str, Any] | str, *, rank: int, query: str) -> Dict[str, Any]:
+    """Preserve provider title/snippet; never fabricate evidence from the query."""
+    if isinstance(item, str):
+        url = item.strip()
+        return {
+            "url": url,
+            "title": "",
+            "snippet": "",
+            "publisher": "",
+            "rank": rank,
+            "source_type": "search",
+            "provider": "legacy_url",
+            "query": query,
+            "hit_metadata_quality": "url_only",
+        }
+    url = str(item.get("url") or item.get("link") or "").strip()
+    title = str(item.get("title") or "").strip()
+    snippet = str(item.get("snippet") or item.get("description") or "").strip()
+    # Reject query-as-snippet contamination if a provider echoed the retrieval query.
+    if snippet and snippet.casefold() == query.casefold():
+        snippet = ""
+    quality = "rich" if (title or snippet) else "url_only"
+    return {
+        "url": url,
+        "title": title,
+        "snippet": snippet,
+        "publisher": str(item.get("publisher") or "").strip(),
+        "rank": int(item.get("rank") or rank),
+        "source_type": str(item.get("source_type") or "search"),
+        "provider": str(item.get("provider") or "unknown"),
+        "query": query,
+        "hit_metadata_quality": quality,
+    }
+
+
+def _url_only_promising(url: str) -> bool:
+    host = _host(url)
+    return bool(host) and (_is_recognized_ats(host) or _specific_vacancy_url(url))
+
+
+def _gate_hiring_serp_hit(hit: "DiscoveryHit"):
+    from .cheap_discovery_prefilter import PrefilterDecision, prefilter_discovery_hit
+
+    decision = prefilter_discovery_hit(hit)
+    if decision.accepted:
+        return decision
+    blob = f"{hit.title} {hit.snippet}".strip()
+    if decision.reason == "no_event_hint" and blob and _HIRING_SERP_CUE_RE.search(blob):
+        return PrefilterDecision(
+            True,
+            "accepted",
+            max(0.5, decision.discovery_confidence),
+            decision.company_owned_host,
+            decision.probable_company_name,
+        )
+    return decision
 
 
 def _processed_employer_keys(request: AdapterDiscoveryRequest) -> set[str]:
@@ -640,7 +767,8 @@ async def _default_hiring_provider(
     """Search and fetch evidence pages with batched discovery budget."""
     import asyncio
     import httpx
-    from backend_mirror.agents.search_serp import search_urls_http
+    from backend_mirror.agents.search_serp import search_hits_http
+    from .cheap_discovery_prefilter import DiscoveryHit
 
     before_cost = _governor_committed_eur()
     query_pairs = _build_hiring_discovery_queries(request)
@@ -652,22 +780,41 @@ async def _default_hiring_provider(
     ][state.query_index:]
     discovery_locked = state.discovery_locked()
     discovery_budget = min(state.discovery_remaining_eur(), max(0.0, request.budget_eur))
-    max_queries = 0 if discovery_locked else min(
+    reconcile_hiring_url_queue(state)
+    queue_has_work = bool(state.pending_urls or state.retry_urls or state.revalidation_queue)
+    # Progressive loop: SERP only when the fetch queue is empty/insufficient.
+    max_queries = 0 if (discovery_locked or queue_has_work) else min(
         state.max_queries_this_batch(),
+        INITIAL_SERP_QUERIES,
         int(math.floor(discovery_budget / QUERY_COST_EUR)),
     )
     urls: List[str] = list(state.seen_urls)
     seen = set(urls)
     url_query_meta = _url_query_meta_from_state(state)
+    rich_by_url: Dict[str, Dict[str, Any]] = {
+        str(item.get("url") or ""): dict(item)
+        for item in state.url_meta
+        if isinstance(item, Mapping) and item.get("url")
+    }
     query_stats: List[Dict[str, Any]] = list(state.query_stats)
     scope = hashlib.sha256(f"{request.query}|{request.signal_ids}|{request.geographies}".encode()).hexdigest()[:20]
     queries_run = 0
+    raw_serp_hits = 0
+    rich_serp_hits = 0
+    url_only_hits = 0
+    prefilter_accepted = 0
+    prefilter_rejected = 0
+    prefilter_rejection_histogram: Dict[str, int] = {}
     if max_queries > 0 and pending_queries:
         for query_key, query, query_source in pending_queries[:max_queries]:
             if state.discovery_remaining_eur() + 1e-9 < QUERY_COST_EUR:
                 break
-            found = await asyncio.to_thread(
-                search_urls_http,
+            # Stop discovery once enough accepted URLs are queued for this batch.
+            pending_now = sum(1 for url in urls if url not in set(state.processed_terminal_urls))
+            if pending_now >= max(limit, URLS_PER_BATCH // 2) and queries_run >= 1:
+                break
+            found_raw = await asyncio.to_thread(
+                search_hits_http,
                 query,
                 min(30, max(10, limit)),
                 cost_scope=f"hiring-adapter:{scope}:{query_key}",
@@ -675,55 +822,102 @@ async def _default_hiring_provider(
             queries_run += 1
             state.query_index += 1
             executed.add(query_key)
+            normalized_hits = [
+                _normalize_serp_hit(item, rank=index + 1, query=query)
+                for index, item in enumerate(found_raw or ())
+            ]
+            raw_serp_hits += len(normalized_hits)
             new_urls = 0
-            gated_found = list(found)
-            if bool((request.technical_filters or {}).get("universal_engine")):
-                from .cheap_discovery_prefilter import DiscoveryHit, prefilter_discovery_hit
-                from urllib.parse import urlparse as _urlparse
-                codes: Dict[str, int] = {}
-                raw = len(found)
-                gated_found = []
-                for url in found:
-                    path = (_urlparse(url).path or "").replace("/", " ").replace("-", " ")
-                    decision = prefilter_discovery_hit(
-                        DiscoveryHit(title="", url=url, snippet=f"{path} {query}"),
-                    )
-                    if decision.accepted:
-                        gated_found.append(url)
+            gated_hits: List[Dict[str, Any]] = []
+            query_reject_codes: Dict[str, int] = {}
+            for hit in normalized_hits:
+                url = str(hit.get("url") or "").strip()
+                if not url:
+                    continue
+                if hit.get("hit_metadata_quality") == "url_only":
+                    url_only_hits += 1
+                    if _url_only_promising(url) and sum(
+                        1 for item in rich_by_url.values()
+                        if item.get("hit_metadata_quality") == "url_only"
+                    ) < URL_ONLY_FETCH_CAP:
+                        gated_hits.append(hit)
+                        prefilter_accepted += 1
                     else:
-                        codes[decision.reason] = codes.get(decision.reason, 0) + 1
-                bucket = request.technical_filters.get("universal_prefilter_telemetry")
-                if isinstance(bucket, dict):
-                    bucket["raw_discovery_hits"] = int(bucket.get("raw_discovery_hits") or 0) + raw
-                    bucket["prefilter_accepted"] = int(bucket.get("prefilter_accepted") or 0) + len(gated_found)
-                    bucket["prefilter_rejected"] = int(bucket.get("prefilter_rejected") or 0) + (raw - len(gated_found))
-                    merged = dict(bucket.get("prefilter_rejection_codes") or {})
-                    for key, value in codes.items():
-                        merged[key] = int(merged.get(key) or 0) + value
-                    bucket["prefilter_rejection_codes"] = merged
-                    queries_log = list(bucket.get("provider_queries") or [])
-                    queries_log.append(query)
-                    bucket["provider_queries"] = queries_log
-            for url in gated_found:
-                key = url.lower().rstrip("/")
-                if key not in seen:
-                    seen.add(key)
-                    urls.append(key)
-                    url_query_meta[key] = (query, query_source)
-                    new_urls += 1
+                        prefilter_rejected += 1
+                        query_reject_codes["url_only_low_priority"] = (
+                            query_reject_codes.get("url_only_low_priority", 0) + 1
+                        )
+                    continue
+                rich_serp_hits += 1
+                decision = _gate_hiring_serp_hit(
+                    DiscoveryHit(
+                        title=str(hit.get("title") or ""),
+                        url=url,
+                        snippet=str(hit.get("snippet") or ""),
+                        publisher=str(hit.get("publisher") or ""),
+                        rank=int(hit.get("rank") or 0),
+                    )
+                )
+                if decision.accepted:
+                    gated_hits.append(hit)
+                    prefilter_accepted += 1
+                else:
+                    prefilter_rejected += 1
+                    query_reject_codes[decision.reason] = query_reject_codes.get(decision.reason, 0) + 1
+            for key, value in query_reject_codes.items():
+                prefilter_rejection_histogram[key] = prefilter_rejection_histogram.get(key, 0) + value
+            bucket = request.technical_filters.get("universal_prefilter_telemetry")
+            if isinstance(bucket, dict):
+                bucket["raw_discovery_hits"] = int(bucket.get("raw_discovery_hits") or 0) + len(normalized_hits)
+                bucket["raw_serp_hits"] = int(bucket.get("raw_serp_hits") or 0) + len(normalized_hits)
+                bucket["rich_serp_hits"] = int(bucket.get("rich_serp_hits") or 0) + sum(
+                    1 for item in normalized_hits if item.get("hit_metadata_quality") == "rich"
+                )
+                bucket["url_only_hits"] = int(bucket.get("url_only_hits") or 0) + sum(
+                    1 for item in normalized_hits if item.get("hit_metadata_quality") == "url_only"
+                )
+                bucket["prefilter_accepted"] = int(bucket.get("prefilter_accepted") or 0) + len(gated_hits)
+                bucket["prefilter_rejected"] = int(bucket.get("prefilter_rejected") or 0) + (
+                    len(normalized_hits) - len(gated_hits)
+                )
+                merged = dict(bucket.get("prefilter_rejection_codes") or {})
+                for key, value in query_reject_codes.items():
+                    merged[key] = int(merged.get(key) or 0) + int(value)
+                bucket["prefilter_rejection_codes"] = merged
+                bucket["prefilter_rejection_histogram"] = dict(merged)
+                executed_log = list(bucket.get("provider_queries_executed_log") or [])
+                executed_log.append(query)
+                bucket["provider_queries_executed_log"] = executed_log
+                bucket["provider_queries_executed"] = int(bucket.get("provider_queries_executed") or 0) + 1
+                bucket["provider_query_templates_available"] = len(query_pairs)
+            for hit in gated_hits:
+                url = str(hit.get("url") or "").lower().rstrip("/")
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                urls.append(url)
+                url_query_meta[url] = (query, query_source)
+                rich_by_url[url] = {**hit, "url": url, "query": query, "query_source": query_source}
+                new_urls += 1
             query_stats.append({
                 "query_key": query_key,
                 "query": query,
                 "query_source": query_source,
-                "results_returned": len(found),
+                "results_returned": len(normalized_hits),
+                "rich_hits": sum(1 for item in normalized_hits if item.get("hit_metadata_quality") == "rich"),
+                "url_only_hits": sum(1 for item in normalized_hits if item.get("hit_metadata_quality") == "url_only"),
+                "prefilter_accepted": len(gated_hits),
                 "urls_new": new_urls,
                 "cost_eur": QUERY_COST_EUR,
             })
             if new_urls == 0:
                 zero_yield.add(query_source)
+            # After the first SERP wave that yields queue work, fetch before more queries.
+            if new_urls > 0 and queries_run >= min(INITIAL_SERP_QUERIES, max_queries):
+                break
     state.executed_query_keys = tuple(sorted(executed))
     state.seen_urls = tuple(urls)
-    state.url_meta = _merge_url_meta(state.url_meta, urls, url_query_meta)
+    state.url_meta = _merge_url_meta(state.url_meta, urls, url_query_meta, rich_by_url=rich_by_url)
     state.zero_yield_sources = tuple(sorted(zero_yield))
     state.query_stats = tuple(query_stats)
     state.discovery_spent_eur = round(state.discovery_spent_eur + queries_run * QUERY_COST_EUR, 6)
@@ -1116,6 +1310,7 @@ async def _default_hiring_provider(
         state,
         urls_processed,
         len(urls),
+        queries_run,
     )
 
 
@@ -1292,6 +1487,7 @@ class HiringAdapter:
         spent = 0.0
         url_traces: List[Mapping[str, Any]] = []
         urls_processed_total = 0
+        provider_queries_executed = 0
         for provider in self._providers:
             remaining = max(0.0, request.budget_eur - spent)
             bounded_request = AdapterDiscoveryRequest(
@@ -1318,6 +1514,7 @@ class HiringAdapter:
             provider_results.append(result)
             spent += result.cost_eur
             urls_processed_total += int(result.urls_processed or 0)
+            provider_queries_executed += int(result.provider_queries_executed or 0)
             url_traces.extend(result.url_traces)
         observed = datetime.now(timezone.utc).isoformat()
         candidates: List[OpportunityCandidate] = []
@@ -1489,12 +1686,30 @@ class HiringAdapter:
                 "queue_retry_urls": len(discovery_state.retry_urls),
                 "url_outcomes_count": len(discovery_state.url_outcomes),
                 "parser_epoch": discovery_state.parser_epoch,
+                "provider_query_templates_available": len(_build_hiring_discovery_queries(request)),
+                "provider_queries_executed": provider_queries_executed,
+                "provider_queries": provider_queries_executed,
+                "raw_serp_hits": sum(int(item.get("results_returned") or 0) for item in discovery_state.query_stats),
+                "rich_serp_hits": sum(int(item.get("rich_hits") or 0) for item in discovery_state.query_stats),
+                "url_only_hits": sum(int(item.get("url_only_hits") or 0) for item in discovery_state.query_stats),
+                "prefilter_accepted": sum(int(item.get("prefilter_accepted") or 0) for item in discovery_state.query_stats),
+                "queued_urls": len(discovery_state.seen_urls),
+                "pages_fetched": urls_processed_total,
                 "acquisition": {
                     "hiring_discovery": discovery_state.to_dict(),
                     "url_traces": list(url_traces),
                     "url_outcomes": list(discovery_state.url_outcomes),
                     "prefetch_traces": list(discovery_state.prefetch_traces),
                     "size_constraint_policy": size_constraint_policy(request),
+                    "provider_query_templates_available": len(_build_hiring_discovery_queries(request)),
+                    "provider_queries_executed": provider_queries_executed,
+                    "provider_queries": provider_queries_executed,
+                    "pages_fetched": urls_processed_total,
+                    "queued_urls": len(discovery_state.seen_urls),
+                    "raw_serp_hits": sum(int(item.get("results_returned") or 0) for item in discovery_state.query_stats),
+                    "rich_serp_hits": sum(int(item.get("rich_hits") or 0) for item in discovery_state.query_stats),
+                    "url_only_hits": sum(int(item.get("url_only_hits") or 0) for item in discovery_state.query_stats),
+                    "prefilter_accepted": sum(int(item.get("prefilter_accepted") or 0) for item in discovery_state.query_stats),
                 },
             },
         )

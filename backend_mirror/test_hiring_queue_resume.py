@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 from typing import Dict, List, Tuple
@@ -84,7 +84,7 @@ def test_discovery_locked_still_fetches_pending_urls(monkeypatch):
             fetch_urls.append(url)
             return FakeResponse()
 
-    monkeypatch.setattr("backend_mirror.agents.search_serp.search_urls_http", fake_search)
+    monkeypatch.setattr("backend_mirror.agents.search_serp.search_hits_http", fake_search)
     monkeypatch.setattr("httpx.AsyncClient", FakeClient)
     state = HiringDiscoveryState(
         discovery_spent_eur=DISCOVERY_CAP_EUR,
@@ -152,7 +152,7 @@ def test_resume_cursor_preserves_url_offset_and_skips_discovery(monkeypatch):
         async def get(self, url):
             raise AssertionError("should not fetch in this unit test")
 
-    monkeypatch.setattr("backend_mirror.agents.search_serp.search_urls_http", fake_search)
+    monkeypatch.setattr("backend_mirror.agents.search_serp.search_hits_http", fake_search)
     monkeypatch.setattr("httpx.AsyncClient", FakeClient)
     state = HiringDiscoveryState(
         query_index=10,

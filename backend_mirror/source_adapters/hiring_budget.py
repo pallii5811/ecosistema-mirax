@@ -16,8 +16,12 @@ DISCOVERY_CAP_EUR = 0.050
 PARSING_CAP_EUR = 0.025
 DOMAIN_CAP_EUR = 0.025
 QUERY_COST_EUR = 0.005
-QUERIES_PER_BATCH = 4
+# Progressive discovery: never burn the Serper budget before the first fetch.
+QUERIES_PER_BATCH = 2
+INITIAL_SERP_QUERIES = 2
+DISCOVERY_SOFT_CAP_EUR = 0.015
 URLS_PER_BATCH = 24
+URL_ONLY_FETCH_CAP = 6
 TERMINAL_URL_STATES = frozenset({
     "accepted", "rejected_final", "rejected_final_technical_exhausted",
     "duplicate", "duplicate_employer",
@@ -64,7 +68,13 @@ class HiringDiscoveryState:
     def max_queries_this_batch(self) -> int:
         if self.discovery_remaining_eur() + 1e-9 < QUERY_COST_EUR:
             return 0
-        return min(QUERIES_PER_BATCH, int(math.floor(self.discovery_remaining_eur() / QUERY_COST_EUR)))
+        soft = max(0.0, DISCOVERY_SOFT_CAP_EUR - self.discovery_spent_eur)
+        soft_queries = int(math.floor(soft / QUERY_COST_EUR))
+        hard_queries = int(math.floor(self.discovery_remaining_eur() / QUERY_COST_EUR))
+        # First wave stays inside the soft discovery spend; later waves are one query.
+        if soft_queries > 0:
+            return min(INITIAL_SERP_QUERIES, soft_queries, hard_queries)
+        return min(1, hard_queries)
 
     def discovery_locked(self) -> bool:
         return self.discovery_remaining_eur() + 1e-9 < QUERY_COST_EUR

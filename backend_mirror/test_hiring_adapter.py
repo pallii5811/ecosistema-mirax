@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import json
@@ -169,7 +169,7 @@ def test_default_provider_reserves_before_every_query_and_never_exceeds_budget(m
         async def __aexit__(self, *_args):
             return False
 
-    monkeypatch.setattr("backend_mirror.agents.search_serp.search_urls_http", fake_search)
+    monkeypatch.setattr("backend_mirror.agents.search_serp.search_hits_http", fake_search)
     monkeypatch.setattr("httpx.AsyncClient", EmptyClient)
     one = asyncio.run(_default_hiring_provider(request(budget=0.009), HiringDiscoveryState(), 20))
     assert len(calls) == 1
@@ -204,7 +204,7 @@ def test_default_provider_uses_the_requested_specialized_role(monkeypatch, signa
         async def __aexit__(self, *_args):
             return False
 
-    monkeypatch.setattr("backend_mirror.agents.search_serp.search_urls_http", fake_search)
+    monkeypatch.setattr("backend_mirror.agents.search_serp.search_hits_http", fake_search)
     monkeypatch.setattr("httpx.AsyncClient", EmptyClient)
     specialized = replace(
         request(count=5, budget=0.015),
@@ -212,7 +212,7 @@ def test_default_provider_uses_the_requested_specialized_role(monkeypatch, signa
         geographies=("Lombardia", "Italia"),
     )
     asyncio.run(_default_hiring_provider(specialized, HiringDiscoveryState(), 20))
-    assert len(calls) >= 3
+    assert len(calls) >= 2
     assert any(all(term in query for term in expected_terms) for query in calls)
 
 

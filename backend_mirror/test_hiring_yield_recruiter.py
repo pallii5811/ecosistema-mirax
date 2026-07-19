@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import base64
@@ -129,7 +129,7 @@ def test_single_query_cost_does_not_consume_full_cap(monkeypatch):
         async def __aexit__(self, *_args):
             return False
 
-    monkeypatch.setattr("backend_mirror.agents.search_serp.search_urls_http", fake_search)
+    monkeypatch.setattr("backend_mirror.agents.search_serp.search_hits_http", fake_search)
     monkeypatch.setattr("httpx.AsyncClient", EmptyClient)
     result = asyncio.run(_default_hiring_provider(_sales_request(), HiringDiscoveryState(), 20))
     assert len(calls) <= 4
@@ -154,7 +154,7 @@ def test_resume_does_not_repeat_executed_queries(monkeypatch):
         async def __aexit__(self, *_args):
             return False
 
-    monkeypatch.setattr("backend_mirror.agents.search_serp.search_urls_http", fake_search)
+    monkeypatch.setattr("backend_mirror.agents.search_serp.search_hits_http", fake_search)
     monkeypatch.setattr("httpx.AsyncClient", EmptyClient)
     state = HiringDiscoveryState(
         query_index=1,
