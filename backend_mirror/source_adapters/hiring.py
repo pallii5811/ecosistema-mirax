@@ -781,7 +781,10 @@ async def _default_hiring_provider(
     discovery_locked = state.discovery_locked()
     discovery_budget = min(state.discovery_remaining_eur(), max(0.0, request.budget_eur))
     reconcile_hiring_url_queue(state)
-    queue_has_work = bool(state.pending_urls or state.retry_urls or state.revalidation_queue)
+    # Only fresh pending/revalidation blocks SERP. Retry-only leftovers must not
+    # starve discovery (orchestrator would otherwise spin max_rounds and hit
+    # partial_time_limit with zero new employers).
+    queue_has_work = bool(state.pending_urls or state.revalidation_queue)
     # Progressive loop: SERP only when the fetch queue is empty/insufficient.
     max_queries = 0 if (discovery_locked or queue_has_work) else min(
         state.max_queries_this_batch(),
@@ -811,7 +814,14 @@ async def _default_hiring_provider(
                 break
             from cost_context import current_cost_governor
             governor = current_cost_governor()
-            if governor is not None and float(getattr(governor, "remaining_eur", 0.0) or 0.0) + 1e-9 < QUERY_COST_EUR:
+            remaining_gov = (
+                float(getattr(governor, "remaining_eur", 0.0) or 0.0)
+                if governor is not None
+                else float("inf")
+            )
+            # Keep a semantic-qualification buffer after the first discovery wave.
+            semantic_buffer = 0.012 if (queries_run > 0 or state.discovery_spent_eur > 1e-9) else 0.0
+            if remaining_gov + 1e-9 < QUERY_COST_EUR + semantic_buffer:
                 break
             # Stop discovery once enough accepted URLs are queued for this batch.
             pending_now = sum(1 for url in urls if url not in set(state.processed_terminal_urls))

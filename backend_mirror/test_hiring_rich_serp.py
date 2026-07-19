@@ -189,6 +189,35 @@ def test_no_further_serp_when_queue_has_pending_work(monkeypatch):
     assert calls == []
 
 
+def test_retry_only_queue_does_not_block_serp(monkeypatch):
+    calls: List[str] = []
+
+    def fake_hits(query, _limit, *, cost_scope):
+        calls.append(query)
+        return [{
+            "url": f"https://boards.greenhouse.io/acme/jobs/retry-{len(calls)}",
+            "title": "Commerciale assunzione",
+            "snippet": "Posizione aperta per sviluppare nuovi clienti.",
+            "provider": "serper",
+        }]
+
+    monkeypatch.setattr("backend_mirror.agents.search_serp.search_hits_http", fake_hits)
+    monkeypatch.setattr("httpx.AsyncClient", _EmptyClient)
+    seeded = HiringDiscoveryState(
+        seen_urls=("https://boards.greenhouse.io/acme/jobs/old",),
+        retry_urls=("https://boards.greenhouse.io/acme/jobs/old",),
+        pending_urls=(),
+        url_meta=({
+            "url": "https://boards.greenhouse.io/acme/jobs/old",
+            "title": "old",
+            "snippet": "old",
+            "hit_metadata_quality": "rich",
+        },),
+    )
+    asyncio.run(_default_hiring_provider(_request(budget_eur=0.05), seeded, 20))
+    assert len(calls) >= 1
+
+
 def test_high_yield_query_order_starts_regional_before_provinces():
     pairs = _build_hiring_discovery_queries(_request())
     assert pairs[0][2] == "serp:local_vacancy"

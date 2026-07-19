@@ -368,10 +368,15 @@ class UniversalSignalDiscoveryEngine:
                 notes.append("cost_budget_reached")
                 break
 
-            # P0-5: only resume cursors for this strategy_id.
+            # P0-5: resume cursors for this strategy_id; fall back to legacy
+            # adapter-only cursors from shadow resume so hiring state survives.
             batch_resume: Dict[str, DiscoveryCursor] = {}
             for adapter_id in run_mandatory:
                 stored = strategy_cursors.get(_cursor_store_key(adapter_id, strategy.strategy_id))
+                if stored is None:
+                    stored = strategy_cursors.get(_cursor_store_key(adapter_id, "__legacy__"))
+                    if stored is not None:
+                        strategy_cursors[_cursor_store_key(adapter_id, strategy.strategy_id)] = stored
                 if stored is not None:
                     batch_resume[adapter_id] = stored
 
