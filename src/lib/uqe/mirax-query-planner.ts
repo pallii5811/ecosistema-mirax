@@ -26,7 +26,7 @@ import {
   type CommercialIntentCompilerOptions,
 } from '@/lib/intent-compiler/compile-commercial-search-plan'
 import type { CommercialSearchPlan } from '@/lib/contracts/commercial-search-plan'
-import { sourceSupportsSignal } from '@/lib/source-intelligence/registry'
+import { sourceSupportsSignal, SOURCE_BY_ID } from '@/lib/source-intelligence/registry'
 import { canonicalSignalId, getSignalDefinition } from '@/lib/signal-ontology/ontology'
 import { SOURCE_CAPABILITY_REGISTRY } from '@/lib/source-adapters/catalog'
 
@@ -1205,13 +1205,30 @@ function signalLedAgenticSector(plan: MiraxQueryPlan, query: string): string {
 /**
  * Corregge routing LLM: segnali d'acquisto astratti → organic_web_search (agentic).
  */
+function isMapsCompatiblePlan(query: string, plan: MiraxQueryPlan): boolean {
+  const q = query.trim()
+  const hasTech = Boolean(plan.technical_filters && Object.keys(plan.technical_filters).length > 0)
+  const hasSector = Boolean(plan.sector?.trim() && plan.sector.trim().length >= 4)
+  const hasLocation = isRealGeoLocation(plan.location || '')
+  const digitalAudit = hasTech || (plan.required_signals || []).some((signal) =>
+    ['website_weakness', 'seo_errors', 'missing_analytics', 'missing_advertising_pixel', 'no_dmarc', 'missing_instagram', 'site_stale', 'no_pixel', 'no_gtm'].includes(signal),
+  )
+  return digitalAudit || MAPS_CATEGORY_CITY_RE.test(q) || (hasTech && (hasSector || hasLocation))
+}
+
 export function applyRoutingGuards(plan: MiraxQueryPlan, query: string): MiraxQueryPlan {
   const q = query.trim()
   if (!q) return plan
 
+  const openWorldRelationships = Boolean(plan.semantic_query_contract?.required_relationships?.length)
+  const mapsCompatible = isMapsCompatiblePlan(q, plan)
+  // Empty canonical hints + valid semantic relationships → organic/generic, never Maps.
+  const openWorldEventSearch = openWorldRelationships && !mapsCompatible
+
   const signalLed =
     (isBuyerMarketingInvestmentQuery(q) && !isNegativeMarketingAuditQuery(q)) ||
-    isSignalLedAbstractQuery(q, plan.required_signals)
+    isSignalLedAbstractQuery(q, plan.required_signals) ||
+    openWorldEventSearch
 
   if (signalLed) {
     const signals = new Set(plan.required_signals)
@@ -1231,9 +1248,7 @@ export function applyRoutingGuards(plan: MiraxQueryPlan, query: string): MiraxQu
   }
 
   let strategy = plan.search_strategy
-  const hasTech = plan.technical_filters && Object.keys(plan.technical_filters).length > 0
   const hasSector = Boolean(plan.sector?.trim() && plan.sector.trim().length >= 4)
-  const hasLocation = isRealGeoLocation(plan.location || '')
   const hasSignals = plan.required_signals.length > 0
 
   if (strategy === 'organic_web_search' && !isSellerAbstractQuery(q)) {
@@ -1243,7 +1258,7 @@ export function applyRoutingGuards(plan: MiraxQueryPlan, query: string): MiraxQu
   }
 
   if (
-    (MAPS_CATEGORY_CITY_RE.test(q) || (hasTech && (hasSector || hasLocation))) &&
+    mapsCompatible &&
     !isSellerAbstractQuery(q) &&
     !signalLed
   ) {
@@ -1283,19 +1298,24 @@ const SOURCE_CLASSES_BY_LANE: Record<UqeSourceLane, string[]> = {
 
 /** Attach fail-closed runtime truth to every lane before execution. */
 export function applySourceCapabilityGuards(plan: MiraxQueryPlan): MiraxQueryPlan {
+  const openWorldRelationships = plan.semantic_query_contract?.required_relationships || []
   const sourcePlan = (plan.source_plan || []).map((lane) => {
     const laneSignals = lane.expected_evidence
       .map((signal) => canonicalSignalId(signal) || signal)
       .filter((signal) => plan.required_signals.includes(signal))
+    // Open-world executable plans may have empty required_signals; do not invent
+    // a fake canonical signal — resolve against generic/organic coverage instead.
     const signalIds = laneSignals.length
       ? laneSignals
       : plan.required_signals.length
         ? plan.required_signals
-        : ['company_identity']
+        : openWorldRelationships.length
+          ? []
+          : ['company_identity']
     const coverage = SOURCE_CAPABILITY_REGISTRY.resolve({
       intent: plan.search_strategy,
       signal_ids: signalIds,
-      signal_match_mode: plan.ranking_policy?.signal_match_mode || 'all',
+      signal_match_mode: plan.ranking_policy?.signal_match_mode || (signalIds.length ? 'all' : 'any'),
       geographies: plan.location ? [plan.location, 'italy'] : ['italy'],
       freshness_max_age_days: plan.evidence_policy?.max_age_days ?? null,
       requested_count: 1,
@@ -1346,7 +1366,13 @@ function isRealGeoLocation(location: string): boolean {
   return !/^(marketing|software|digitale|crescita|espansione|vendite|cloud|crm|seo|ads)$/i.test(s)
 }
 
-function inferStrategyFromQuery(query: string, sector: string, location: string, signals: string[]): UqeSearchStrategy {
+function inferStrategyFromQuery(
+  query: string,
+  sector: string,
+  location: string,
+  signals: string[],
+  options: { hasOpenWorldRelationships?: boolean; digitalAudit?: boolean } = {},
+): UqeSearchStrategy {
   if (isSellerAbstractQuery(query)) return 'organic_web_search'
   if ((isBuyerMarketingInvestmentQuery(query) && !isNegativeMarketingAuditQuery(query)) || isSignalLedAbstractQuery(query, signals)) {
     return 'organic_web_search'
@@ -1357,11 +1383,19 @@ function inferStrategyFromQuery(query: string, sector: string, location: string,
   const mapsHint =
     Boolean(sector && location && isRealGeoLocation(location) && !_heuristicVagueSector(sector)) ||
     (isRealGeoLocation(location) && /\b(milano|roma|torino|napoli|bologna)\b/i.test(q))
+  // Maps boundary: local category+city, Digital Audit / tech filters — never event/state open-world.
+  const mapsCompatible =
+    options.digitalAudit ||
+    MAPS_CATEGORY_CITY_RE.test(query)
+  if (options.hasOpenWorldRelationships && !mapsCompatible) {
+    return 'organic_web_search'
+  }
   if (signals.length > 0 && !isRealGeoLocation(location)) return 'hybrid'
   if (graphHint && mapsHint) return 'hybrid'
   if (graphHint) return 'graph'
   if (mapsHint || (sector && !_heuristicVagueSector(sector) && isRealGeoLocation(location))) return 'maps'
   if (signals.length > 0) return 'hybrid'
+  if (options.hasOpenWorldRelationships) return 'organic_web_search'
   return 'maps'
 }
 
@@ -1688,11 +1722,17 @@ function primaryPreferredSourceForSignal(signal: string, preferredSources: strin
 
 export function canonicalPlanToLegacy(plan: CommercialSearchPlan): MiraxQueryPlan {
   const requiredSignals = normalizeSignals(plan.signal_policy.required_signals)
+  const semantic = plan.semantic_query_contract
+  const hasOpenWorldRelationships = Boolean(semantic?.required_relationships?.length)
   const preferredCompatible = plan.source_policy.preferred_source_classes.filter((source) =>
-    requiredSignals.some((signal) => sourceSupportsSignal(source, signal)),
+    requiredSignals.length === 0
+      ? true
+      : requiredSignals.some((signal) => sourceSupportsSignal(source, signal)),
   )
   const allowedCompatible = plan.source_policy.allowed_source_classes.filter((source) =>
-    requiredSignals.some((signal) => sourceSupportsSignal(source, signal)),
+    requiredSignals.length === 0
+      ? true
+      : requiredSignals.some((signal) => sourceSupportsSignal(source, signal)),
   )
   const preferredSources = [...preferredCompatible]
   for (const signal of requiredSignals) {
@@ -1700,19 +1740,41 @@ export function canonicalPlanToLegacy(plan: CommercialSearchPlan): MiraxQueryPla
     const compatibleFallback = allowedCompatible.find((source) => sourceSupportsSignal(source, signal))
     if (compatibleFallback) preferredSources.push(compatibleFallback)
   }
+  // Open-world with empty canonical hints: keep executable company/news/careers lanes.
+  if (!preferredSources.length && hasOpenWorldRelationships) {
+    for (const source of [
+      ...plan.source_policy.preferred_source_classes,
+      ...plan.source_policy.allowed_source_classes,
+      'official_company_website',
+      'recognized_local_news',
+      'company_careers',
+    ]) {
+      if (!preferredSources.includes(source) && SOURCE_BY_ID.has(source)) preferredSources.push(source)
+    }
+  }
   const grouped = new Map<UqeSourceLane, string[]>()
   for (const sourceClass of preferredSources) {
     const lane = sourceClassLane(sourceClass)
     grouped.set(lane, [...new Set([...(grouped.get(lane) || []), sourceClass])])
+  }
+  if (!grouped.size && hasOpenWorldRelationships) {
+    grouped.set('news', ['recognized_local_news'])
+    grouped.set('company_web', ['official_company_website'])
   }
   const firstHypothesis = plan.commercial_hypotheses[0]
   const signalAges = Object.values(plan.signal_policy.maximum_age_days_by_signal)
   const maxSignalAgeDays = signalAges.length ? Math.min(3650, ...signalAges) : 365
   const sector = plan.target.industries.join(', ') || plan.target.entity_types.join(', ') || 'PMI'
   const location = plan.target.geographies.join(', ') || 'Italia'
+  const digitalAudit = requiredSignals.some((signal) =>
+    ['website_weakness', 'seo_errors', 'missing_analytics', 'missing_advertising_pixel', 'no_dmarc', 'missing_instagram'].includes(signal),
+  )
   const legacy: MiraxQueryPlan = {
     original_query: plan.raw_query,
-    search_strategy: inferStrategyFromQuery(plan.raw_query, sector, location, requiredSignals),
+    search_strategy: inferStrategyFromQuery(plan.raw_query, sector, location, requiredSignals, {
+      hasOpenWorldRelationships,
+      digitalAudit,
+    }),
     sector,
     location,
     required_signals: requiredSignals,
@@ -1731,11 +1793,21 @@ export function canonicalPlanToLegacy(plan: CommercialSearchPlan): MiraxQueryPla
         const primary = primaryPreferredSourceForSignal(signal, preferredSources)
         return Boolean(primary && sourceTypes.includes(primary))
       })
+      const expectedEvidence = laneSignals.length
+        ? laneSignals
+        : hasOpenWorldRelationships
+          ? (semantic?.required_relationships || []).slice(0, 3)
+          : []
       return {
         lane,
         source_types: sourceTypes,
-        query_templates: canonicalLaneQueryTemplates(lane, laneSignals, plan),
-        expected_evidence: laneSignals,
+        query_templates: hasOpenWorldRelationships && !laneSignals.length
+          ? [
+              `${plan.raw_query} (${(semantic?.required_relationships || []).slice(0, 2).join(' OR ') || 'evidenza'}) {location}`,
+              ...canonicalLaneQueryTemplates(lane, laneSignals, plan),
+            ]
+          : canonicalLaneQueryTemplates(lane, laneSignals, plan),
+        expected_evidence: expectedEvidence,
         priority: Math.max(1, 100 - index * 10),
         llm_required: true,
       }

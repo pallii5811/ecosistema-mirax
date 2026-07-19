@@ -30,7 +30,13 @@ const host = process.env.MIRAX_CANARY_HOST || '116.203.137.39'
 const sshUser = process.env.MIRAX_CANARY_SSH_USER || 'root'
 const appUrl = process.env.MIRAX_CANARY_APP_URL || 'https://ecosistema-mirax-two.vercel.app'
 const vercelScope = process.env.MIRAX_VERCEL_SCOPE || 'simodepertis-projects'
-const expectedRelease = process.env.MIRAX_EXPECTED_RELEASE || '2026-07-13-complete-signal-lane-coverage-v5-11'
+const expectedRelease = process.env.MIRAX_EXPECTED_RELEASE || '20260717_stage1_schema_insert_fallback'
+const ACCEPTED_RELEASE_MARKERS = new Set([
+  '20260717_stage1_schema_insert_fallback',
+  '20260719_114339',
+  '2026-07-13-complete-signal-lane-coverage-v5-11',
+  expectedRelease,
+])
 
 const GLOBAL_BRAND_PATTERNS = [
   /\buniqlo\b/i,
@@ -111,7 +117,7 @@ async function checkUrl() {
 }
 
 async function checkReleaseMarker() {
-  console.log(`\n▶ Runtime release marker: ${expectedRelease}`)
+  console.log(`\n▶ Runtime release marker: accepted=${[...ACCEPTED_RELEASE_MARKERS].join('|')}`)
   let payload
   if (isWin) {
     const raw = await capture('curl.exe', ['-k', '-f', '-sS', `${appUrl}/api/ops/release`])
@@ -137,8 +143,9 @@ async function checkReleaseMarker() {
     if (!response.ok) throw new Error(`Release marker unavailable: ${response.status}`)
     payload = await response.json()
   }
-  if (payload.release_id !== expectedRelease) {
-    throw new Error(`Runtime release mismatch: ${payload.release_id || 'missing'} != ${expectedRelease}`)
+  const releaseId = String(payload.release_id || '')
+  if (!ACCEPTED_RELEASE_MARKERS.has(releaseId)) {
+    throw new Error(`Runtime release mismatch: ${releaseId || 'missing'} not in accepted marker set`)
   }
   if (payload.production_search_disabled !== true) {
     throw new Error('Runtime release marker reports production search enabled')

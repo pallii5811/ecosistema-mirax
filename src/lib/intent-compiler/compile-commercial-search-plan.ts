@@ -18,7 +18,7 @@ import {
   setSemanticQueryCache,
 } from './semantic-query-cache'
 
-export const COMMERCIAL_INTENT_PROMPT_VERSION = 'commercial-intent-v1.4.0' as const
+export const COMMERCIAL_INTENT_PROMPT_VERSION = 'commercial-intent-v1.4.1' as const
 
 export type QueryCompilerTelemetry = {
   query_tier1_calls: number
@@ -101,14 +101,25 @@ const ADJUDICATOR_TOOL_NAME = 'submit_semantic_query_patch'
 const TIER1_SYSTEM_PROMPT = `Compile the user's B2B search request into a compact, open-world semantic contract.
 Preserve who sells, the target company, the target company's role, every explicitly required relationship,
 geography, exclusions, negative conditions and time constraints. Relationships are semantic predicates, not
-keyword synonyms. Never invent companies, facts, URLs or evidence. Canonical signal IDs are optional routing
-hints only. When the user states an offer, preserve its category, products/services, problems solved and likely
+keyword synonyms. Never invent companies, facts, URLs or evidence.
+
+target_role_in_event is the company's role in the event (employer, recipient, expanding_company,
+contract_winner, technology_adopter, former_customer), never a person, job title, function, or buyer persona.
+
+canonical_signal_hints are execution routing only, not semantic truth. When a required relationship clearly
+matches an existing canonical capability, emit that hint (for example sales/customer-acquisition hiring →
+hiring_sales; funding received → funding; geographic expansion → geographic_expansion). Do not force an
+open-world relationship into a wrong signal ID; leave hints empty when no capability matches.
+
+When the user states an offer, preserve its category, products/services, problems solved and likely
 buyer roles in seller/offer; never treat the seller as the target. Keep strings under 160 characters and arrays
 to the minimum needed. Output only via the tool.`
 
 const TIER2_SYSTEM_PROMPT = `Adjudicate a compact semantic query contract. Do not regenerate it.
 Return accept, clarification, or a patch containing only fields that are missing or invalid. Preserve the
 original open-world predicate and event direction. Never replace meaning with keywords or invent facts.
+If TARGET_ROLE_ENTITY_TYPE_MISMATCH is reported, patch only target_role_in_event (and required_relationships
+only if needed) so the role describes the company in the event, not a person or job title.
 Output only via the tool.`
 
 function disabledFlag(value: string | undefined): boolean {
@@ -340,6 +351,34 @@ function completeSemanticContract(query: string, input: unknown): SemanticQueryC
   return parsed.data
 }
 
+function isCompanyEntityType(entityTypes: readonly string[]): boolean {
+  return entityTypes.some((item) => {
+    const value = String(item || '').trim().toLowerCase()
+    return value === 'operating_company' || value === 'company' || value.includes('company')
+  })
+}
+
+/**
+ * Detects person/job-title roles when the target entity is a company.
+ * Not semantic authority for query meaning — only entity-role mismatch gating.
+ */
+export function isPersonOrJobTitleTargetRole(role: string): boolean {
+  const normalized = String(role || '').trim()
+  if (!normalized) return false
+  const compact = normalized.toLowerCase().replace(/[\s-]+/g, '_')
+  if (/^(employer|recipient|beneficiary|winner|contract_winner|expanding_company|technology_adopter|former_customer|buyer_company|operating_company|company_ending_supplier_relationship)\b/.test(compact)) {
+    return false
+  }
+  if (/\b(member|manager|director|officer|specialist|consultant|leadership|decision.?maker|persona|employee|ceo|cfo|cto|cmo|team)\b/i.test(normalized)) {
+    return true
+  }
+  // Multi-word English role phrases naming people/functions rather than the company-in-event role.
+  if (/\s/.test(normalized) && /\b(sales|marketing|business development|leadership|buyer)\b/i.test(normalized)) {
+    return true
+  }
+  return false
+}
+
 function semanticContractIssues(
   query: string,
   contract: SemanticQueryContract | null,
@@ -363,6 +402,16 @@ function semanticContractIssues(
   }
   if (!contract.target_role_in_event.trim()) {
     issues.push({ code: 'TARGET_ROLE_MISSING', path: 'target_role_in_event', message: 'Target event role is required.' })
+  }
+  if (
+    isCompanyEntityType(contract.target_entity_types) &&
+    isPersonOrJobTitleTargetRole(contract.target_role_in_event)
+  ) {
+    issues.push({
+      code: 'TARGET_ROLE_ENTITY_TYPE_MISMATCH',
+      path: 'target_role_in_event',
+      message: 'target_role_in_event must describe the company\'s role in the event, not a person, job title, or function.',
+    })
   }
   if (contract.required_relationships.length === 0) {
     issues.push({ code: 'REQUIRED_RELATIONSHIP_MISSING', path: 'required_relationships', message: 'At least one semantic relationship is required.' })
@@ -444,6 +493,13 @@ function semanticPlanEnvelope(query: string, input: unknown): unknown {
   ])].filter((source) => SOURCE_BY_ID.has(source))
   const preferred = [...new Set(definitions.flatMap((item) => item.preferredSourceClasses))]
     .filter((source) => allowed.includes(source))
+  const openWorld = semantic.required_relationships.length > 0
+  // Open-world executable routing: keep company/news sources even with empty hints.
+  // Do not invent fake canonical signals; search_snippet stays excluded from publishable proof.
+  const openWorldAllowed = openWorld && signals.length === 0
+    ? [...new Set([...allowed, 'official_company_website', 'recognized_local_news', 'industry_publication', 'company_careers'])]
+      .filter((source) => SOURCE_BY_ID.has(source))
+    : allowed
   const offerDescription = String(
     (semantic.offer as Record<string, unknown>)?.description || '',
   ).trim()
@@ -480,8 +536,8 @@ function semanticPlanEnvelope(query: string, input: unknown): unknown {
       ])), minimum_signal_confidence: 0.75,
     },
     source_policy: {
-      preferred_source_classes: preferred.length ? preferred : allowed.slice(0, 2),
-      allowed_source_classes: allowed, excluded_source_classes: ['search_snippet', 'generic_blog', 'directory'],
+      preferred_source_classes: preferred.length ? preferred : openWorldAllowed.slice(0, 3),
+      allowed_source_classes: openWorldAllowed, excluded_source_classes: ['search_snippet', 'generic_blog', 'directory'],
       minimum_independent_sources: 1, primary_source_required_for: signals,
     },
     evidence_policy: {

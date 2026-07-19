@@ -308,9 +308,49 @@ try {
   assert.equal(confidenceCalls, 2)
   assert.equal(confidenceRecovered.semantic_query_contract?.confidence, 0.9)
 
+  let roleMismatchCalls = 0
+  const roleMismatchCase = {
+    ...cases[1],
+    query: `${cases[1].query} Variante ruolo azienda.`,
+  }
+  globalThis.fetch = async (_url, init) => {
+    roleMismatchCalls += 1
+    const body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+    const tool = (body.tools as Array<{ name: string }>)[0]
+    if (roleMismatchCalls === 1) {
+      const bad = seed(roleMismatchCase)
+      bad.target_role_in_event = 'Business development team member or sales leadership'
+      bad.target_entity_types = ['operating_company']
+      return new Response(JSON.stringify({
+        stop_reason: 'tool_use', usage: { input_tokens: 500, output_tokens: 300 },
+        content: [{ type: 'tool_use', name: tool.name, input: bad }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }
+    assert.equal(tool.name, 'submit_semantic_query_patch')
+    return new Response(JSON.stringify({
+      stop_reason: 'tool_use', usage: { input_tokens: 600, output_tokens: 120 },
+      content: [{ type: 'tool_use', name: tool.name, input: {
+        decision: 'patch',
+        reason: 'Company entity requires company-in-event role',
+        confidence: 0.93,
+        patch: {
+          target_role_in_event: 'employer',
+          required_relationships: [roleMismatchCase.relationship],
+        },
+      } }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const roleRecovered = await compileCommercialSearchPlan(roleMismatchCase.query, {
+    searchId: 'tiered-offline-role-mismatch', requestedLeadCount: 5, costMeter: meter, allowTier2: true,
+  })
+  assert.ok(roleRecovered)
+  assert.equal(roleMismatchCalls, 2)
+  assert.equal(roleRecovered.semantic_query_contract?.target_role_in_event, 'employer')
+
   console.log(JSON.stringify({
     cases: 50, truncations: 0, average_cost_eur: average, p95_cost_eur: p95,
     tier2_patch_recovery: 'PASS', tier2_truncation_fail_closed: 'PASS', low_confidence_patch_only: 'PASS',
+    target_role_entity_mismatch_patch: 'PASS',
   }))
 } finally {
   globalThis.fetch = priorFetch

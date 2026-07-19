@@ -145,27 +145,54 @@ async function prepare() {
     const requiredSignals = canonical?.signal_policy.required_signals || []
     const allowedSources = canonical?.source_policy.allowed_source_classes || []
     const executableSourcePlan = plan.source_plan || []
+    const semantic = plan.semantic_query_contract || canonical?.semantic_query_contract
+    const openWorldExecutable = Boolean(
+      semantic?.required_relationships?.length &&
+      semantic?.target_role_in_event?.trim() &&
+      (
+        executableSourcePlan.length > 0 ||
+        allowedSources.length > 0 ||
+        plan.search_strategy === 'organic_web_search' ||
+        (plan.source_coverage?.adapter_ids || []).some((id) => /generic_web|organic/i.test(id))
+      ),
+    )
     const checks = {
       canonical_present: Boolean(canonical),
-      required_signals_present: requiredSignals.length > 0,
-      expected_signal_matched: requiredSignals.some((signal) => spec.expected_signal_any.includes(signal)),
+      // Open-world may execute with empty required_signals when relationships + generic web exist.
+      required_signals_present: requiredSignals.length > 0 || openWorldExecutable,
+      expected_signal_matched: requiredSignals.length === 0
+        ? openWorldExecutable
+        : requiredSignals.some((signal) => spec.expected_signal_any.includes(signal)),
       no_unexpected_signals: requiredSignals.every((signal) => spec.expected_signal_any.includes(signal)),
       not_maps: plan.search_strategy !== 'maps',
-      compatible_source_per_signal: requiredSignals.every((signal) =>
-        allowedSources.some((source) => sourceSupportsSignal(source, signal))),
+      compatible_source_per_signal: requiredSignals.length === 0
+        ? openWorldExecutable
+        : requiredSignals.every((signal) =>
+          allowedSources.some((source) => sourceSupportsSignal(source, signal))),
       source_plan_present: executableSourcePlan.length > 0,
       source_templates_present: executableSourcePlan.length > 0 && executableSourcePlan.every(
         (lane) => Array.isArray(lane.query_templates) && lane.query_templates.some((template) => String(template).trim()),
       ),
-      source_lane_signal_compatible: executableSourcePlan.length > 0 && executableSourcePlan.every((lane) =>
-        lane.expected_evidence.length > 0 &&
-        lane.expected_evidence.every((signal) => requiredSignals.includes(signal)) &&
-        lane.expected_evidence.every((signal) => lane.source_types.some((source) => sourceSupportsSignal(source, signal))),
-      ),
-      source_plan_covers_all_signals: requiredSignals.every((signal) => executableSourcePlan.some((lane) =>
-        lane.expected_evidence.includes(signal) &&
-        lane.source_types.some((source) => sourceSupportsSignal(source, signal)))),
+      source_lane_signal_compatible: executableSourcePlan.length > 0 && executableSourcePlan.every((lane) => {
+        if (requiredSignals.length === 0) {
+          return openWorldExecutable &&
+            (lane.expected_evidence.length > 0 || lane.source_types.length > 0) &&
+            lane.execution_mode !== 'blocked'
+        }
+        return lane.expected_evidence.length > 0 &&
+          lane.expected_evidence.every((signal) => requiredSignals.includes(signal)) &&
+          lane.expected_evidence.every((signal) => lane.source_types.some((source) => sourceSupportsSignal(source, signal)))
+      }),
+      source_plan_covers_all_signals: requiredSignals.length === 0
+        ? openWorldExecutable
+        : requiredSignals.every((signal) => executableSourcePlan.some((lane) =>
+          lane.expected_evidence.includes(signal) &&
+          lane.source_types.some((source) => sourceSupportsSignal(source, signal)))),
       llm_plan: plan.parse_source === 'llm',
+      open_world_not_blocked: !openWorldExecutable || (
+        plan.search_strategy === 'organic_web_search' &&
+        executableSourcePlan.some((lane) => lane.execution_mode !== 'blocked')
+      ),
     }
     sourcePlanDiagnostics = {
       checks,
@@ -175,6 +202,10 @@ async function prepare() {
       allowed_sources: allowedSources,
       search_strategy: plan.search_strategy,
       parse_source: plan.parse_source,
+      open_world_executable: openWorldExecutable,
+      semantic_relationships: semantic?.required_relationships || [],
+      target_role_in_event: semantic?.target_role_in_event || null,
+      adapter_ids: plan.source_coverage?.adapter_ids || [],
       query_compiler_telemetry: compilerTelemetry,
     }
     const sourcePlanReady = Object.values(checks).every(Boolean)
