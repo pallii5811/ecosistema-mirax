@@ -24,14 +24,27 @@ const args = new Map(process.argv.slice(2).map((arg) => {
 }))
 const action = args.get('action') || 'status'
 const vertical = args.get('vertical') || ''
+const queryOverride = String(args.get('query') || '').trim()
+const expectedSignalsOverride = String(args.get('expected-signals') || '')
+  .split(',').map((value) => value.trim()).filter(Boolean)
 const manifest = JSON.parse(fs.readFileSync('evaluation/canary-v1/manifest.json', 'utf8')) as {
   canaries: Array<{ vertical: string; query: string; expected_signal_any: string[] }>
 }
-const selectedSpec = manifest.canaries.find((row) => row.vertical === vertical)
+const selectedSpec = queryOverride
+  ? { vertical, query: queryOverride, expected_signal_any: expectedSignalsOverride }
+  : manifest.canaries.find((row) => row.vertical === vertical)
 if (!selectedSpec) throw new Error(`unknown vertical: ${vertical}`)
 const spec: { vertical: string; query: string; expected_signal_any: string[] } = selectedSpec
 
-const maxLeads = 5
+const requestedMaxLeads = Number(args.get('max-leads') || 5)
+if (!Number.isInteger(requestedMaxLeads) || requestedMaxLeads < 1 || requestedMaxLeads > 5) {
+  throw new Error('--max-leads must be an integer between 1 and 5')
+}
+if (queryOverride && !vertical) throw new Error('--vertical required with --query')
+if (queryOverride && expectedSignalsOverride.length === 0) {
+  throw new Error('--expected-signals required with --query')
+}
+const maxLeads = requestedMaxLeads
 const hardBudgetEur = 0.125
 const datasetVersion = 'mirax-gold-v5'
 
@@ -39,6 +52,12 @@ function required(name: string) {
   const value = process.env[name]?.trim()
   if (!value) throw new Error(`${name} required`)
   return value
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
 }
 
 function db(): SupabaseClient {
@@ -86,7 +105,8 @@ async function prepare() {
   const { data: intentGate } = await service.from('evaluation_runs').select('id,status,metrics')
     .eq('dataset_version', datasetVersion).eq('mode', 'intent_canary').eq('status', 'completed')
     .order('started_at', { ascending: false }).limit(1).maybeSingle()
-  if (!intentGate?.id || !Object.values((intentGate.metrics as any)?.checks || {}).every(Boolean)) {
+  const intentChecks = asRecord(asRecord(intentGate?.metrics).checks)
+  if (!intentGate?.id || Object.keys(intentChecks).length === 0 || !Object.values(intentChecks).every(Boolean)) {
     throw new Error('valid intent gate required')
   }
   const { data: search, error: searchError } = await service.from('searches').insert({
@@ -244,8 +264,13 @@ async function finalize() {
     .map((row) => row.payload)
     .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
     .filter((row) => leadName(row) && canonicalDomain(leadWebsite(row)) && leadSourceUrl(row) && leadSignals(row).length > 0)
-  const queryYield = (search?.intent as any)?.agentic_stats?.query_yield || {}
-  const allowedSources = ((search?.intent as any)?.uqe_plan?.canonical_plan?.source_policy?.allowed_source_classes || ['official_company_website']) as string[]
+  const searchIntent = asRecord(search?.intent)
+  const agenticStats = asRecord(searchIntent.agentic_stats)
+  const queryYield = asRecord(agenticStats.query_yield)
+  const sourcePolicy = asRecord(asRecord(asRecord(searchIntent.uqe_plan).canonical_plan).source_policy)
+  const allowedSources = Array.isArray(sourcePolicy.allowed_source_classes)
+    ? sourcePolicy.allowed_source_classes.map(String)
+    : ['official_company_website']
   const fallbackSource = allowedSources[0] || 'official_company_website'
   const sourceTelemetry = buildQueriedSourceEvents({
     runId, canaryId, searchId, vertical, fallbackSource,
@@ -343,7 +368,7 @@ async function finalize() {
     const { error } = await service.from('evaluation_cases').insert(caseRows)
     if (error) throw error
   }
-  const passed = validated.length >= 3 && validated.length <= 5 && actualCost <= hardBudgetEur &&
+  const passed = validated.length >= maxLeads && validated.length <= maxLeads && actualCost <= hardBudgetEur &&
     (publicationCount || 0) === 0 && search?.status === 'completed' && attributionMatchesLedger && !hasOpenReservation
   const metrics = {
     vertical, status: search?.status, candidates_produced: candidates.length,
@@ -355,7 +380,7 @@ async function finalize() {
     source_cost_attributed_eur: sourceTelemetry.attributedCostEur,
     source_cost_matches_ledger: attributionMatchesLedger,
     open_cost_reservations: hasOpenReservation ? 1 : 0,
-    customer_publications: publicationCount || 0, agentic_stats: (search?.intent as any)?.agentic_stats || {},
+    customer_publications: publicationCount || 0, agentic_stats: agenticStats,
   }
   await service.from('evaluation_runs').update({ status: passed ? 'completed' : 'failed', metrics, completed_at: new Date().toISOString() }).eq('id', runId)
   await service.from('canary_runs').update({ status: passed ? 'completed' : 'quarantined', stop_reason: passed ? 'shadow_case_complete' : 'shadow_acceptance_failed', completed_at: new Date().toISOString() }).eq('id', canaryId)
