@@ -693,8 +693,12 @@ async def semantic_authority_qualifier(
                     telemetry_bucket[key] = telemetry_bucket.get(key, 0) + value
         return QualificationDecision(
             False, False, False, "SEMANTIC_INTERPRETATION_FAILED",
-            reasons=(type(exc).__name__,),
-            semantic_grounding={"accepted": False, "error_type": type(exc).__name__},
+            reasons=(type(exc).__name__, str(exc)[:240]),
+            semantic_grounding={
+                "accepted": False,
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)[:500],
+            },
         )
 
 
