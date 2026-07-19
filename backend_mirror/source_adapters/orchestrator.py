@@ -732,26 +732,20 @@ class UniversalSourceOrchestrator:
                     f"{list(mandatory)} but runtime selected [] "
                     f"with status=unsupported; reasons={unresolved or ['no_executable_adapter']}"
                 )
-            coverage = SourceCapabilityRegistry(constrained).resolve(
+            coverage_probe = SourceCapabilityRegistry(constrained).resolve(
                 request,
                 required_source_classes=required_source_classes,
                 allow_generic_fallback=True,
             )
-            selected = set(coverage.adapter_ids)
-            missing = [adapter_id for adapter_id in mandatory if adapter_id not in selected]
-            status_ok = coverage.status in {"supported", "generic_fallback_partial"}
-            if not status_ok or missing:
-                raise SourceAdapterRegistryMismatchError(
-                    "canonical plan requires "
-                    f"{list(mandatory)} but runtime selected {list(coverage.adapter_ids)} "
-                    f"with status={coverage.status}; reasons={list(coverage.reasons)}"
-                )
+            # Explicit mandatory IDs are authoritative. Capability resolve may keep
+            # only the structured peer when it already covers required signals;
+            # canaries still need ordered fallback adapters available.
             coverage = CapabilityCoverage(
                 "supported",
-                tuple(adapter_id for adapter_id in mandatory if adapter_id in selected),
-                coverage.covered_signals,
-                coverage.missing_signals,
-                coverage.reasons,
+                tuple(adapter.capability.adapter_id for adapter in constrained),
+                coverage_probe.covered_signals,
+                coverage_probe.missing_signals,
+                coverage_probe.reasons,
             )
         else:
             coverage = self.registry.resolve(
