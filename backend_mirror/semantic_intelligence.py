@@ -608,6 +608,7 @@ def _hiring_bridge_helpers():
     except ImportError:
         pass
     import importlib.util
+    import sys
     from pathlib import Path
 
     # Staging worker layout is flat under backend-staging/. Importing
@@ -617,6 +618,7 @@ def _hiring_bridge_helpers():
     if spec is None or spec.loader is None:
         raise ImportError(f"hiring_semantic_bridge unavailable at {path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module.find_customer_acquisition_duty, module.looks_sales_role
 
