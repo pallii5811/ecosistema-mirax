@@ -1409,6 +1409,15 @@ def _validate_record(
             )
             if not role_ok:
                 return False, role_code or "HIRING_ROLE_MISMATCH"
+            from .hiring_semantic_bridge import has_customer_acquisition_duty
+
+            duty_blob = " ".join(filter(None, (
+                title,
+                _text(record.get("description")),
+                _text(record.get("evidence") or record.get("evidence_excerpt")),
+            )))
+            if not has_customer_acquisition_duty(duty_blob):
+                return False, "CUSTOMER_ACQUISITION_DUTY_UNPROVEN"
         elif "hiring_marketing" in specialized:
             role_ok, role_code = vacancy_role_matches_marketing(
                 title=title,
@@ -1567,7 +1576,20 @@ class HiringAdapter:
                 source_subtype = _text(record.get("source_subtype"))
                 ats_vendor = _text(record.get("ats_vendor"))
                 signal_id = next((item for item in request.signal_ids if item.startswith("hiring")), "hiring")
-                excerpt = _text(record.get("evidence") or record.get("evidence_excerpt")) or f"{company} cerca {title}"
+                from .hiring_semantic_bridge import build_hiring_semantic_evidence_bundle
+
+                semantic_bundle = build_hiring_semantic_evidence_bundle(record)
+                source_text = "\n".join(
+                    part for part in (
+                        company,
+                        title,
+                        _text(record.get("location")),
+                        semantic_bundle.role_duties,
+                    ) if part
+                )
+                excerpt = semantic_bundle.evidence_excerpt or _text(
+                    record.get("evidence") or record.get("evidence_excerpt")
+                ) or f"{company} cerca {title}"
                 confidence = 0.96 if source_class == "company_careers" else 0.86
                 record_active = record.get("active")
                 verification_evidence = tuple(record.get("domain_verification_evidence") or (
@@ -1606,6 +1628,16 @@ class HiringAdapter:
                         "geography_match_method": record.get("geography_match_method"),
                         "geography_match_evidence": record.get("geography_match_evidence"),
                         "geography_rejection_code": record.get("geography_rejection_code"),
+                        "source_text": source_text[:250_000],
+                        "page_title": title,
+                        "search_snippet": excerpt[:500],
+                        "structured_metadata": semantic_bundle.to_structured_metadata(),
+                        "evidence_excerpt_offsets": {
+                            "start": semantic_bundle.excerpt_start,
+                            "end": semantic_bundle.excerpt_end,
+                        },
+                        "job_duties_excerpt": semantic_bundle.role_duties[:2000],
+                        "customer_acquisition_duty_proven": semantic_bundle.customer_acquisition_duty_proven,
                     },
                 )
                 candidates.append(OpportunityCandidate(

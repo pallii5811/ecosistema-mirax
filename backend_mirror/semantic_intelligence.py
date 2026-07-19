@@ -23,8 +23,9 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, Mapping, Optional, 
 
 
 QUERY_SCHEMA_VERSION = "semantic-query-contract-v5"
-EVENT_SCHEMA_VERSION = "semantic-commercial-event-v2"
-GROUNDING_SCHEMA_VERSION = "semantic-grounding-v1"
+EVENT_SCHEMA_VERSION = "semantic-commercial-event-v3"
+GROUNDING_SCHEMA_VERSION = "semantic-grounding-v2"
+HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP = "sales_customer_acquisition_team_expansion_by_target_company"
 
 
 def _clean(value: Any) -> str:
@@ -445,9 +446,14 @@ publisher and authority. A publisher or source host is never automatically the t
 voice, negation, hypothetical, conditional, rumor and historical context explicitly. The target_company must be
 an operating company in exactly the role required by the semantic query contract. Return an evidence excerpt
 copied literally from source_text and exact Python string offsets. Return the contract's relationship/rubric IDs
-verbatim only when the excerpt supports them. If query_match=true, evidence_excerpt, satisfied_relationships and
-acceptance_rubric_passed must all be non-empty and jointly prove every required condition. Otherwise set
-query_match=false with a rejection reason. Missing information stays null/empty. Never invent."""
+verbatim only when the excerpt supports them. For hiring vacancies, sales_customer_acquisition_team_expansion_by_target_company
+may be supported by an active direct-employer vacancy whose duties literally require acquiring or developing new
+customers; do not require the page to contain the words "team expansion". Never invent net headcount growth,
+customer acquisition, expansion or company role when the page lacks them. Prefer relations[] entries that include
+relationship_id, supported, subject, subject_role, object, direction, supporting_excerpt, excerpt_start,
+excerpt_end, reason and confidence when a required relationship is evaluated. If query_match=true, evidence_excerpt,
+satisfied_relationships and acceptance_rubric_passed must all be non-empty and jointly prove every required
+condition. Otherwise set query_match=false with a rejection reason. Missing information stays null/empty. Never invent."""
 
 
 class SemanticCommercialQueryInterpreter:
@@ -591,6 +597,106 @@ def _parse_iso_date(value: Optional[str]) -> Optional[date]:
             return None
 
 
+def _hiring_acquisition_observables(
+    *,
+    source_text: str,
+    interpretation: "SemanticEventInterpretation",
+    structured_metadata: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Deterministic observables for the hiring customer-acquisition relationship proxy."""
+    from backend_mirror.source_adapters.hiring_semantic_bridge import (
+        find_customer_acquisition_duty,
+        looks_sales_role,
+    )
+
+    meta = dict(structured_metadata or {})
+    bundle = meta.get("hiring_semantic_evidence_bundle") if isinstance(meta.get("hiring_semantic_evidence_bundle"), Mapping) else meta
+    duty_excerpt, duty_start, duty_end = find_customer_acquisition_duty(source_text)
+    title = _clean(bundle.get("vacancy_title") or interpretation.role or "")
+    duties = _clean(bundle.get("role_duties") or "")
+    sales_role = looks_sales_role(title=title, description=f"{duties} {interpretation.role or ''}")
+    employer_role = (
+        interpretation.target_entity_role == "employer"
+        or _clean(bundle.get("subject_role")) == "employer"
+        or bool(interpretation.employer)
+    )
+    vacancy_active = bool(bundle.get("vacancy_active")) or interpretation.event_status.casefold() in {
+        "observed", "active", "announced", "confirmed", "occurred",
+    }
+    employer_direct = bundle.get("employer_is_direct")
+    if employer_direct is None:
+        employer_direct = True
+    return {
+        "duty_excerpt": duty_excerpt,
+        "duty_start": duty_start,
+        "duty_end": duty_end,
+        "duty_proven": bool(duty_excerpt) and duty_start >= 0,
+        "sales_role": sales_role,
+        "employer_role": employer_role,
+        "vacancy_active": vacancy_active,
+        "employer_direct": bool(employer_direct),
+        "source_url": _clean(bundle.get("source_url")),
+        "official_domain": _clean(bundle.get("official_domain")),
+        "location": _clean(bundle.get("location") or interpretation.location or ""),
+    }
+
+
+def apply_hiring_relationship_proxy(
+    contract: SemanticQueryContract,
+    interpretation: SemanticEventInterpretation,
+    *,
+    source_text: str,
+    structured_metadata: Optional[Mapping[str, Any]] = None,
+) -> Tuple[SemanticEventInterpretation, Optional[str]]:
+    """Enrich interpretation from hiring observables; return (interpretation, early_rejection)."""
+    from dataclasses import replace as dc_replace
+
+    if HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP not in contract.required_relationships:
+        return interpretation, None
+    proxy = _hiring_acquisition_observables(
+        source_text=source_text,
+        interpretation=interpretation,
+        structured_metadata=structured_metadata,
+    )
+    if not proxy["duty_proven"]:
+        return interpretation, "CUSTOMER_ACQUISITION_DUTY_UNPROVEN"
+    if not (proxy["sales_role"] and proxy["employer_role"] and proxy["vacancy_active"] and proxy["employer_direct"]):
+        return interpretation, None
+    relationships = set(interpretation.satisfied_relationships)
+    relationships.add(HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP)
+    rubric = set(interpretation.acceptance_rubric_passed)
+    for item in contract.acceptance_rubric:
+        if item.startswith("target_role_employer") and proxy["employer_role"]:
+            rubric.add(item)
+        if "sales_customer_acquisition" in item and proxy["duty_proven"]:
+            rubric.add(item)
+    excerpt = interpretation.evidence_excerpt
+    start, end = interpretation.evidence_start, interpretation.evidence_end
+    if proxy["duty_excerpt"] and proxy["duty_start"] >= 0:
+        excerpt = proxy["duty_excerpt"]
+        start = proxy["duty_start"]
+        end = proxy["duty_end"]
+    return dc_replace(
+        interpretation,
+        target_entity_role="employer" if proxy["employer_role"] else interpretation.target_entity_role,
+        employer=interpretation.employer or interpretation.target_company,
+        event_status=interpretation.event_status or "active",
+        event_date=interpretation.event_date or (_clean((structured_metadata or {}).get("event_date")) or None),
+        location=interpretation.location or proxy["location"] or None,
+        query_match=True,
+        query_match_reason=(
+            interpretation.query_match_reason
+            or "hiring observables: active direct-employer sales vacancy with literal customer-acquisition duty"
+        ),
+        satisfied_relationships=tuple(sorted(relationships)),
+        acceptance_rubric_passed=tuple(sorted(rubric)),
+        evidence_excerpt=excerpt,
+        evidence_start=start,
+        evidence_end=end,
+        role=interpretation.role or _clean((structured_metadata or {}).get("vacancy_title")),
+    ), None
+
+
 class SemanticEvidenceGroundingVerifier:
     """Deterministic verifier: model meaning never overrides missing proof."""
 
@@ -608,6 +714,7 @@ class SemanticEvidenceGroundingVerifier:
         candidate_company: Optional[str] = None,
         maximum_age_days: Optional[int] = None,
         now: Optional[date] = None,
+        structured_metadata: Optional[Mapping[str, Any]] = None,
     ) -> GroundingVerdict:
         excerpt = interpretation.evidence_excerpt
         start, end = interpretation.evidence_start, interpretation.evidence_end
@@ -625,19 +732,53 @@ class SemanticEvidenceGroundingVerifier:
         target_identity = bool(target_name) and target_name == candidate_name
         target_in_source = bool(target_name) and target_name in _canonical_name(source_text)
         relationships = set(interpretation.satisfied_relationships)
-        relationships_pass = set(contract.required_relationships).issubset(relationships)
+        required_relationships = set(contract.required_relationships)
+        hiring_proxy = None
+        if HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP in required_relationships:
+            hiring_proxy = _hiring_acquisition_observables(
+                source_text=source_text,
+                interpretation=interpretation,
+                structured_metadata=structured_metadata,
+            )
+            if (
+                hiring_proxy["duty_proven"]
+                and hiring_proxy["sales_role"]
+                and hiring_proxy["employer_role"]
+                and hiring_proxy["vacancy_active"]
+                and hiring_proxy["employer_direct"]
+            ):
+                relationships.add(HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP)
+                interpretation_rubric = set(interpretation.acceptance_rubric_passed)
+                for item in contract.acceptance_rubric:
+                    if item.startswith("target_role_employer") and hiring_proxy["employer_role"]:
+                        interpretation_rubric.add(item)
+                    if "sales_customer_acquisition" in item and hiring_proxy["duty_proven"]:
+                        interpretation_rubric.add(item)
+                from dataclasses import replace as dc_replace
+                interpretation = dc_replace(
+                    interpretation,
+                    satisfied_relationships=tuple(sorted(relationships)),
+                    acceptance_rubric_passed=tuple(sorted(interpretation_rubric)),
+                    target_entity_role=(
+                        "employer" if hiring_proxy["employer_role"] else interpretation.target_entity_role
+                    ),
+                    query_match=True if not interpretation.query_match else interpretation.query_match,
+                )
+                relationships = set(interpretation.satisfied_relationships)
+        relationships_pass = required_relationships.issubset(relationships)
         target_in_relation = any(
             isinstance(relation, Mapping)
             and any(
                 _canonical_name(value) == target_name
                 for key, value in relation.items()
-                if key not in {"relation_type", "predicate", "direction"} and isinstance(value, str)
+                if key not in {"relation_type", "predicate", "direction", "relationship_id"} and isinstance(value, str)
             )
             for relation in interpretation.relations
         )
         role_match = bool(interpretation.target_entity_role) and (
             interpretation.target_entity_role == contract.target_role_in_event
             or (relationships_pass and target_in_relation)
+            or (hiring_proxy is not None and hiring_proxy["employer_role"] and contract.target_role_in_event == "employer")
         )
         excluded_role = interpretation.target_entity_role in set(contract.excluded_roles)
         rubric_pass = set(contract.acceptance_rubric).issubset(set(interpretation.acceptance_rubric_passed))
@@ -650,6 +791,24 @@ class SemanticEvidenceGroundingVerifier:
         if temporal and maximum_age_days is not None:
             age = ((now or datetime.now(timezone.utc).date()) - event_day).days
             temporal = 0 <= age <= max(0, int(maximum_age_days))
+        duty_ok = True
+        if hiring_proxy is not None:
+            duty_ok = bool(hiring_proxy["duty_proven"])
+            if duty_ok and excerpt:
+                # Prefer grounding against the duty-bearing excerpt when present.
+                if hiring_proxy["duty_excerpt"] and hiring_proxy["duty_excerpt"] in source_text:
+                    if excerpt not in source_text or not literal:
+                        excerpt = hiring_proxy["duty_excerpt"]
+                        start = hiring_proxy["duty_start"]
+                        end = hiring_proxy["duty_end"]
+                        literal = start >= 0 and source_text[start:end] == excerpt
+        query_match = bool(interpretation.query_match) or (
+            hiring_proxy is not None
+            and duty_ok
+            and hiring_proxy["sales_role"]
+            and hiring_proxy["employer_role"]
+            and hiring_proxy["vacancy_active"]
+        )
         checks = {
             "excerpt_literal": literal,
             "offsets_exact": literal,
@@ -659,7 +818,11 @@ class SemanticEvidenceGroundingVerifier:
             "target_role_not_excluded": not excluded_role,
             "required_relationships_supported": relationships_pass,
             "acceptance_rubric_satisfied": rubric_pass,
-            "query_match": interpretation.query_match,
+            "query_match": query_match,
+            "customer_acquisition_duty_literal": duty_ok if hiring_proxy is not None else True,
+            "vacancy_active_when_hiring_relationship": (
+                hiring_proxy["vacancy_active"] if hiring_proxy is not None else True
+            ),
             "not_negated_hypothetical_conditional_or_rumor": not unsafe_modality,
             "event_status_observed": interpretation.event_status.casefold() in {
                 "observed", "active", "completed", "announced", "occurred", "confirmed",
@@ -672,11 +835,13 @@ class SemanticEvidenceGroundingVerifier:
             "confidence_sufficient": interpretation.confidence >= 0.70 and interpretation.certainty >= 0.70,
         }
         reasons = tuple(name for name, passed in checks.items() if not passed)
-        if not literal or not target_in_source:
+        if hiring_proxy is not None and not duty_ok:
+            rejection = "CUSTOMER_ACQUISITION_DUTY_UNPROVEN"
+        elif not literal or not target_in_source:
             rejection = "EVIDENCE_GROUNDING_FAILED"
         elif not role_match or excluded_role:
             rejection = "TARGET_ROLE_UNVERIFIED"
-        elif not relationships_pass or not rubric_pass or not interpretation.query_match:
+        elif not relationships_pass or not rubric_pass or not query_match:
             rejection = "SEMANTIC_QUERY_MISMATCH"
         elif reasons:
             rejection = "EVIDENCE_GROUNDING_FAILED"

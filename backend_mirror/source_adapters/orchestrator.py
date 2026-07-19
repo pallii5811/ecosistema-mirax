@@ -489,6 +489,7 @@ async def semantic_authority_qualifier(
             SemanticQueryContract,
             SemanticResultCache,
             SemanticTelemetry,
+            apply_hiring_relationship_proxy,
         )
 
         contract = SemanticQueryContract.from_model(
@@ -553,6 +554,20 @@ async def semantic_authority_qualifier(
                 ),
                 entity_hints=(candidate.canonical_company_name, candidate.official_domain or ""),
             )
+            structured_metadata = (
+                provenance.get("structured_metadata")
+                if isinstance(provenance.get("structured_metadata"), Mapping)
+                else {}
+            )
+            interpretation, hiring_early_reject = apply_hiring_relationship_proxy(
+                contract,
+                interpretation,
+                source_text=source_text,
+                structured_metadata=structured_metadata,
+            )
+            if hiring_early_reject:
+                rejection_codes.append(hiring_early_reject)
+                continue
             # Verify every source independently. Relationship/rubric completeness
             # is aggregated afterwards so legitimate multi-source queries work.
             per_source_contract = replace(
@@ -577,6 +592,7 @@ async def semantic_authority_qualifier(
                 entity_class=candidate.entity_class,
                 candidate_company=candidate.canonical_company_name,
                 maximum_age_days=request.freshness_max_age_days,
+                structured_metadata=structured_metadata,
             )
             if verdict.accepted:
                 grounded.append({
