@@ -597,6 +597,30 @@ def _parse_iso_date(value: Optional[str]) -> Optional[date]:
             return None
 
 
+def _hiring_bridge_helpers():
+    """Load duty detectors without importing source_adapters package __init__."""
+    try:
+        from backend_mirror.source_adapters.hiring_semantic_bridge import (
+            find_customer_acquisition_duty,
+            looks_sales_role,
+        )
+        return find_customer_acquisition_duty, looks_sales_role
+    except ImportError:
+        pass
+    import importlib.util
+    from pathlib import Path
+
+    # Staging worker layout is flat under backend-staging/. Importing
+    # source_adapters triggers __init__ → hiring → backend_mirror (missing).
+    path = Path(__file__).resolve().parent / "source_adapters" / "hiring_semantic_bridge.py"
+    spec = importlib.util.spec_from_file_location("mirax_hiring_semantic_bridge", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"hiring_semantic_bridge unavailable at {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.find_customer_acquisition_duty, module.looks_sales_role
+
+
 def _hiring_acquisition_observables(
     *,
     source_text: str,
@@ -604,16 +628,7 @@ def _hiring_acquisition_observables(
     structured_metadata: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Deterministic observables for the hiring customer-acquisition relationship proxy."""
-    try:
-        from backend_mirror.source_adapters.hiring_semantic_bridge import (
-            find_customer_acquisition_duty,
-            looks_sales_role,
-        )
-    except ImportError:  # staging worker layout is flat under backend-staging/
-        from source_adapters.hiring_semantic_bridge import (  # type: ignore
-            find_customer_acquisition_duty,
-            looks_sales_role,
-        )
+    find_customer_acquisition_duty, looks_sales_role = _hiring_bridge_helpers()
 
     meta = dict(structured_metadata or {})
     bundle = meta.get("hiring_semantic_evidence_bundle") if isinstance(meta.get("hiring_semantic_evidence_bundle"), Mapping) else meta
