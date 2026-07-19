@@ -7,7 +7,7 @@ import {
   type CommercialSearchPlan,
 } from '@/lib/contracts/commercial-search-plan'
 import { SOURCE_BY_ID, sourceSupportsSignal } from '@/lib/source-intelligence/registry'
-import { getSignalDefinition, signalOntologyPromptFragment } from '@/lib/signal-ontology/ontology'
+import { getSignalDefinition, SIGNAL_ONTOLOGY } from '@/lib/signal-ontology/ontology'
 import { parseSignalIntentHeuristic } from '@/lib/signal-intent/parse-heuristic'
 import { inferSellerBuyerProfile } from '@/lib/signal-intent/seller-buyer-inference'
 import {
@@ -109,8 +109,8 @@ Rules:
   a company receiving finance is recipient; lender/provider/investor/publisher/advisor are excluded inverse roles.
 - Output only through the required tool.
 
-AVAILABLE COMPOSABLE SIGNAL ONTOLOGY:
-${signalOntologyPromptFragment()}`
+OPTIONAL CANONICAL ROUTING HINT IDS (open-world relationships remain authoritative):
+${SIGNAL_ONTOLOGY.map((signal) => signal.id).join(', ')}`
 
 const TOOL_NAME = 'submit_commercial_search_plan'
 
@@ -128,8 +128,11 @@ type JsonSchemaNode = {
   type?: string | string[]
   required?: string[]
   minItems?: number
+  maxItems?: number
+  maxProperties?: number
   minLength?: number
   maxLength?: number
+  additionalProperties?: boolean | JsonSchemaNode
   $defs?: Record<string, JsonSchemaNode>
   properties?: Record<string, JsonSchemaNode>
   items?: JsonSchemaNode
@@ -164,6 +167,27 @@ export function compilerToolSchema(query: string): typeof canonicalSchema {
   if (hypotheses.signals) hypotheses.signals.minItems = 1
   if (signalPolicy.required_signals) signalPolicy.required_signals.minItems = 1
   return schema as typeof canonicalSchema
+}
+
+export function semanticCompilerToolSchema(): JsonSchemaNode {
+  const definitions = (canonicalSchema as unknown as { $defs: Record<string, JsonSchemaNode> }).$defs
+  const schema = structuredClone(definitions.semanticQueryContract)
+  schema.$defs = {
+    stringArray: {
+      type: 'array', maxItems: 4,
+      items: { type: 'string', minLength: 1, maxLength: 240 },
+    },
+  }
+  const compact = (node: JsonSchemaNode) => {
+    if (node.type === 'string') node.maxLength = Math.min(node.maxLength || 240, 240)
+    if (node.type === 'array') node.maxItems = Math.min(node.maxItems || 4, 4)
+    if (node.type === 'object') node.maxProperties = Math.min(node.maxProperties || 8, 8)
+    for (const child of Object.values(node.properties || {})) compact(child)
+    if (node.items) compact(node.items)
+    for (const child of Object.values(node.$defs || {})) compact(child)
+  }
+  compact(schema)
+  return schema
 }
 
 function resolveSchemaNode(node: JsonSchemaNode): JsonSchemaNode {
@@ -824,12 +848,13 @@ async function callCompiler(
   }
   const idempotencyKey = `intent:${COMMERCIAL_INTENT_PROMPT_VERSION}:${callKind}`
   const configuredMax = Number(process.env.ANTHROPIC_COMPILER_MAX_CALL_EUR || 0.05)
-  const maxOutputTokens = 1_600
+  const maxOutputTokens = 1_800
   const modelIsEconomy = /haiku/i.test(model)
   const inputRate = Number(process.env.ANTHROPIC_INPUT_EUR_PER_MILLION || (modelIsEconomy ? 1 : 3))
   const outputRate = Number(process.env.ANTHROPIC_OUTPUT_EUR_PER_MILLION || (modelIsEconomy ? 5 : 15))
+  const toolSchema = semanticCompilerToolSchema()
   const serializedUpperBound = Buffer.byteLength(
-    `${SYSTEM_PROMPT}\n${query}${repair}\n${JSON.stringify((canonicalSchema as unknown as { $defs: { semanticQueryContract: JsonSchemaNode } }).$defs.semanticQueryContract)}`,
+    `${SYSTEM_PROMPT}\n${query}${repair}\n${JSON.stringify(toolSchema)}`,
     'utf8',
   ) + 4_096
   // The payload is JSON/Italian prose: two UTF-8 bytes per token is a
@@ -879,7 +904,7 @@ async function callCompiler(
         {
           name: TOOL_NAME,
           description: 'Submit the lossless open-world semantic query contract.',
-          input_schema: (canonicalSchema as unknown as { $defs: { semanticQueryContract: JsonSchemaNode } }).$defs.semanticQueryContract,
+          input_schema: toolSchema,
         },
       ],
       tool_choice: { type: 'tool', name: TOOL_NAME },

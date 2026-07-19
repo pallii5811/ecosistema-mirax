@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
-import { compileCommercialSearchPlan } from '../src/lib/intent-compiler/compile-commercial-search-plan'
+import {
+  compileCommercialSearchPlan,
+  semanticCompilerToolSchema,
+} from '../src/lib/intent-compiler/compile-commercial-search-plan'
 import { canonicalPlanToLegacy } from '../src/lib/uqe/mirax-query-planner'
 import { sourceSupportsSignal } from '../src/lib/source-intelligence/registry'
 import { parseSignalIntentHeuristic } from '../src/lib/signal-intent/parse-heuristic'
@@ -11,6 +14,9 @@ const fixture = JSON.parse(
   // Test fixtures are intentionally mutated across partial-payload scenarios.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ) as Record<string, any>
+const semanticToolSchema = semanticCompilerToolSchema()
+assert.equal(semanticToolSchema.$defs?.stringArray.maxItems, 4)
+assert.equal(semanticToolSchema.$defs?.stringArray.items?.maxLength, 240)
 const semanticContract = {
   query_goal: 'Find operating target companies satisfying the explicit commercial condition',
   seller: {}, offer: {}, target_entity_types: ['operating_company'],
@@ -308,7 +314,10 @@ try {
   assert.ok(semanticOnly.source_policy.allowed_source_classes.some((source) => sourceSupportsSignal(source, 'hiring_sales')))
   assert.equal(semanticOnly.budget_policy.hard_cost_eur, 0.05)
   assert.ok(semanticOnly.budget_policy.maximum_llm_evaluations >= 6)
-  assert.ok(reservedEstimates.at(-1)! <= 0.05, 'two-lead semantic compilation must fit its €0.05 hard cap')
+  assert.ok(
+    reservedEstimates.at(-1)! <= 0.05,
+    `two-lead semantic compilation must fit its €0.05 hard cap; got ${reservedEstimates.at(-1)}`,
+  )
   assert.equal(fetchCalls, 7, 'semantic-only output must require one provider call and no repair')
 
   const exactDigitalQuery = 'Trova imprese di pulizia a Milano con sito ufficiale, criticità SEO e assenza di strumenti di tracciamento pubblicitario.'
