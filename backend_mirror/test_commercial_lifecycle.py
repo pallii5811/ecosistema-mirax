@@ -217,6 +217,28 @@ def test_trusted_hiring_adapter_identity_is_accepted_with_exact_proof_contract()
     assert gate["publishable"] is True
 
 
+def test_hiring_organization_url_proxy_proof_is_accepted_by_lifecycle():
+    lead = valid_lead()
+    lead["source_adapter_id"] = "structured_hiring_v1"
+    lead["sito"] = "https://airliquide.com"
+    lead["citta"] = "Trezzano, Lombardia, Italia"
+    lead["vacancy_title"] = "Commerciale"
+    lead["domain_verification"].update({
+        "adapter_id": "structured_hiring_v1",
+        "resolution_source": "source_adapter",
+        "resolution_method": "verified_source_adapter",
+        "url": "https://airliquide.com/",
+        "evidence": [
+            "hiring_organization_url",
+            "employer_corporate_domain_resolved",
+            "vacancy_source_verified",
+        ],
+    })
+    gate = evaluate_publication_gate(lead, PLAN, cost_within_budget=True)
+    assert gate["official_domain_verified"] is True
+    assert "OFFICIAL_DOMAIN_UNRESOLVED" not in gate["rejection_codes"]
+
+
 def test_source_adapter_identity_rejects_unknown_forged_or_incomplete_proof():
     lead = valid_lead()
     lead["source_adapter_id"] = "unknown_adapter"

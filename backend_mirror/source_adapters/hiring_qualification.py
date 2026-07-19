@@ -10,7 +10,14 @@ from urllib.parse import urlparse
 from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, normalize_domain
 from backend_mirror.source_adapters.hiring_ats_parsers import detect_ats_vendor
 
-QUALIFICATION_VALIDATOR_EPOCH = 12
+QUALIFICATION_VALIDATOR_EPOCH = 13
+# Must stay aligned with commercial_lifecycle._TRUSTED_SOURCE_ADAPTER_DOMAIN_PROOFS["structured_hiring_v1"].
+_HIRING_LIFECYCLE_DOMAIN_PROOFS = (
+    frozenset({"schema_org_identity_match"}),
+    frozenset({"company_careers_host_match", "legal_name_in_page"}),
+    frozenset({"employer_corporate_domain_resolved", "vacancy_source_verified"}),
+    frozenset({"careers_subdomain_corporate_link", "vacancy_source_verified"}),
+)
 _EXPLICIT_SIZE_CONSTRAINT_RE = re.compile(
     r"\b(?:"
     r"pmi|sme|microimprese?|"
@@ -401,6 +408,20 @@ def resolve_employer_identity(record: Mapping[str, Any]) -> dict[str, Any]:
 
     verified = bool(displayed and official and not is_blacklisted_domain(official) and not _is_ats_host(official))
     if verified:
+        # Bridge internal resolution tokens onto lifecycle trusted proofs.
+        # hiring_organization_url alone is not accepted by commercial_lifecycle.
+        evidence_set = {str(item) for item in evidence}
+        lifecycle_ok = any(required.issubset(evidence_set) for required in _HIRING_LIFECYCLE_DOMAIN_PROOFS)
+        if not lifecycle_ok:
+            resolved_via_org = "hiring_organization_url" in evidence_set
+            resolved_via_workday = "workday_tenant_corporate_map" in evidence_set
+            resolved_via_hint = any(item.startswith("employer_identity_hint:") for item in evidence_set)
+            if "careers_subdomain_corporate_link" in evidence_set and vacancy_source:
+                evidence.append("vacancy_source_verified")
+            elif resolved_via_org or resolved_via_workday or resolved_via_hint:
+                evidence.append("employer_corporate_domain_resolved")
+                if vacancy_source:
+                    evidence.append("vacancy_source_verified")
         direct = record.get("employer_is_direct")
         if direct is False:
             employer_is_direct = False

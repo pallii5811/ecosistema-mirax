@@ -419,6 +419,34 @@ def test_qualification_epoch_bumped_for_revalidation() -> None:
     assert QUALIFICATION_VALIDATOR_EPOCH >= 4
 
 
+def test_hiring_organization_url_emits_lifecycle_trusted_domain_proofs() -> None:
+    """hiring_organization_url alone is not trusted by commercial_lifecycle."""
+    from backend_mirror.commercial_lifecycle import _trusted_source_adapter_identity
+
+    record = resolve_employer_identity({
+        "company_name": "IT10680-ITALIA VITALAIRE ITALIA S.P.A.",
+        "hiring_organization_url": "https://www.airliquide.com/",
+        "source_url": "https://airliquide.wd3.myworkdayjobs.com/AirLiquideExternalCareers/job/x",
+        "vacancy_source_domain": "airliquide.wd3.myworkdayjobs.com",
+        "employer_is_direct": True,
+        "active": True,
+    })
+    evidence = set(record.get("domain_verification_evidence") or ())
+    assert "hiring_organization_url" in evidence
+    assert {"employer_corporate_domain_resolved", "vacancy_source_verified"}.issubset(evidence)
+    assert record.get("employer_official_domain") == "airliquide.com"
+    identity = {
+        "adapter_id": "structured_hiring_v1",
+        "resolution_source": "source_adapter",
+        "resolution_method": "verified_source_adapter",
+        "evidence": list(evidence),
+    }
+    assert _trusted_source_adapter_identity(
+        {"source_adapter_id": "structured_hiring_v1"},
+        identity,
+    )
+
+
 def test_plan_requires_explicit_size_ignores_compiler_sizes_only() -> None:
     plan = {
         "raw_query": "Trova marketing manager in Italia",
