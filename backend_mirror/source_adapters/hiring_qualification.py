@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, normalize_domain
 from backend_mirror.source_adapters.hiring_ats_parsers import detect_ats_vendor
 
-QUALIFICATION_VALIDATOR_EPOCH = 13
+QUALIFICATION_VALIDATOR_EPOCH = 14
 # Must stay aligned with commercial_lifecycle._TRUSTED_SOURCE_ADAPTER_DOMAIN_PROOFS["structured_hiring_v1"].
 _HIRING_LIFECYCLE_DOMAIN_PROOFS = (
     frozenset({"schema_org_identity_match"}),
@@ -131,6 +131,9 @@ _EMPLOYER_IDENTITY_HINTS: Tuple[Tuple[re.Pattern[str], str, str, str], ...] = (
     (re.compile(r"solenis", re.I), "solenis.com", "Solenis", "legal_name"),
     (re.compile(r"convatec", re.I), "convatec.com", "Convatec", "legal_name"),
     (re.compile(r"\bing\b|ing bank", re.I), "ing.it", "ING", "brand_name"),
+    (re.compile(r"\bstill\b|kion\s+group", re.I), "still.com", "STILL", "brand_name"),
+    (re.compile(r"edenred|uta\s+mobility", re.I), "edenred.com", "Edenred", "brand_name"),
+    (re.compile(r"deutsche\s*bank", re.I), "db.com", "Deutsche Bank", "legal_name"),
 )
 
 

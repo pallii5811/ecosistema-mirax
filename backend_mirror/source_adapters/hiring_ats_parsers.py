@@ -67,6 +67,9 @@ _WORKDAY_TENANT_CORPORATE_DOMAINS: Mapping[str, str] = {
     "movadogroup": "movado.com",
     "scj": "scjohnson.com",
     "hyperiongrp": "hyperion.com",
+    "kiongroup": "still.com",
+    "edenpeople": "edenred.com",
+    "db": "db.com",
 }
 
 RETRYABLE_FAILURE_CODES = frozenset({

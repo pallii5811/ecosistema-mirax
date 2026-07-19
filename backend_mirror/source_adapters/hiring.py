@@ -820,9 +820,18 @@ async def _default_hiring_provider(
                 else float("inf")
             )
             # Keep a semantic-qualification buffer after the first discovery wave.
+            # ponytail: when residual hard budget still funds one Serper query but
+            # not the full semantic reserve, allow last-mile discovery instead of
+            # deadlocking with an empty fetch queue (ceiling: one query).
             semantic_buffer = 0.012 if (queries_run > 0 or state.discovery_spent_eur > 1e-9) else 0.0
-            if remaining_gov + 1e-9 < QUERY_COST_EUR + semantic_buffer:
-                break
+            need = QUERY_COST_EUR + semantic_buffer
+            if remaining_gov + 1e-9 < need:
+                if not (
+                    remaining_gov + 1e-9 >= QUERY_COST_EUR
+                    and state.discovery_spent_eur > 1e-9
+                    and not queue_has_work
+                ):
+                    break
             # Stop discovery once enough accepted URLs are queued for this batch.
             pending_now = sum(1 for url in urls if url not in set(state.processed_terminal_urls))
             if pending_now >= max(limit, URLS_PER_BATCH // 2) and queries_run >= 1:
