@@ -962,20 +962,23 @@ class AnthropicSemanticModel:
             raise RuntimeError("ANTHROPIC_API_KEY missing; semantic authority fails closed")
         governor = None
         try:
-            from backend_mirror.cost_context import current_cost_governor as package_governor
-            from backend_mirror.cost_governor import ResearchBudgetExceeded
-            governor = package_governor()
+            # Prefer the flat worker alias first. Shadow runtime sets the governor
+            # on cost_context; backend_mirror.cost_context can be a second module
+            # object with a different ContextVar under the flat package alias.
+            from cost_context import current_cost_governor as worker_governor
+            governor = worker_governor()
         except ImportError:
-            from cost_governor import ResearchBudgetExceeded
+            pass
         if governor is None:
             try:
-                # Standalone worker exposes these modules at top level.  Check
-                # both aliases because importing the same file under two names
-                # creates two independent ContextVars in mixed test/runtime use.
-                from cost_context import current_cost_governor as worker_governor
-                governor = worker_governor()
+                from backend_mirror.cost_context import current_cost_governor as package_governor
+                governor = package_governor()
             except ImportError:
-                pass
+                from cost_governor import ResearchBudgetExceeded
+        try:
+            from cost_governor import ResearchBudgetExceeded
+        except ImportError:
+            from backend_mirror.cost_governor import ResearchBudgetExceeded
         if governor is None:
             raise ResearchBudgetExceeded("semantic interpretation requires an atomic cost governor")
         model = self.tier2_model if tier == 2 else self.tier1_model
