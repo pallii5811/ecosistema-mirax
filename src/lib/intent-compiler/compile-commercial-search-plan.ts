@@ -2,6 +2,8 @@ import canonicalSchema from '../../../contracts/commercial-search-plan.schema.js
 import {
   COMMERCIAL_SEARCH_PLAN_SCHEMA_VERSION,
   safeParseCommercialSearchPlan,
+  SemanticQueryContractSchema,
+  type SemanticQueryContract,
   type CommercialSearchPlan,
 } from '@/lib/contracts/commercial-search-plan'
 import { SOURCE_BY_ID, sourceSupportsSignal } from '@/lib/source-intelligence/registry'
@@ -14,7 +16,7 @@ import {
   setSemanticQueryCache,
 } from './semantic-query-cache'
 
-export const COMMERCIAL_INTENT_PROMPT_VERSION = 'commercial-intent-v1.2.0' as const
+export const COMMERCIAL_INTENT_PROMPT_VERSION = 'commercial-intent-v1.3.0' as const
 
 function cleanProviderEnv(value: string | undefined): string {
   return String(value || '').replace(/\\[rn]/g, '').trim()
@@ -78,7 +80,7 @@ export function detectQueryContradictions(query: string): PlanValidationIssue[] 
 }
 
 const SYSTEM_PROMPT = `You are the semantic intent compiler for MIRAX, a B2B sales-intelligence system.
-Convert the user's commercial objective into the provided canonical plan. The user may describe what they SELL rather than the buyer category.
+Convert the user's commercial objective into the provided lossless semantic query contract. Deterministic code builds sources, budgets and ranking afterwards. The user may describe what they SELL rather than the buyer category.
 
 Reason causally: seller offer -> problem solved -> buyer condition -> recent triggering event -> observable signal -> best source class -> evidence needed.
 
@@ -87,7 +89,7 @@ Rules:
 - The query can be Italian. If the user says "Sono un/una ...", that phrase identifies the SELLER, not the buyer.
 - For seller-framed queries, seller.offer_category, products_or_services, problems_solved and preferred_buyer_roles MUST be explicit and non-empty.
 - Never copy the full raw query into seller.offer_description. State only the offer actually sold.
-- Every required buying signal MUST be connected to a concrete triggering event, a buyer problem, an implied need and a causal relevance_to_offer.
+- Every required relationship must be a distinct condition explicitly required by the user; synonyms and alternatives are optional, never additional conjuncts.
 - Do not use placeholders such as "implicit commercial need", "need to be verified", "coherence with the user objective" or paraphrases of the raw query.
 - preferred_buyer_roles are the people/functions likely to own the problem or buying decision (for example owner, CFO, operations, HR, IT), not generic invented contacts.
 - The plan must explain why the observed event makes outreach timely. A target category alone is never a buying signal.
@@ -98,7 +100,6 @@ Rules:
 - Search snippets, directories and generic blogs are never publishable proof.
 - Require official domain, source URL and observation date for publication.
 - Use concise arrays and at most 5 strong commercial hypotheses.
-- The plan must stay inside the supplied hard budget.
 - semantic_query_contract is the lossless, open-world meaning of the request. Preserve dynamic predicates even
   when no canonical signal exists. Explicitly state the target company's event role and inverse/excluded roles.
 - Canonical signal IDs are routing hints only. They never replace event_or_state_description, relationships,
@@ -189,6 +190,81 @@ function pruneToCanonicalSchema(value: unknown, rawNode: JsonSchemaNode): unknow
 function canonicalSignals(values: unknown): string[] {
   if (!Array.isArray(values)) return []
   return [...new Set(values.map(String).map((value) => getSignalDefinition(value)?.id).filter(Boolean))] as string[]
+}
+
+function semanticPlanEnvelope(query: string, input: unknown): unknown {
+  if (
+    input && typeof input === 'object' && !Array.isArray(input) &&
+    ('schema_version' in input || 'semantic_query_contract' in input)
+  ) return input
+  const parsed = SemanticQueryContractSchema.safeParse(input)
+  if (!parsed.success) return { semantic_query_contract: input }
+  const semantic: SemanticQueryContract = parsed.data
+  const signals = canonicalSignals([
+    ...semantic.canonical_signal_hints,
+    ...parseSignalIntentHeuristic(query).required_signals,
+  ])
+  const definitions = signals
+    .map((signal) => getSignalDefinition(signal))
+    .filter((item): item is NonNullable<ReturnType<typeof getSignalDefinition>> => Boolean(item))
+  const allowed = [...new Set([
+    ...definitions.flatMap((item) => item.likelySourceClasses),
+    'official_company_website', 'recognized_local_news', 'industry_publication',
+  ])].filter((source) => SOURCE_BY_ID.has(source))
+  const preferred = [...new Set(definitions.flatMap((item) => item.preferredSourceClasses))]
+    .filter((source) => allowed.includes(source))
+  const offerDescription = String(
+    (semantic.offer as Record<string, unknown>)?.description || semantic.query_goal,
+  ).trim()
+  return {
+    semantic_query_contract: semantic,
+    seller: {
+      offer_category: null, offer_description: offerDescription,
+      products_or_services: [], problems_solved: [], sales_motion: null,
+      preferred_buyer_roles: [],
+    },
+    target: {
+      entity_types: semantic.target_entity_types.length ? semantic.target_entity_types : ['company'],
+      industries: semantic.industry, company_sizes: [], geographies: semantic.geography,
+      local_business_preference: true, required_attributes: semantic.must_have_facts,
+      excluded_attributes: semantic.negative_conditions, excluded_entities: semantic.excluded_entities,
+    },
+    commercial_hypotheses: [{
+      id: 'semantic-open-world', buyer_problem: semantic.event_or_state_description,
+      triggering_events: [semantic.event_or_state_description], signals,
+      implied_need: semantic.positive_conditions[0] || semantic.event_or_state_description,
+      relevance_to_offer: `La relazione osservata rende attuale l'obiettivo commerciale: ${semantic.query_goal}`,
+      confidence: semantic.confidence,
+    }],
+    signal_policy: {
+      required_signals: signals, optional_signals: [], negative_signals: [],
+      maximum_age_days_by_signal: Object.fromEntries(signals.map((signal) => [
+        signal, getSignalDefinition(signal)?.defaultFreshnessDays || 365,
+      ])), minimum_signal_confidence: 0.75,
+    },
+    source_policy: {
+      preferred_source_classes: preferred.length ? preferred : allowed.slice(0, 2),
+      allowed_source_classes: allowed, excluded_source_classes: ['search_snippet', 'generic_blog', 'directory'],
+      minimum_independent_sources: 1, primary_source_required_for: signals,
+    },
+    evidence_policy: {
+      require_official_domain: true, require_source_url: true, require_observed_at: true,
+      minimum_evidence_confidence: 0.75, corroboration_required_above_risk: 0.65,
+    },
+    audit_policy: {
+      modules: ['contacts', 'social_profiles', 'company_identity', 'commercial_signals'],
+      crawl_depth: 1, maximum_pages: 8, collect_contacts: true, collect_social_profiles: true,
+      detect_technologies: true, detect_commercial_signals: true,
+    },
+    ranking_policy: {
+      weight_buyer_fit: 0.25, weight_signal_strength: 0.2, weight_freshness: 0.15,
+      weight_evidence_confidence: 0.2, weight_contactability: 0.1, weight_need_gap: 0.1,
+    },
+    budget_policy: {}, ambiguity: {
+      score: 1 - semantic.confidence, assumptions: [],
+      unresolved_fields: semantic.clarification_required ? ['semantic_clarification'] : [],
+    },
+  }
 }
 
 const GENERIC_HYPOTHESIS_TEXT = /(?:necessit[aà]\s+(?:commerciale\s+)?implicita|bisogno\s+da\s+(?:confermare|verificare)|coerenza\s+(?:da\s+validare|con\s+l[' ]?obiettivo)|richiesta\s+dell[' ]?utente)/i
@@ -292,7 +368,7 @@ function normalizePayload(
     hard_cost_eur: hardBudget,
     maximum_search_calls: Math.min(60, Math.max(4, Math.ceil(requestedLeadCount / 10))),
     maximum_pages_opened: Math.min(1_000, Math.max(15, requestedLeadCount * 2)),
-    maximum_llm_evaluations: Math.min(8, Math.max(2, Math.ceil(requestedLeadCount / 250))),
+    maximum_llm_evaluations: Math.min(10_000, Math.max(2, requestedLeadCount * 3 + 1)),
   }
 
   const evidence = (payload.evidence_policy && typeof payload.evidence_policy === 'object'
@@ -747,12 +823,12 @@ async function callCompiler(
   }
   const idempotencyKey = `intent:${COMMERCIAL_INTENT_PROMPT_VERSION}:${callKind}`
   const configuredMax = Number(process.env.ANTHROPIC_COMPILER_MAX_CALL_EUR || 0.05)
-  const maxOutputTokens = 1_600
+  const maxOutputTokens = 3_000
   const modelIsEconomy = /haiku/i.test(model)
   const inputRate = Number(process.env.ANTHROPIC_INPUT_EUR_PER_MILLION || (modelIsEconomy ? 1 : 3))
   const outputRate = Number(process.env.ANTHROPIC_OUTPUT_EUR_PER_MILLION || (modelIsEconomy ? 5 : 15))
   const serializedUpperBound = Buffer.byteLength(
-    `${SYSTEM_PROMPT}\n${query}${repair}\n${JSON.stringify(compilerToolSchema(query))}`,
+    `${SYSTEM_PROMPT}\n${query}${repair}\n${JSON.stringify((canonicalSchema as unknown as { $defs: { semanticQueryContract: JsonSchemaNode } }).$defs.semanticQueryContract)}`,
     'utf8',
   ) + 4_096
   const computedUpperBound = 1.15 * (
@@ -798,8 +874,8 @@ async function callCompiler(
       tools: [
         {
           name: TOOL_NAME,
-          description: 'Submit the canonical MIRAX commercial search plan.',
-          input_schema: compilerToolSchema(query),
+          description: 'Submit the lossless open-world semantic query contract.',
+          input_schema: (canonicalSchema as unknown as { $defs: { semanticQueryContract: JsonSchemaNode } }).$defs.semanticQueryContract,
         },
       ],
       tool_choice: { type: 'tool', name: TOOL_NAME },
@@ -815,16 +891,14 @@ async function callCompiler(
     throw error
   }
   if (!response.ok) {
-    await meter.settle(searchId, idempotencyKey, estimatedCostEur, {
-      outcome: 'provider_http_error',
-      http_status: response.status,
-    })
+    await meter.release(searchId, idempotencyKey, `provider_http_${response.status}`)
     console.warn('[commercial-intent-compiler] provider_http_error', { status: response.status })
     return null
   }
   const data = (await response.json()) as {
     content?: Array<{ type?: string; name?: string; input?: unknown }>
     usage?: { input_tokens?: number; output_tokens?: number }
+    stop_reason?: string
   }
   const inputTokens = Math.max(0, Number(data.usage?.input_tokens || 0))
   const outputTokens = Math.max(0, Number(data.usage?.output_tokens || 0))
@@ -834,6 +908,7 @@ async function callCompiler(
     output_tokens: outputTokens,
     pricing_mode: 'token_rates_with_model_safe_defaults',
   })
+  if (data.stop_reason === 'max_tokens') throw new Error('SEMANTIC_QUERY_OUTPUT_TRUNCATED')
   return data.content?.find((block) => block.type === 'tool_use' && block.name === TOOL_NAME)?.input ?? null
 }
 
@@ -865,7 +940,7 @@ export async function compileCommercialSearchPlan(
 
   const firstRaw = await callCompiler(query, model, apiKey, options, 'initial')
   if (!firstRaw) return null
-  const first = safeParseCommercialSearchPlan(normalizePayload(firstRaw, query, model, options, 'llm'))
+  const first = safeParseCommercialSearchPlan(normalizePayload(semanticPlanEnvelope(query, firstRaw), query, model, options, 'llm'))
   const firstIssues = first.success
     ? validateCommercialPlanSemantics(first.data)
     : first.error.issues.map((issue) => ({
@@ -884,7 +959,7 @@ export async function compileCommercialSearchPlan(
   const repairedRaw = await callCompiler(query, model, apiKey, options, 'repair', firstIssues)
   if (!repairedRaw) return null
   const repaired = safeParseCommercialSearchPlan(
-    normalizePayload(repairedRaw, query, model, options, 'repaired_llm'),
+    normalizePayload(semanticPlanEnvelope(query, repairedRaw), query, model, options, 'repaired_llm'),
   )
   if (!repaired.success) {
     options.onDiagnostic?.({

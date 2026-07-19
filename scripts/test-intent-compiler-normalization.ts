@@ -8,6 +8,8 @@ import { parseSignalIntentHeuristic } from '../src/lib/signal-intent/parse-heuri
 
 const fixture = JSON.parse(
   fs.readFileSync('contracts/fixtures/commercial-search-plan.valid.json', 'utf8'),
+  // Test fixtures are intentionally mutated across partial-payload scenarios.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ) as Record<string, any>
 const semanticContract = {
   query_goal: 'Find operating target companies satisfying the explicit commercial condition',
@@ -265,9 +267,50 @@ try {
   'every signal in a multi-signal ERP plan must have an executable compatible source lane')
   assert.equal(fetchCalls, 6)
 
+  const semanticOnlyContract = {
+    ...semanticContract,
+    query_goal: 'Find Lombardy companies expanding their sales team',
+    target_company_description: 'Operating companies in Lombardy that are hiring sales staff',
+    event_or_state_description: 'The target company is actively expanding its sales team',
+    required_relationships: ['sales_hiring_by_target_company'],
+    optional_relationships: [],
+    geography: ['Lombardia'],
+    positive_conditions: ['a concrete sales vacancy is active'],
+    negative_conditions: [],
+    acceptance_rubric: ['target_is_operating_employer', 'sales_vacancy_is_current'],
+    discovery_hypotheses: [{ source_classes: ['official_careers', 'ats_job_posting'] }],
+    canonical_signal_hints: ['hiring_sales'],
+  }
+  globalThis.fetch = async () => {
+    fetchCalls += 1
+    return new Response(JSON.stringify({
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 70, output_tokens: 35 },
+      content: [{ type: 'tool_use', name: 'submit_commercial_search_plan', input: semanticOnlyContract }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const semanticOnly = await compileCommercialSearchPlan(
+    'aziende lombarde che stanno ampliando la squadra commerciale',
+    {
+      searchId: '00000000-0000-0000-0000-000000000008', requestedLeadCount: 5,
+      costMeter: meter, allowRepair: false,
+    },
+  )
+  assert.ok(semanticOnly, 'a semantic-contract-only tool response must become an executable canonical plan')
+  const semanticOnlyQueryContract = semanticOnly.semantic_query_contract
+  assert.ok(semanticOnlyQueryContract, 'semantic authority must remain attached to the canonical plan')
+  assert.ok(semanticOnlyQueryContract.required_relationships.includes('sales_hiring_by_target_company'))
+  assert.ok(semanticOnly.signal_policy.required_signals.includes('hiring_sales'))
+  assert.ok(semanticOnly.source_policy.allowed_source_classes.some((source) => sourceSupportsSignal(source, 'hiring_sales')))
+  assert.equal(semanticOnly.budget_policy.hard_cost_eur, 0.125)
+  assert.ok(semanticOnly.budget_policy.maximum_llm_evaluations >= 6)
+  assert.equal(fetchCalls, 7, 'semantic-only output must require one provider call and no repair')
+
   const exactDigitalQuery = 'Trova imprese di pulizia a Milano con sito ufficiale, criticità SEO e assenza di strumenti di tracciamento pubblicitario.'
   const digitalFixture = JSON.parse(
     fs.readFileSync('contracts/fixtures/commercial-search-plan.valid.json', 'utf8'),
+    // Test fixture is intentionally reshaped to reproduce a sparse provider payload.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ) as Record<string, any>
   digitalFixture.semantic_query_contract = semanticContract
   digitalFixture.seller = {
@@ -317,7 +360,7 @@ try {
   assert.equal(digitalExecutable.location, 'Milano')
   assert.equal(digitalExecutable.source_coverage?.status, 'supported')
   assert.ok(digitalExecutable.source_coverage?.adapter_ids.includes('legacy_digital_audit_v1'))
-  assert.equal(fetchCalls, 7, 'exact-query regression must use one mocked compiler response and no repair')
+  assert.equal(fetchCalls, 8, 'exact-query regression must use one mocked compiler response and no repair')
   console.log('Intent compiler normalization: safe structural + ontology causal completion; no repair call')
 } finally {
   globalThis.fetch = priorFetch
