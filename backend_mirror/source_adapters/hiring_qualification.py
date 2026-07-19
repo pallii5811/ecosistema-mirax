@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from backend_mirror.agents.portal_blacklist import is_blacklisted_domain, normalize_domain
 from backend_mirror.source_adapters.hiring_ats_parsers import detect_ats_vendor
 
-QUALIFICATION_VALIDATOR_EPOCH = 6
+QUALIFICATION_VALIDATOR_EPOCH = 7
 _EXPLICIT_SIZE_CONSTRAINT_RE = re.compile(
     r"\b(?:"
     r"pmi|sme|microimprese?|"

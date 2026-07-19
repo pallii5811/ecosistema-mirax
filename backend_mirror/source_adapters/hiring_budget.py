@@ -202,7 +202,10 @@ def reconcile_hiring_url_queue(state: HiringDiscoveryState) -> dict[str, int]:
             unique_seen.append(key)
 
     outcomes = url_outcomes_map(state)
-    revalidation = {canonical_url_key(item) for item in state.revalidation_queue if canonical_url_key(item)}
+    seeded_revalidation = {
+        canonical_url_key(item) for item in state.revalidation_queue if canonical_url_key(item)
+    }
+    revalidation = set(seeded_revalidation)
     retryable = {
         canonical_url_key(item)
         for item in (*state.retry_urls, *state.retryable_urls)
@@ -280,6 +283,9 @@ def reconcile_hiring_url_queue(state: HiringDiscoveryState) -> dict[str, int]:
     revalidation.intersection_update(seen_set)
     retryable.difference_update(terminal)
     revalidation.difference_update(terminal)
+    # Keep validator-epoch / explicit revalidation seeds even when the outcome is
+    # still marked terminal (e.g. prior ACCEPTED) so offline revalidation can run.
+    revalidation.update(seeded_revalidation.intersection(seen_set))
     pending = [key for key in unique_seen if key not in terminal and key not in retryable and key not in revalidation]
     retry_order = [key for key in unique_seen if key in retryable]
     retry_order.extend(sorted(retryable.difference(retry_order)))
