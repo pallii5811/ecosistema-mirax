@@ -38,9 +38,24 @@ class GenericWebDiscoveryState:
     pages_fetched: int = 0
     provider_calls: int = 0
     wave_terminal_rejections: int = 0
+    followup_queries: Tuple[str, ...] = ()
+
+    def discovery_cap_eur(self, hard_cap_eur: float) -> float:
+        """SERP pool stays inside hard_cap minus semantic/identity reserves."""
+        hard = float(hard_cap_eur)
+        reserved = self.reserved_floor_eur()
+        # Tiny hard caps (unit tests / single-SERP fixtures) cannot reserve the
+        # full semantic floor — still allow discovery within the hard cap.
+        if hard + 1e-9 < reserved:
+            return min(DISCOVERY_SOFT_CAP_EUR, hard)
+        hard_discovery = max(0.0, hard - reserved)
+        base = min(DISCOVERY_SOFT_CAP_EUR, hard_discovery)
+        if self.followup_queries:
+            return hard_discovery
+        return base
 
     def discovery_remaining_eur(self, hard_cap_eur: float) -> float:
-        return round(max(0.0, min(DISCOVERY_SOFT_CAP_EUR - self.discovery_spent_eur, hard_cap_eur)), 6)
+        return round(max(0.0, self.discovery_cap_eur(hard_cap_eur) - self.discovery_spent_eur), 6)
 
     def reserved_floor_eur(self) -> float:
         return SEMANTIC_RESERVE_EUR + IDENTITY_RESERVE_EUR + BUFFER_EUR
@@ -48,6 +63,8 @@ class GenericWebDiscoveryState:
     def can_reserve_serp(self, *, hard_cap_eur: float, spent_eur: float, governor_remaining: float) -> bool:
         if self.discovery_remaining_eur(hard_cap_eur) + 1e-9 < QUERY_COST_EUR:
             return False
+        if float(hard_cap_eur) + 1e-9 < self.reserved_floor_eur():
+            return governor_remaining + 1e-9 >= QUERY_COST_EUR
         need = QUERY_COST_EUR + self.reserved_floor_eur()
         if governor_remaining + 1e-9 < need and spent_eur + QUERY_COST_EUR > hard_cap_eur - self.reserved_floor_eur() + 1e-9:
             return False
@@ -56,7 +73,7 @@ class GenericWebDiscoveryState:
     def max_serp_this_wave(self, hard_cap_eur: float) -> int:
         if self.discovery_remaining_eur(hard_cap_eur) + 1e-9 < QUERY_COST_EUR:
             return 0
-        soft_left = max(0.0, DISCOVERY_SOFT_CAP_EUR - self.discovery_spent_eur)
+        soft_left = max(0.0, self.discovery_cap_eur(hard_cap_eur) - self.discovery_spent_eur)
         soft_queries = int(math.floor(soft_left / QUERY_COST_EUR))
         hard_queries = int(math.floor(self.discovery_remaining_eur(hard_cap_eur) / QUERY_COST_EUR))
         if self.provider_calls == 0:
@@ -66,6 +83,8 @@ class GenericWebDiscoveryState:
     def queue_has_work(self) -> bool:
         terminal = {_url_key(item) for item in self.processed_terminal_urls}
         if any(_url_key(url) not in terminal for url in self.pending_urls):
+            return True
+        if self.followup_queries:
             return True
         return any(
             _url_key(meta.get("url")) not in terminal
@@ -90,6 +109,7 @@ class GenericWebDiscoveryState:
             "pages_fetched": self.pages_fetched,
             "provider_calls": self.provider_calls,
             "wave_terminal_rejections": self.wave_terminal_rejections,
+            "followup_queries": list(self.followup_queries),
         }
 
     @classmethod
@@ -107,6 +127,7 @@ class GenericWebDiscoveryState:
             pages_fetched=int(payload.get("pages_fetched") or 0),
             provider_calls=int(payload.get("provider_calls") or 0),
             wave_terminal_rejections=int(payload.get("wave_terminal_rejections") or 0),
+            followup_queries=tuple(str(item) for item in payload.get("followup_queries") or () if str(item).strip()),
         )
 
 

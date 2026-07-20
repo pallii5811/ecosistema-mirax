@@ -611,6 +611,28 @@ def _candidate_official_domain(*, page_host: str, source_class: str, semantic_re
     return host
 
 
+def _enqueue_content_shell_followup(
+    state: GenericWebDiscoveryState,
+    *,
+    identity_hint: str,
+    failed_url: str,
+) -> None:
+    """When a SERP hit is a content shell, queue a targeted recovery query."""
+    company = (_text(identity_hint) or "").strip()
+    if not company or not _looks_like_company_name(company):
+        return
+    if len(state.followup_queries) >= 3:
+        return
+    failed_host = _host(failed_url)
+    exclude = f" -site:{failed_host}" if failed_host else ""
+    followup = f'"{company}" (chiude un round OR ha raccolto OR funding round OR seed round){exclude}'
+    existing = {item.casefold() for item in state.followup_queries}
+    existing.update(item.casefold() for item in state.executed_query_keys)
+    if followup.casefold() in existing:
+        return
+    state.followup_queries = (*state.followup_queries, followup)
+
+
 def _title_company_leading(title: str) -> str:
     leading = re.split(r"\s+[|–—-]\s+|:\s+", title or "", maxsplit=1)[0].strip()
     for raw in (leading.split(",", 1)[0].strip(), leading):
@@ -772,7 +794,17 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
         if key and key not in terminal and key not in seen:
             seen.add(key)
             accepted_hits.append(dict(meta))
-    pending_queries = list(queries[state.query_index:])
+    pending_queries = list(state.followup_queries) + list(queries[state.query_index:])
+    # Deduplicate while preserving follow-up priority.
+    seen_q: set[str] = set()
+    deduped_queries: List[str] = []
+    for query in pending_queries:
+        key = str(query or "").strip().casefold()
+        if not key or key in seen_q or key in {str(item).casefold() for item in state.executed_query_keys}:
+            continue
+        seen_q.add(key)
+        deduped_queries.append(str(query))
+    pending_queries = deduped_queries
     from cost_context import current_cost_governor
     governor = current_cost_governor()
     remaining_governor = float(getattr(governor, "remaining_eur", 0.0) or 0.0) if governor is not None else float("inf")
@@ -811,7 +843,11 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                     found_hits = _hits_from_urls(found_urls, query=query)
                 spent += QUERY_COST_EUR
             queries_run += 1
-            state.query_index += 1
+            if query in state.followup_queries:
+                state.followup_queries = tuple(item for item in state.followup_queries if item != query)
+            else:
+                state.query_index += 1
+            state.executed_query_keys = tuple(dict.fromkeys((*state.executed_query_keys, query)))
             state.provider_calls += 1
             state.discovery_spent_eur = round(float(state.discovery_spent_eur) + QUERY_COST_EUR, 6)
             if universal:
@@ -916,6 +952,11 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 "parse_status": "rejected_content",
                                 "rejection_code": "PAGE_CONTENT_MISSING",
                             })
+                            _enqueue_content_shell_followup(
+                                state,
+                                identity_hint=identity_hint,
+                                failed_url=final_url or url,
+                            )
                             state.wave_terminal_rejections += 1
                             continue
                     # Dynamic relationships are acquisition hypotheses only.

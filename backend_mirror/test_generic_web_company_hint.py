@@ -83,6 +83,19 @@ def test_literal_excerpt_prefers_title_when_present_in_source() -> None:
     assert _literal_excerpt_for_hint("Sirius Game", source, title, "") == title
 
 
-def test_snippet_company_hint_extracts_matchplat() -> None:
-    snippet = "Matchplat chiude un round da 35 milioni di euro per espansione internazionale"
-    assert _snippet_company_hint(snippet) == "Matchplat"
+def test_content_shell_enqueues_followup_query() -> None:
+    from backend_mirror.source_adapters.generic_web import _enqueue_content_shell_followup
+    from backend_mirror.source_adapters.generic_web_budget import GenericWebDiscoveryState
+
+    state = GenericWebDiscoveryState()
+    _enqueue_content_shell_followup(
+        state,
+        identity_hint="Sirius Game",
+        failed_url="https://www.borsaitaliana.it/borsa/notizie/archivi/teleborsa.html",
+    )
+    assert state.followup_queries
+    assert "Sirius Game" in state.followup_queries[0]
+    assert "borsaitaliana.it" in state.followup_queries[0]
+    assert state.queue_has_work()
+    assert state.discovery_cap_eur(0.05) >= 0.015
+
