@@ -3,6 +3,7 @@ from __future__ import annotations
 from backend_mirror.source_adapters.generic_web import (
     _company_identity_hint,
     _literal_excerpt_for_hint,
+    _looks_like_company_name,
     _snippet_company_hint,
     _title_company_leading,
     company_hint_present_in_source,
@@ -131,7 +132,17 @@ def test_can_reserve_serp_after_first_semantic_for_second_lead() -> None:
     state = GenericWebDiscoveryState(provider_calls=1, discovery_spent_eur=0.005, pages_fetched=12)
     # Mirror live Q7: €0.02 spent, €0.03 remaining, soft discovery still open.
     assert state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.02, governor_remaining=0.03)
+    # Live 1/2 strand: €0.0276 spent → €0.0224 remaining must still unlock a SERP.
+    assert state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.0276, governor_remaining=0.0224)
     assert not state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.035, governor_remaining=0.015)
+
+
+def test_planeat_foodtech_headline_extracts_company() -> None:
+    title = "La foodtech italiana PlanEat chiude un round da 2 milioni"
+    snippet = "La foodtech italiana PlanEat chiude un round seed."
+    assert _snippet_company_hint(title) == "PlanEat"
+    assert _company_identity_hint(title=title, snippet=snippet, html="<html></html>") == "PlanEat"
+    assert not _looks_like_company_name("foodtech italiana PlanEat")
 
 
 def test_discovery_soft_cap_lifts_after_first_wave_drained() -> None:

@@ -584,12 +584,20 @@ def company_hint_present_in_source(hint: str, source_text: str) -> bool:
 
 
 _STARTUP_DESCRIPTOR = (
-    r"(?:italiana|italo-americana|edutech|deeptech|fintech|biotech|cleantech|saas|ai|tech)?"
+    r"(?:italiana|italo-americana|edutech|deeptech|fintech|foodtech|biotech|cleantech|saas|ai|tech)?"
 )
 _SNIPPET_COMPANY_PATTERNS = (
     # Prefer "la startup … Name chiude/ha/annuncia" over topical prefixes.
     re.compile(
         rf"\bla startup(?:\s+{_STARTUP_DESCRIPTOR})?\s+"
+        r"([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+"
+        r"(?:chiude|ha|annuncia|raccoglie)\b",
+        re.I,
+    ),
+    # "La foodtech italiana PlanEat chiude …" (sector label, no "startup" token).
+    re.compile(
+        r"\b(?:la\s+)?(?:foodtech|fintech|edutech|deeptech|cleantech|biotech)"
+        r"(?:\s+italiana|\s+italo-americana)?\s+"
         r"([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+"
         r"(?:chiude|ha|annuncia|raccoglie)\b",
         re.I,
@@ -652,6 +660,12 @@ def _looks_like_company_name(value: str) -> bool:
     if re.fullmatch(
         r"(?:digital\s+)?(?:bio|fin|edu|clean|deep|health|food)?tech|"
         r"admissions?\s+process|just a moment(?:\s+\.+)?|equity crowdfunding",
+        text,
+        re.I,
+    ):
+        return False
+    if re.match(
+        r"^(?:foodtech|fintech|edutech|deeptech|cleantech|biotech)\b",
         text,
         re.I,
     ):
@@ -739,6 +753,13 @@ def _enqueue_content_shell_followup(
     if followup.casefold() in existing:
         return
     state.followup_queries = (*state.followup_queries, followup)
+
+
+def _remember_candidate_source_url(state: GenericWebDiscoveryState, url: str) -> None:
+    key = (_text(url) or "").strip()
+    if not key:
+        return
+    state.candidate_source_urls = tuple(dict.fromkeys((*state.candidate_source_urls, key)))
 
 
 def _title_company_leading(title: str) -> str:
@@ -842,6 +863,7 @@ def _append_semantic_deferred_news_record(
     )
     row = _apply_free_identity(row, request)
     records.append(row)
+    _remember_candidate_source_url(state, final_url)
     return True
 
 
@@ -926,6 +948,42 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
         if key and key not in terminal and key not in seen:
             seen.add(key)
             accepted_hits.append(dict(meta))
+    # Time-limit salvage: pages that already emitted candidates were marked
+    # terminal before orchestrator finished semantic. Re-open them unless the
+    # company domain is already in processed_employer_keys.
+    if (
+        universal
+        and request.technical_filters.get("semantic_authority_required") is True
+        and not accepted_hits
+        and state.candidate_source_urls
+    ):
+        processed_domains = {
+            str(item).split("domain:", 1)[-1].casefold().removeprefix("www.")
+            for item in (request.technical_filters.get("processed_employer_keys") or ())
+            if str(item).startswith("domain:")
+        }
+        salvage_keys: List[str] = []
+        for url in state.candidate_source_urls:
+            key = str(url).strip().lower().rstrip("/")
+            if not key or key in seen:
+                continue
+            meta = raw_meta.get(key) or {"url": url, "title": "", "snippet": "", "source_type": "search", "provider": "resume"}
+            hint = _serp_company_hint(title=str(meta.get("title") or ""), snippet=str(meta.get("snippet") or ""))
+            compact = re.sub(r"[^a-z0-9]", "", (hint or "").casefold())
+            if compact and any(compact in domain.replace(".", "") or domain.replace(".", "") in compact for domain in processed_domains):
+                continue
+            seen.add(key)
+            salvage_keys.append(key)
+            accepted_hits.append(dict(meta))
+            if len(salvage_keys) >= max(2, min(limit, URLS_PER_WAVE)):
+                break
+        if salvage_keys:
+            salvage_set = set(salvage_keys)
+            state.processed_terminal_urls = tuple(
+                item for item in state.processed_terminal_urls
+                if str(item).strip().lower().rstrip("/") not in salvage_set
+            )
+            terminal = {str(item).strip().lower().rstrip("/") for item in state.processed_terminal_urls}
     pending_queries = list(state.followup_queries) + list(queries[state.query_index:])
     # Deduplicate while preserving follow-up priority.
     seen_q: set[str] = set()
@@ -1204,6 +1262,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 )
                                 row = _apply_free_identity(row, request)
                                 records.append(row)
+                                _remember_candidate_source_url(state, str(fetch_provenance.get("final_url") or final_url or url))
                             if len(records) > structured_before:
                                 continue
                         provider_warnings.append("SEMANTIC_SOURCE_PROVENANCE_INCOMPLETE")
@@ -1302,6 +1361,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                         )
                         row = _apply_free_identity(row, request)
                         records.append(row)
+                        _remember_candidate_source_url(state, str(fetch_provenance.get("final_url") or final_url or url))
                     if (
                         len(records) == page_records_before
                         and request.technical_filters.get("semantic_authority_required") is True

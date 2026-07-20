@@ -39,6 +39,10 @@ class GenericWebDiscoveryState:
     provider_calls: int = 0
     wave_terminal_rejections: int = 0
     followup_queries: Tuple[str, ...] = ()
+    # URLs that emitted raw candidates. On time-limit resume they must be
+    # re-openable — fetch marks them terminal before orchestrator can finish
+    # semantic qualification, which stranded Invertix after Sirius at 1/2.
+    candidate_source_urls: Tuple[str, ...] = ()
 
     def discovery_cap_eur(self, hard_cap_eur: float) -> float:
         """SERP pool stays inside hard_cap minus semantic/identity reserves."""
@@ -80,10 +84,12 @@ class GenericWebDiscoveryState:
         if self.followup_queries:
             return governor_remaining + 1e-9 >= QUERY_COST_EUR
         # After the first SERP (and typically one semantic), the cold-start floor
-        # is partly consumed. Still allow another discovery query when remaining
-        # covers SERP + one more interpretation (~€0.015–0.016 observed).
+        # is partly consumed. Allow another discovery query when remaining covers
+        # SERP + one Haiku interpretation. Live funding pages settle ~€0.012–0.016;
+        # requiring the full €0.018 reserve left 1/2 searches stranded at ~€0.022.
         if self.provider_calls >= 1 and float(spent_eur) + 1e-9 >= QUERY_COST_EUR:
-            continued_need = QUERY_COST_EUR + SEMANTIC_RESERVE_EUR
+            continued_semantic = min(SEMANTIC_RESERVE_EUR, 0.014)
+            continued_need = QUERY_COST_EUR + continued_semantic
             return governor_remaining + 1e-9 >= continued_need
         need = QUERY_COST_EUR + self.reserved_floor_eur()
         if governor_remaining + 1e-9 < need and spent_eur + QUERY_COST_EUR > hard_cap_eur - self.reserved_floor_eur() + 1e-9:
@@ -130,6 +136,7 @@ class GenericWebDiscoveryState:
             "provider_calls": self.provider_calls,
             "wave_terminal_rejections": self.wave_terminal_rejections,
             "followup_queries": list(self.followup_queries),
+            "candidate_source_urls": list(self.candidate_source_urls),
         }
 
     @classmethod
@@ -148,6 +155,9 @@ class GenericWebDiscoveryState:
             provider_calls=int(payload.get("provider_calls") or 0),
             wave_terminal_rejections=int(payload.get("wave_terminal_rejections") or 0),
             followup_queries=tuple(str(item) for item in payload.get("followup_queries") or () if str(item).strip()),
+            candidate_source_urls=tuple(
+                str(item) for item in payload.get("candidate_source_urls") or () if str(item).strip()
+            ),
         )
 
 
