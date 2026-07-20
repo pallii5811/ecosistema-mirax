@@ -69,6 +69,12 @@ class GenericWebDiscoveryState:
         # reserve floor. Only require room for the SERP itself.
         if self.followup_queries:
             return governor_remaining + 1e-9 >= QUERY_COST_EUR
+        # After the first SERP (and typically one semantic), the cold-start floor
+        # is partly consumed. Still allow another discovery query when remaining
+        # covers SERP + one more interpretation (~€0.015–0.016 observed).
+        if self.provider_calls >= 1 and float(spent_eur) + 1e-9 >= QUERY_COST_EUR:
+            continued_need = QUERY_COST_EUR + 0.016
+            return governor_remaining + 1e-9 >= continued_need
         need = QUERY_COST_EUR + self.reserved_floor_eur()
         if governor_remaining + 1e-9 < need and spent_eur + QUERY_COST_EUR > hard_cap_eur - self.reserved_floor_eur() + 1e-9:
             return False
