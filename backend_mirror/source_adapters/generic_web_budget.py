@@ -10,7 +10,10 @@ from typing import Any, Mapping, MutableMapping, Sequence, Tuple
 from .contracts import DiscoveryCursor
 
 QUERY_COST_EUR = 0.005
-DISCOVERY_SOFT_CAP_EUR = 0.010
+# Keep enough SERP headroom for 2+ grounded startups under a €0.05 hard cap
+# after semantic/identity reserves (~€0.030). Two queries (€0.010) was starving
+# the second lead once the first SERP wave terminated.
+DISCOVERY_SOFT_CAP_EUR = 0.020
 SEMANTIC_RESERVE_EUR = 0.020
 IDENTITY_RESERVE_EUR = 0.005
 BUFFER_EUR = 0.005
