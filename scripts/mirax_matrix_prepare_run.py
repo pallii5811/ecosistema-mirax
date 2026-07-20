@@ -185,7 +185,7 @@ def clear_actives() -> None:
             sb.table("searches").update({"status": "cancelled"}).eq("id", j["id"]).execute()
 
 
-def build_plan(spec_id: str, hard: float = 0.10) -> tuple[dict, dict]:
+def build_plan(spec_id: str, hard: float = 0.05) -> tuple[dict, dict]:
     spec = SPECS[spec_id]
     plan = copy.deepcopy(FIXTURE)
     plan["search_id"] = str(uuid.uuid4())
@@ -290,7 +290,7 @@ def prepare_and_run(spec_id: str) -> dict:
     clear_actives()
     plan, spec = build_plan(spec_id)
     max_leads = 2
-    hard = 0.10
+    hard = 0.05
     search_id = str(uuid.uuid4())
     run_id = str(uuid.uuid4())
     canary_id = str(uuid.uuid4())
@@ -407,7 +407,7 @@ def prepare_and_run(spec_id: str) -> dict:
         "MIRAX_WORKER_DISABLED": "0",
         "MIRAX_SEARCH_DISABLED": "0",
         "MIRAX_SOURCE_ADAPTER_SHADOW_ENABLED": "1",
-        "MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR": "0.10",
+        "MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR": "0.05",
         "MIRAX_ORCHESTRATOR_MAX_SECONDS": "300",
         "PYTHONUNBUFFERED": "1",
         "PYTHONPATH": str(ROOT),
