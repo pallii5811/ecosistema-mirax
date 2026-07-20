@@ -630,6 +630,14 @@ def _looks_like_company_name(value: str) -> bool:
         return False
     if re.match(r"^(Le|La|Lo|Gli|I|Un|Una|Uno|Più|Molte|Tutte|Tutti|Press|News|Blog|Home)\b", text, re.I):
         return False
+    # Job titles must never become funding followup targets.
+    if re.search(
+        r"\b(engineer|developer|developer|ingegnere|sviluppatore|manager|director|recruiter|"
+        r"intern|stage|junior|senior|fullstack|full-stack|backend|frontend|devops)\b",
+        text,
+        re.I,
+    ):
+        return False
     if re.search(
         r"\b(milioni di investimenti|startup italiane|mercato|economia|notizie|modalit[aà]|adesione|iscrizione)\b",
         text,
@@ -997,7 +1005,14 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                     page_host = _host(final_url)
                     if request.technical_filters.get("semantic_authority_required") is True:
                         identity_hint = _company_identity_hint(title=title, snippet=snippet, html=html)
-                        if identity_hint and not company_hint_present_in_source(identity_hint, visible_text):
+                        shell_host = any(
+                            page_host == suffix or page_host.endswith("." + suffix)
+                            for suffix in _CONTENT_SHELL_HOST_SUFFIXES
+                        )
+                        missing_company = bool(identity_hint) and not company_hint_present_in_source(
+                            identity_hint, visible_text
+                        )
+                        if identity_hint and (missing_company or shell_host):
                             filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
                             _record_url_outcome(filters, {
                                 "url": url,

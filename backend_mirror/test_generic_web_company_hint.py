@@ -137,6 +137,15 @@ def test_discovery_soft_cap_lifts_after_first_wave_drained() -> None:
     assert state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.015, governor_remaining=0.035)
 
 
+def test_looks_like_company_rejects_job_titles() -> None:
+    from backend_mirror.source_adapters.generic_web import _looks_like_company_name
+
+    assert _looks_like_company_name("Sirius Game")
+    assert not _looks_like_company_name("AI Engineer")
+    assert not _looks_like_company_name("Software Developer")
+    assert not _looks_like_company_name("Sales Manager")
+
+
 def test_diversified_funding_queries_skip_raw_nl_and_market_roundups() -> None:
     from backend_mirror.source_adapters.contracts import AdapterDiscoveryRequest
     from backend_mirror.source_adapters.generic_web import diversified_queries
