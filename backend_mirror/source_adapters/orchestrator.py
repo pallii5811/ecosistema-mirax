@@ -1097,7 +1097,31 @@ class UniversalSourceOrchestrator:
                         })
                         continue
                     if request.technical_filters.get("semantic_authority_required") is True:
-                        decision = await semantic_authority_qualifier(merged, request)
+                        paid_attempts = int(request.technical_filters.get("semantic_paid_attempts") or 0)
+                        max_paid = max(2, int(request.requested_count) + 1)
+                        if paid_attempts >= max_paid:
+                            decision = QualificationDecision(
+                                False, False, False, "SEMANTIC_BUDGET_EXCEEDED",
+                                reasons=("semantic_paid_attempt_cap",),
+                            )
+                        else:
+                            before_cost = 0.0
+                            try:
+                                from cost_context import current_cost_governor
+                                gov = current_cost_governor()
+                                before_cost = float(getattr(gov, "committed_micro_eur", 0) or 0) / 1_000_000
+                            except Exception:
+                                before_cost = 0.0
+                            decision = await semantic_authority_qualifier(merged, request)
+                            try:
+                                from cost_context import current_cost_governor
+                                gov = current_cost_governor()
+                                after_cost = float(getattr(gov, "committed_micro_eur", 0) or 0) / 1_000_000
+                                if after_cost > before_cost + 1e-9:
+                                    filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
+                                    filters["semantic_paid_attempts"] = paid_attempts + 1
+                            except Exception:
+                                pass
                     else:
                         decision = await self.qualifier(merged)
                     if decision.semantic_grounding and decision.semantic_grounding.get("accepted"):

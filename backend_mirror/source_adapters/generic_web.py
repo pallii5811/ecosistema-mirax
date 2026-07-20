@@ -358,6 +358,8 @@ _PREFERRED_NEWS_HOST_SUFFIXES = (
 def _serp_fetch_priority(hit: Any) -> Tuple[int, int, str]:
     """Fetch real articles before exchange/archive shells in the same SERP wave."""
     url = str(getattr(hit, "url", "") or "")
+    title = str(getattr(hit, "title", "") or "")
+    snippet = str(getattr(hit, "snippet", "") or "")
     host = _host(url)
     if any(host == suffix or host.endswith("." + suffix) for suffix in _CONTENT_SHELL_HOST_SUFFIXES):
         tier = 2
@@ -365,7 +367,13 @@ def _serp_fetch_priority(hit: Any) -> Tuple[int, int, str]:
         tier = 0
     else:
         tier = 1
-    return (tier, len(url), url.casefold())
+    headline = f"{title} {snippet}"
+    event_boost = 0 if re.search(
+        r"\b(chiude un round|ha raccolto|seed round|pre-seed|raccoglie|funding round)\b",
+        headline,
+        re.I,
+    ) else 1
+    return (tier, event_boost, url.casefold())
 
 
 def _hits_from_urls(urls: Sequence[str], *, query: str) -> List[Dict[str, str]]:
