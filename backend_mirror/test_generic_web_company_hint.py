@@ -96,6 +96,20 @@ def test_content_shell_enqueues_followup_query() -> None:
     assert state.followup_queries
     assert "Sirius Game" in state.followup_queries[0]
     assert "borsaitaliana.it" in state.followup_queries[0]
+    # Same company must not consume the second recovery slot.
+    _enqueue_content_shell_followup(
+        state,
+        identity_hint="Sirius Game",
+        failed_url="https://www.borsaitaliana.it/other.html",
+    )
+    assert len(state.followup_queries) == 1
+    _enqueue_content_shell_followup(
+        state,
+        identity_hint="Invertix",
+        failed_url="https://startupitalia.eu/invertix",
+    )
+    assert len(state.followup_queries) == 2
+    assert "Invertix" in state.followup_queries[1]
 
 
 def test_serp_fetch_priority_prefers_news_over_exchange_shell() -> None:
