@@ -110,3 +110,12 @@ def test_serp_fetch_priority_prefers_news_over_exchange_shell() -> None:
     assert ranked[0].url == news.url
     assert ranked[-1].url == shell.url
 
+
+def test_can_reserve_serp_after_first_semantic_for_second_lead() -> None:
+    from backend_mirror.source_adapters.generic_web_budget import GenericWebDiscoveryState
+
+    state = GenericWebDiscoveryState(provider_calls=1, discovery_spent_eur=0.005, pages_fetched=12)
+    # Mirror live Q7: €0.02 spent, €0.03 remaining, soft discovery still open.
+    assert state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.02, governor_remaining=0.03)
+    assert not state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.04, governor_remaining=0.01)
+
