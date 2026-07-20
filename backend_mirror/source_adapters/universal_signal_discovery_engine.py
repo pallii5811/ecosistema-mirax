@@ -494,8 +494,24 @@ class UniversalSignalDiscoveryEngine:
             if result.status == "completed_requested_count" or len(qualified_by_key) >= spec.requested_count:
                 notes.append("requested_count_reached")
                 break
-            if result.status in {"partial_budget_exhausted", "partial_time_limit"}:
+            if result.status in {"partial_budget_exhausted", "partial_time_limit", "partial_sources_exhausted"}:
                 notes.append(result.status)
+                pages = int(telemetry_bucket.get("pages_opened_after_prefilter") or 0)
+                raw_hits = int(
+                    telemetry_bucket.get("raw_discovery_hits")
+                    or (result.progress.raw_candidate_count if result.progress else 0)
+                    or 0
+                )
+                # Empty SERP / zero-work time-box must not trap the whole run on
+                # one dead CRM hypothesis across worker resumes.
+                if gained <= 0 and pages <= 0 and raw_hits <= 0:
+                    stats.aborted = True
+                    notes.append(f"aborted_empty_serp:{strategy.strategy_id}")
+                    continue
+                if result.status == "partial_sources_exhausted" and gained <= 0:
+                    stats.aborted = True
+                    notes.append(f"aborted_exhausted:{strategy.strategy_id}")
+                    continue
                 break
 
         if last_result is None:

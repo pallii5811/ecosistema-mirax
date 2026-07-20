@@ -334,12 +334,13 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
             "salesforce.com", "hubspot.com", "microsoft.com", "zoho.com", "pipedrive.com",
         )
         crm_queries = (
-            '"ricerca nuovo CRM" Italia azienda -Salesforce -HubSpot',
-            '"selezione piattaforma CRM" OR "migrazione CRM" Italia azienda',
-            '"sostituzione CRM" OR "implementazione nuovo CRM" Italia',
-            '"gara CRM" OR "RFP CRM" Italia azienda',
-            '"partner per implementazione CRM" Italia azienda',
-            '"CRM manager" OR "responsabile CRM" migrazione implementazione Italia',
+            # Exact "ricerca nuovo CRM" is a Serper zero-hit; prefer adoption verbs.
+            'azienda Italia ("adotta" OR "sceglie" OR "implementa") CRM -Salesforce -HubSpot',
+            '"sceglie" CRM OR "adotta" CRM (Group OR Spa OR Srl OR azienda) Italia -Salesforce -HubSpot',
+            'site:.it ("comunicato stampa" OR newsroom) CRM (adotta OR sceglie OR implementa OR migrazione)',
+            '"migrazione CRM" OR "implementazione CRM" (annuncia OR sceglie OR adotta) Italia azienda -guida',
+            '"nuovo CRM" (sceglie OR adotta OR implementa) Italia (spa OR srl OR group) -Salesforce -HubSpot',
+            '"gara CRM" OR "bando" CRM OR "RFP CRM" Italia azienda -Salesforce -HubSpot',
         )
         for idx, query in enumerate(crm_queries):
             strategies.insert(

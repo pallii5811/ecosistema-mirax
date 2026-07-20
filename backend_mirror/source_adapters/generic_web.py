@@ -1706,12 +1706,39 @@ class GenericWebResearchAdapter:
                 break
         final_state = load_generic_web_state(request.cursor, request.technical_filters)
         filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
+        from .universal_strategy_queries import universal_strategy_queries_from_filters
+
+        query_pool = universal_strategy_queries_from_filters(
+            request.technical_filters,
+            signal_ids=request.signal_ids,
+        ) or diversified_queries(request)
+        executed = {str(x).strip().casefold() for x in final_state.executed_query_keys if str(x).strip()}
+        remaining_queries = [
+            q
+            for q in list(final_state.followup_queries) + list(query_pool[final_state.query_index :])
+            if str(q).strip() and str(q).strip().casefold() not in executed
+        ]
+        dead_end = (
+            universal
+            and len(candidates) == 0
+            and not final_state.queue_has_work()
+            and not remaining_queries
+        )
         return AdapterExecutionResult(
             adapter_id=self.capability.adapter_id, adapter_version=self.capability.adapter_version,
             candidates=tuple(candidates),
             exhaustion=SourceExhaustion(
-                exhausted=False, scope="partition",
-                reason="requested_count_reached_partial_coverage" if len(candidates) >= request.requested_count else "sample_partition_complete_not_global_exhaustion",
+                exhausted=dead_end,
+                scope="partition",
+                reason=(
+                    "empty_serp_and_queue_exhausted"
+                    if dead_end
+                    else (
+                        "requested_count_reached_partial_coverage"
+                        if len(candidates) >= request.requested_count
+                        else "sample_partition_complete_not_global_exhaustion"
+                    )
+                ),
                 authoritative=False,
                 next_cursor=encode_generic_web_cursor(final_state),
             ),
