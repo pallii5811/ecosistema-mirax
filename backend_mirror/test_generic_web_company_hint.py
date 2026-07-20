@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from backend_mirror.source_adapters.generic_web import (
     _company_identity_hint,
+    _literal_excerpt_for_hint,
     _snippet_company_hint,
     company_hint_present_in_source,
 )
@@ -56,6 +57,12 @@ def test_identity_hint_does_not_return_unrelated_publisher() -> None:
     title = "Sirius Game, la startup edutech chiude un round da 1,3 milioni"
     snippet = "Sirius Game, la startup edutech chiude un round da 1,3 milioni di euro guidato da CDP."
     assert _company_identity_hint(title=title, snippet=snippet, html=html) == "Sirius Game"
+
+
+def test_literal_excerpt_prefers_title_when_present_in_source() -> None:
+    source = "Sirius Game, la startup edutech chiude un round da 1,3 milioni di euro."
+    title = "Sirius Game, la startup edutech chiude un round da 1,3 milioni"
+    assert _literal_excerpt_for_hint("Sirius Game", source, title, "") == title
 
 
 def test_snippet_company_hint_extracts_matchplat() -> None:

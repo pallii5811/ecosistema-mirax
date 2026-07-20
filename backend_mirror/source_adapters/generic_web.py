@@ -26,6 +26,7 @@ from .contracts import (
 )
 from .generic_web_budget import (
     BUFFER_EUR,
+    GenericWebDiscoveryState,
     IDENTITY_RESERVE_EUR,
     QUERY_COST_EUR,
     SEMANTIC_RESERVE_EUR,
@@ -574,6 +575,87 @@ def _title_company_leading(title: str) -> str:
     return ""
 
 
+def _literal_excerpt_for_hint(hint: str, visible_text: str, title: str, snippet: str) -> str:
+    for candidate in (title.strip(), snippet.strip()):
+        if candidate and candidate in visible_text:
+            return candidate[:1200]
+    tokens = _company_core_tokens(hint)
+    if not tokens or not visible_text:
+        return ""
+    needle = next(iter(sorted(tokens, key=len, reverse=True)))
+    idx = visible_text.casefold().find(needle.casefold())
+    if idx < 0:
+        return ""
+    start = max(0, idx - 180)
+    return visible_text[start : start + 900].strip()
+
+
+def _append_semantic_deferred_news_record(
+    *,
+    records: List[Mapping[str, Any]],
+    request: AdapterDiscoveryRequest,
+    company_hint: str,
+    visible_text: str,
+    title: str,
+    snippet: str,
+    html: str,
+    final_url: str,
+    page_host: str,
+    fetch_provenance: Mapping[str, Any],
+    scope: str,
+    state: GenericWebDiscoveryState,
+    provider_query: str,
+    search_provider: str,
+    item: Any,
+) -> bool:
+    published = _structured_page_date(html)
+    if not visible_text or not published:
+        return False
+    excerpt = _literal_excerpt_for_hint(company_hint, visible_text, title, snippet)
+    if not excerpt:
+        return False
+    publisher = str(item.get("publisher") or title or page_host) if isinstance(item, Mapping) else (title or page_host)
+    row: Dict[str, Any] = {
+        "company_name": company_hint,
+        "official_domain": page_host,
+        "official_domain_verified": False,
+        "entity_class": "operating_company",
+        "matched_signal_ids": list(request.signal_ids),
+        "published_at": published,
+        "geography": next((g for g in request.geographies if g.casefold() not in {"italy", "italia"}), ""),
+        "source_url": final_url,
+        "source_publisher": publisher,
+        "source_class": "recognized_news",
+        "evidence_excerpt": excerpt,
+        "extraction_method": "semantic_deferred_news_candidate",
+        "source_text": visible_text[:250_000],
+        "page_title": title,
+        "search_snippet": snippet,
+        "query_origin": request.technical_filters.get("query_origin") or request.query,
+        "parent_query": request.technical_filters.get("parent_query") or request.query,
+        "discovery_round": int(request.technical_filters.get("discovery_round") or 1),
+        "provider_query": provider_query,
+        "search_provider": search_provider,
+    }
+    attach_generic_provenance(
+        row,
+        adapter_id="generic_web_research_v1",
+        search_scope=scope,
+        execution_round=int(request.technical_filters.get("discovery_round") or state.provider_calls or 1),
+        provider_call_id=f"serp:{scope}:{state.provider_calls}",
+        page_fetch_id_value=page_fetch_id(
+            search_scope=scope,
+            url=str(fetch_provenance["final_url"]),
+            wave_index=state.pages_fetched,
+        ),
+        source_text=visible_text,
+        cursor_version=request.cursor.value if request.cursor else "generic-web:v2",
+    )
+    row = _apply_free_identity(row, request)
+    records.append(row)
+    return True
+
+
 def _company_identity_hint(*, title: str, snippet: str, html: str) -> str:
     """Return only an identity explicitly present in acquired evidence."""
     visible = _text(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)) or ""
@@ -853,13 +935,16 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                         provider_warnings.append("COMPANY_IDENTITY_UNRESOLVED")
                         state.wave_terminal_rejections += 1
                         continue
+                    page_published = _structured_page_date(html)
+                    page_records_before = len(records)
                     events = extract_evidence_from_text(
-                        text=html,
+                        text=visible_text,
                         source_url=final_url,
                         source_class="recognized_news",
                         publisher=title or _host(final_url),
                         company_name_hint=company_hint,
-                        requested_signals=(),
+                        page_date=page_published,
+                        requested_signals=request.signal_ids,
                     )
                     if not events and snippet and request.technical_filters.get("semantic_authority_required") is not True:
                         events = extract_evidence_from_text(
@@ -868,7 +953,8 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             source_class="recognized_news",
                             publisher=title or _host(final_url),
                             company_name_hint=company_hint,
-                            requested_signals=(),
+                            page_date=page_published,
+                            requested_signals=request.signal_ids,
                         )
                     # Never invent publisher host as the target company domain.
                     for event in events:
@@ -932,6 +1018,28 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                         )
                         row = _apply_free_identity(row, request)
                         records.append(row)
+                    if (
+                        len(records) == page_records_before
+                        and request.technical_filters.get("semantic_authority_required") is True
+                    ):
+                        if not _append_semantic_deferred_news_record(
+                            records=records,
+                            request=request,
+                            company_hint=company_hint,
+                            visible_text=visible_text,
+                            title=title,
+                            snippet=snippet,
+                            html=html,
+                            final_url=final_url,
+                            page_host=page_host or "",
+                            fetch_provenance=fetch_provenance,
+                            scope=scope,
+                            state=state,
+                            provider_query=provider_query,
+                            search_provider=search_provider,
+                            item=item,
+                        ):
+                            state.wave_terminal_rejections += 1
                 else:
                     records.extend(parse_primary_evidence_page(html, final_url, request))
                 filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}

@@ -278,6 +278,85 @@ def test_open_world_acquisition_uses_structured_target_not_publisher() -> None:
     assert "destinate nuove risorse" in record["source_text"]
 
 
+def test_open_world_funding_news_uses_page_date_when_body_has_no_date() -> None:
+    published = date.today().isoformat()
+    html = (
+        f'<html><head><meta property="article:published_time" content="{published}T10:00:00Z"></head>'
+        "<body><p>Sirius Game, la startup edutech chiude un round da 1,3 milioni di euro "
+        "guidato da CDP Venture Capital.</p></body></html>"
+    )
+    funding_request = AdapterDiscoveryRequest(
+        intent="commercial_search",
+        signal_ids=("funding",),
+        signal_match_mode="any",
+        geographies=("Italia",),
+        freshness_max_age_days=365,
+        requested_count=2,
+        budget_eur=0.05,
+        query="Trovami startup che stanno raccogliendo fondi di investimento.",
+        technical_filters={
+            "universal_engine": True,
+            "semantic_authority_required": True,
+            "semantic_query_contract": {"required_relationships": ["startup_raising_or_receiving_investment"]},
+            "universal_search_queries": ("startup round investimento italia",),
+            "universal_serp_search": lambda _query, _limit: [{
+                "title": "Sirius Game, la startup edutech chiude un round da 1,3 milioni",
+                "url": "https://finanza.repubblica.it/news/sirius-game-round",
+                "snippet": "Sirius Game, la startup edutech chiude un round da 1,3 milioni di euro guidato da CDP.",
+                "publisher": "La Repubblica",
+                "provider": "fixture",
+            }],
+            "universal_page_fetch": lambda url: (html, url),
+            "universal_prefilter_telemetry": {},
+        },
+    )
+    result = asyncio.run(_default_generic_provider(funding_request, 0, 10))
+    assert len(result.records) == 1
+    record = result.records[0]
+    assert record["company_name"] == "Sirius Game"
+    assert record["published_at"] == published
+    assert "round" in record["evidence_excerpt"].casefold()
+    assert "Sirius Game" in record["source_text"]
+
+
+def test_semantic_deferred_news_candidate_when_extractor_misses_signal() -> None:
+    published = date.today().isoformat()
+    html = (
+        f'<html><head><meta property="article:published_time" content="{published}T10:00:00Z"></head>'
+        "<body><p>Matchplat annuncia una operazione di crescita con partner industriali.</p></body></html>"
+    )
+    funding_request = AdapterDiscoveryRequest(
+        intent="commercial_search",
+        signal_ids=("funding",),
+        signal_match_mode="any",
+        geographies=("Italia",),
+        freshness_max_age_days=365,
+        requested_count=2,
+        budget_eur=0.05,
+        query="Trovami startup che stanno raccogliendo fondi di investimento.",
+        technical_filters={
+            "universal_engine": True,
+            "semantic_authority_required": True,
+            "universal_search_queries": ("startup investimento italia",),
+            "universal_serp_search": lambda _query, _limit: [{
+                "title": "Matchplat, startup fintech annuncia operazione di crescita",
+                "url": "https://news.test/matchplat",
+                "snippet": "Matchplat annuncia una operazione di crescita con partner industriali.",
+                "publisher": "News Test",
+                "provider": "fixture",
+            }],
+            "universal_page_fetch": lambda url: (html, url),
+            "universal_prefilter_telemetry": {},
+        },
+    )
+    result = asyncio.run(_default_generic_provider(funding_request, 0, 10))
+    assert len(result.records) == 1
+    record = result.records[0]
+    assert record["company_name"] == "Matchplat"
+    assert record["extraction_method"] == "semantic_deferred_news_candidate"
+    assert record["evidence_excerpt"] in record["source_text"]
+
+
 def test_structured_identity_never_promotes_article_publisher() -> None:
     article = {
         "@context": "https://schema.org", "@type": "NewsArticle",
