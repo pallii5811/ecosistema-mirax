@@ -15,8 +15,8 @@ QUERY_COST_EUR = 0.005
 # exhausted the €0.05 hard budget before the second lead could interpret.
 DISCOVERY_SOFT_CAP_EUR = 0.015
 SEMANTIC_RESERVE_EUR = 0.018
-IDENTITY_RESERVE_EUR = 0.005
-BUFFER_EUR = 0.005
+IDENTITY_RESERVE_EUR = 0.0
+BUFFER_EUR = 0.002
 INITIAL_SERP_QUERIES = 1
 URLS_PER_WAVE = 5
 TERMINAL_URL_STATES = frozenset({"fetched", "rejected_prefilter", "rejected_fetch", "rejected_parse"})

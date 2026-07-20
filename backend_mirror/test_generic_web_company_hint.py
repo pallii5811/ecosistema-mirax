@@ -136,3 +136,29 @@ def test_discovery_soft_cap_lifts_after_first_wave_drained() -> None:
     assert state.discovery_remaining_eur(0.05) + 1e-9 >= 0.005
     assert state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.015, governor_remaining=0.035)
 
+
+def test_diversified_funding_queries_skip_raw_nl_and_market_roundups() -> None:
+    from backend_mirror.source_adapters.contracts import AdapterDiscoveryRequest
+    from backend_mirror.source_adapters.generic_web import diversified_queries
+
+    request = AdapterDiscoveryRequest(
+        intent="funding",
+        signal_ids=("funding",),
+        signal_match_mode="any",
+        freshness_max_age_days=180,
+        query="Trovami startup che stanno raccogliendo fondi di investimento.",
+        requested_count=2,
+        geographies=("Italia",),
+        sectors=("startup", "tech"),
+        budget_eur=0.05,
+        technical_filters={
+            "universal_search_queries": [
+                'startup Italia ("ha raccolto" OR "chiude un round") -investitori -fondo -banca',
+            ],
+        },
+    )
+    queries = diversified_queries(request)
+    assert queries
+    assert all("Trovami startup" not in q for q in queries)
+    assert all("comunicato OR news OR aggiornamento" not in q for q in queries)
+

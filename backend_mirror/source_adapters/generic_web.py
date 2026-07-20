@@ -224,7 +224,7 @@ def parse_primary_evidence_page(
 def diversified_queries(request: AdapterDiscoveryRequest) -> Tuple[str, ...]:
     from .universal_strategy_queries import universal_strategy_queries_from_filters
 
-    geography = " ".join(request.geographies)
+    geography = " ".join(g for g in request.geographies if g.casefold() not in {"italy", "italia"}) or "Italia"
     sector = " ".join(request.sectors)
     phrases = [phrase for signal in request.signal_ids for phrase in _signal_phrases(request, signal)]
     signal_query = " OR ".join(f'"{phrase}"' for phrase in phrases[:8])
@@ -234,8 +234,18 @@ def diversified_queries(request: AdapterDiscoveryRequest) -> Tuple[str, ...]:
         signal_ids=request.signal_ids,
         max_queries=8,
     )
+    # Prefer compiled strategy queries. The raw natural-language request and
+    # sector-wide "comunicato/news" variants pull market roundups that burn
+    # the second-lead SERP without company-level funding evidence.
+    if universal:
+        values: List[str] = list(universal)
+        if "funding" in set(request.signal_ids):
+            values.append(
+                f'startup {geography} ("chiude un round" OR "ha raccolto" OR "seed round" OR "pre-seed") '
+                f'(2025 OR 2026) -investitori -fondo -banca -"venture capital"'
+            )
+        return tuple(dict.fromkeys(value.strip() for value in values if value.strip()))
     values = (
-        *universal,
         base,
         f"({signal_query}) {sector} {geography} (comunicato OR news OR aggiornamento)",
         f"({signal_query}) {sector} {geography} (site:.it OR site:.eu)",
@@ -1208,6 +1218,21 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                 next_pending_urls.append(url)
         state.pending_urls = tuple(dict.fromkeys(next_pending_urls))
         state.url_meta = tuple(next_url_meta.values())
+        if universal and accepted_hits:
+            known = {
+                "".join(ch.casefold() for ch in str(row.get("company_name") or "") if ch.isalnum())
+                for row in records
+            }
+            for item in accepted_hits:
+                title = item.title if hasattr(item, "title") else str(item.get("title") or "")
+                snippet = item.snippet if hasattr(item, "snippet") else str(item.get("snippet") or "")
+                hint = _company_identity_hint(title=title, snippet=snippet, html="")
+                if not hint:
+                    continue
+                key = "".join(ch.casefold() for ch in hint if ch.isalnum())
+                if key and key not in known:
+                    _enqueue_content_shell_followup(state, identity_hint=hint, failed_url="")
+                    known.add(key)
         persist_generic_web_state(request.technical_filters, state)
     if universal:
         _record_prefilter(request, raw=0, accepted=0, rejected=0, codes={}, pages=pages_opened)
