@@ -21,6 +21,12 @@ USER_AGENT = (
 )
 
 DEFAULT_SERP_TARGET = 25
+
+
+class SerperCreditsExhausted(RuntimeError):
+    """Serper returned HTTP 400 Not enough credits — fail closed, do not burn budget."""
+
+    code = "FAILED_EXTERNAL_CONFIGURATION"
 PAGE_FETCH_TIMEOUT = 8.0
 
 
@@ -429,6 +435,17 @@ def _search_serper_hits(query: str, target: int) -> List[Dict[str, str]]:
         return found
     if last_error:
         logger.warning("SERPER API exhausted query variants query=%r last=%s", query[:70], last_error)
+        body = ""
+        if isinstance(last_error, HTTPError):
+            try:
+                body = last_error.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = str(last_error)
+            # HTTPError body can only be read once; stash on the exception for callers.
+            setattr(last_error, "_mirax_body", body)
+        blob = f"{last_error} {body}".casefold()
+        if "not enough credits" in blob or "insufficient credits" in blob:
+            raise SerperCreditsExhausted("SERPER_CREDITS_EXHAUSTED") from last_error
     return []
 
 
@@ -734,8 +751,23 @@ def search_hits_http(
             paid_providers = (_search_serper_hits,)
         elif os.getenv("BRAVE_SEARCH_API_KEY", "").strip():
             paid_providers = (_search_brave_hits,)
+    provider_failed = False
     for provider in paid_providers:
-        for hit in provider(query, target):
+        try:
+            provider_hits = provider(query, target)
+        except SerperCreditsExhausted:
+            if reservation_key and governor:
+                governor.settle(
+                    reservation_key,
+                    0.0,
+                    metadata={"result_count": 0, "error": "SERPER_CREDITS_EXHAUSTED"},
+                )
+            raise
+        except Exception as exc:
+            provider_failed = True
+            logger.warning("paid SERP provider failed query=%r: %s", query[:70], exc)
+            provider_hits = []
+        for hit in provider_hits:
             key = hit["url"].lower().rstrip("/")
             if key not in collected_keys:
                 collected_keys.add(key)
@@ -760,7 +792,14 @@ def search_hits_http(
         return collected[:target]
 
     if reservation_key and governor:
-        governor.settle(reservation_key, estimated_cost, metadata={"result_count": len(collected)})
+        # Paid API errors should not consume the canary hard-cap. A true empty
+        # organic page still settles the reserved SERP cost.
+        actual = 0.0 if provider_failed else estimated_cost
+        governor.settle(
+            reservation_key,
+            actual,
+            metadata={"result_count": len(collected), "paid_empty": not collected, "provider_failed": provider_failed},
+        )
 
     for hit in _url_hits(_ddg_pages(query, target), "duckduckgo_html"):
         key = hit["url"].lower().rstrip("/")
