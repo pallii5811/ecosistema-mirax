@@ -105,6 +105,8 @@ class AdapterProgress:
     warnings: List[str] = field(default_factory=list)
     projection_traces: List[Dict[str, Any]] = field(default_factory=list)
     acquisition_telemetry: Dict[str, Any] = field(default_factory=dict)
+    query_telemetry: List[Dict[str, Any]] = field(default_factory=list)
+    url_outcomes: List[Dict[str, Any]] = field(default_factory=list)
     rejection_histogram: Dict[str, int] = field(default_factory=dict)
     rejected_candidates: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -129,6 +131,8 @@ class AdapterProgress:
             "grounded": self.grounded,
             "qualified": self.qualified,
             "rejection_histogram": dict(self.rejection_histogram),
+            "query_telemetry": list(self.query_telemetry)[:20],
+            "url_outcomes": list(self.url_outcomes)[:50],
             "next_cursor": (
                 getattr(self.next_cursor, "value", None)
                 if self.next_cursor is not None
@@ -538,10 +542,11 @@ async def semantic_authority_qualifier(
         for evidence in candidate.evidence:
             provenance = evidence.provenance if isinstance(evidence.provenance, Mapping) else {}
             if request.technical_filters.get("semantic_authority_required") is True:
-                ok_prov, prov_code = evidence_has_fetch_provenance(provenance)
-                if not ok_prov:
-                    rejection_codes.append(prov_code)
-                    continue
+                if candidate.adapter_id == "generic_web_research_v1":
+                    ok_prov, prov_code = evidence_has_fetch_provenance(provenance)
+                    if not ok_prov:
+                        rejection_codes.append(prov_code)
+                        continue
             source_text = str(provenance.get("source_text") or "")
             if len(source_text.strip()) < 120:
                 rejection_codes.append("SOURCE_TEXT_MISSING")
@@ -975,11 +980,11 @@ class UniversalSourceOrchestrator:
                 telemetry = result.telemetry if isinstance(result.telemetry, Mapping) else {}
                 raw_provider_queries = telemetry.get("provider_queries_executed", telemetry.get("provider_queries"))
                 if isinstance(raw_provider_queries, (int, float)):
-                    state.provider_queries += max(0, int(raw_provider_queries))
+                    state.provider_queries = max(state.provider_queries, max(0, int(raw_provider_queries)))
                 elif isinstance(raw_provider_queries, (list, tuple)):
-                    state.provider_queries += len(raw_provider_queries)
-                else:
-                    state.provider_queries += 1 if result.operations or result.cost_eur else 0
+                    state.provider_queries = max(state.provider_queries, len(raw_provider_queries))
+                elif result.operations or result.cost_eur:
+                    state.provider_queries = max(state.provider_queries, state.calls)
                 state.raw_candidates += len(result.candidates)
                 state.warnings.extend(result.warnings)
                 state.exhausted = result.exhaustion.exhausted
@@ -994,13 +999,21 @@ class UniversalSourceOrchestrator:
                     acquisition = result.telemetry.get("acquisition")
                     if isinstance(acquisition, Mapping):
                         state.acquisition_telemetry.update(dict(acquisition))
-                        state.pages_fetched += int(acquisition.get("pages_fetched") or acquisition.get("urls_fetched") or 0)
-                        state.official_domains_resolved += int(
-                            acquisition.get("official_domains_resolved") or acquisition.get("domains_resolved") or 0
+                        pf = int(acquisition.get("pages_fetched") or acquisition.get("urls_fetched") or 0)
+                        state.pages_fetched = max(state.pages_fetched, pf)
+                        state.official_domains_resolved = max(
+                            state.official_domains_resolved,
+                            int(acquisition.get("official_domains_resolved") or acquisition.get("domains_resolved") or 0),
                         )
                         state.semantic_calls += int(acquisition.get("semantic_calls") or 0)
                         state.semantic_cache_hits += int(acquisition.get("semantic_cache_hits") or 0)
                         state.elapsed_ms += int(acquisition.get("elapsed_ms") or 0)
+                    qt = telemetry.get("query_telemetry")
+                    if isinstance(qt, list) and qt:
+                        state.query_telemetry.extend(item for item in qt if isinstance(item, Mapping))
+                    uo = telemetry.get("url_outcomes")
+                    if isinstance(uo, list) and uo:
+                        state.url_outcomes.extend(item for item in uo if isinstance(item, Mapping))
                 discovered += result.operations
                 raw_count += len(result.candidates)
 
@@ -1068,6 +1081,11 @@ class UniversalSourceOrchestrator:
                             "adapter": state.adapter_id,
                             "rejection_stage": "qualification",
                             "rejection_code": code,
+                            "failure_detail": (
+                                (decision.semantic_grounding or {}).get("failure_detail")
+                                if isinstance(decision.semantic_grounding, Mapping)
+                                else None
+                            ),
                         })
                         continue
                     if key in processed_employer_keys:

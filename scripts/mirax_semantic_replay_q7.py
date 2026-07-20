@@ -13,6 +13,12 @@ from supabase import create_client
 ROOT = Path("/home/worker/app/backend-staging")
 sys.path.insert(0, str(ROOT))
 
+import types
+
+_pkg = types.ModuleType("backend_mirror")
+_pkg.__path__ = [str(ROOT)]
+sys.modules["backend_mirror"] = _pkg
+
 SEARCH_ID = sys.argv[1] if len(sys.argv) > 1 else "ca7b0d50-37b3-44e5-b553-11583851384e"
 
 
@@ -24,8 +30,8 @@ async def main() -> None:
     progress = job.get("progress") or {}
     contract = (intent.get("uqe_plan") or {}).get("semantic_query_contract") or intent.get("semantic_query_contract")
     rejected = (progress.get("shadow_resume") or {}).get("rejected_candidates") or []
-    from backend_mirror.source_adapters.contracts import AdapterDiscoveryRequest, EvidenceRecord, OpportunityCandidate
-    from backend_mirror.source_adapters.orchestrator import semantic_authority_qualifier
+    from source_adapters.contracts import AdapterDiscoveryRequest, EvidenceRecord, OpportunityCandidate
+    from source_adapters.orchestrator import semantic_authority_qualifier
 
     request = AdapterDiscoveryRequest(
         intent="funding",
