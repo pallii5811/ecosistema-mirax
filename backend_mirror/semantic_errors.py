@@ -45,7 +45,8 @@ def classify_exception(
     name = type(exc).__name__
     message = str(exc)
     lowered = message.casefold()
-    if name in {"TimeoutError", "ReadTimeout", "ConnectTimeout"} or "timeout" in lowered:
+    if name == "ResearchBudgetExceeded" or "cost governor" in lowered or "hard budget" in lowered:
+        code = "SEMANTIC_BUDGET_EXCEEDED"
         code = "SEMANTIC_TIMEOUT"
     elif name in {"JSONDecodeError", "ValidationError"} or "schema" in lowered or "json" in lowered:
         code = "SEMANTIC_SCHEMA_INVALID"
