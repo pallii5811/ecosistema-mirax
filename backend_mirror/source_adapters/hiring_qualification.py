@@ -283,6 +283,8 @@ def evaluate_vacancy_geography(
         if re.search(r"\bremote\s+(?:in\s+)?italy\b|\bitaly\s+remote\b", title_text):
             return passed("IT", "Italia", "explicit_remote_country", title)
         detected_foreign = next((marker for marker in _NON_ITALIAN_COUNTRY_MARKERS if any(_contains_term(item, marker) for item in vacancy_fields)), "")
+        if not vacancy_fields:
+            return VacancyGeographyAssessment(True, requested, "", "", "unknown_location_allowed", "no vacancy-scoped geography evidence", "")
         return failed(detected_foreign.upper())
 
     scoped = " | ".join(filter(None, (location_text, locality, region, title_text, *additional)))

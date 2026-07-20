@@ -18,6 +18,7 @@ from backend_mirror.source_adapters.generic_web import (
     parse_primary_evidence_page,
     _structured_subject_identities,
 )
+from backend_mirror.source_adapters.generic_web_budget import decode_generic_web_v2_payload
 
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "generic_web_replay_v1.json"
@@ -120,11 +121,82 @@ def test_query_diversification_cursor_and_hard_cap() -> None:
     assert len(set(queries)) == 3
     result = asyncio.run(GenericWebResearchAdapter((provider(),)).discover(request(count=2)))
     assert result.exhaustion.next_cursor
-    assert result.exhaustion.next_cursor.value == "generic-web:v1:20"
+    assert result.exhaustion.next_cursor.value.startswith("generic-web:v2:")
     with pytest.raises(ValueError, match="invalid generic web cursor"):
         asyncio.run(GenericWebResearchAdapter((provider(),)).discover(request(cursor=DiscoveryCursor("bad"))))
     with pytest.raises(RuntimeError, match="HARD_COST_CAP"):
         asyncio.run(GenericWebResearchAdapter((provider(cost=0.126),)).discover(request()))
+
+
+def test_resume_cursor_v1_migrates_to_v2() -> None:
+    adapter = GenericWebResearchAdapter((provider(),))
+    result = asyncio.run(adapter.discover(request(count=2, cursor=DiscoveryCursor("generic-web:v1:20"))))
+    assert result.exhaustion.next_cursor
+    assert result.exhaustion.next_cursor.value.startswith("generic-web:v2:")
+
+
+def test_resume_cursor_v2_is_accepted() -> None:
+    adapter = GenericWebResearchAdapter((provider(),))
+    first = asyncio.run(adapter.discover(request(count=2)))
+    second = asyncio.run(adapter.discover(request(count=2, cursor=first.exhaustion.next_cursor)))
+    assert second.exhaustion.next_cursor
+    assert second.exhaustion.next_cursor.value.startswith("generic-web:v2:")
+    assert second.exhaustion.next_cursor.value != first.exhaustion.next_cursor.value
+
+
+def test_resume_round_advances_processed_urls_without_duplicate_fetch() -> None:
+    fetch_calls: list[str] = []
+
+    def serp(_query: str, _limit: int):
+        return [
+            {"title": "A", "url": "https://alpha.test/news/a", "snippet": "Alpha annuncia migrazione CRM", "publisher": "News", "provider": "fixture", "rank": 1},
+            {"title": "B", "url": "https://beta.test/news/b", "snippet": "Beta cerca partner CRM", "publisher": "News", "provider": "fixture", "rank": 2},
+            {"title": "C", "url": "https://gamma.test/news/c", "snippet": "Gamma implementa CRM", "publisher": "News", "provider": "fixture", "rank": 3},
+            {"title": "D", "url": "https://delta.test/news/d", "snippet": "Delta avvia progetto CRM", "publisher": "News", "provider": "fixture", "rank": 4},
+        ]
+
+    def fetch(url: str):
+        fetch_calls.append(url)
+        html = f"""
+        <html><head>
+        <meta property="article:published_time" content="{date.today().isoformat()}"/>
+        </head><body>
+        <article>Alpha Srl annuncia migrazione CRM.</article>
+        </body></html>
+        """
+        return html, url
+
+    req = AdapterDiscoveryRequest(
+        intent="commercial_search",
+        signal_ids=("technology_adoption",),
+        signal_match_mode="any",
+        geographies=("Italia",),
+        freshness_max_age_days=365,
+        requested_count=1,
+        budget_eur=0.05,
+        query="aziende che migrano CRM",
+        sectors=("software",),
+        technical_filters={
+            "universal_engine": True,
+            "semantic_authority_required": False,
+            "universal_search_queries": ("aziende crm",),
+            "universal_serp_search": serp,
+            "universal_page_fetch": fetch,
+            "universal_prefilter_telemetry": {},
+        },
+    )
+    adapter = GenericWebResearchAdapter()
+    first = asyncio.run(adapter.discover(req))
+    payload1 = decode_generic_web_v2_payload(first.exhaustion.next_cursor.value) or {}
+    processed1 = len(payload1.get("processed_terminal_urls") or [])
+    first_fetch_total = len(fetch_calls)
+
+    second = asyncio.run(adapter.discover(replace(req, cursor=first.exhaustion.next_cursor)))
+    payload2 = decode_generic_web_v2_payload(second.exhaustion.next_cursor.value) or {}
+    processed2 = len(payload2.get("processed_terminal_urls") or [])
+    assert second.exhaustion.next_cursor.value != first.exhaustion.next_cursor.value
+    assert processed2 >= processed1
+    assert len(fetch_calls) == first_fetch_total
 
 
 def test_default_provider_reserves_before_every_query(monkeypatch) -> None:

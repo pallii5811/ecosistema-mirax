@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 import inspect
 from dataclasses import dataclass, field, replace
@@ -186,7 +187,7 @@ def request_from_plan(
     geographies = target.get("geographies") if isinstance(target.get("geographies"), list) else None
     if not geographies:
         location = str(plan.get("location") or "").strip()
-        geographies = [location, "italy"] if location else ["italy"]
+        geographies = [location] if location else []
     signals = tuple(str(item).strip() for item in (
         signal_policy.get("required_signals") or plan.get("required_signals") or ()
     ) if str(item).strip())
@@ -230,6 +231,8 @@ def request_from_plan(
         "semantic_query_contract": dict(semantic_contract) if semantic_contract else None,
         "semantic_authority_required": bool(semantic_contract) and not bool(semantic_contract.get("clarification_required")),
         "semantic_telemetry": {},
+        "maximum_search_calls": budget_policy.get("maximum_search_calls"),
+        "maximum_llm_evaluations": budget_policy.get("maximum_llm_evaluations"),
     })
     signal_groups = _signal_groups_from_required_signals(signals)
     if signal_groups:
@@ -720,8 +723,16 @@ class UniversalSourceOrchestrator:
             raise ValueError("orchestrator limits must be positive")
         self.registry = registry
         self.qualifier = qualifier
-        self.max_rounds = max_rounds
-        self.max_seconds = max_seconds
+        env_seconds = os.getenv("MIRAX_ORCHESTRATOR_MAX_SECONDS")
+        env_rounds = os.getenv("MIRAX_ORCHESTRATOR_MAX_ROUNDS")
+        try:
+            self.max_rounds = max(1, int(env_rounds)) if env_rounds else max_rounds
+        except ValueError:
+            self.max_rounds = max_rounds
+        try:
+            self.max_seconds = max(30.0, float(env_seconds)) if env_seconds else max_seconds
+        except ValueError:
+            self.max_seconds = max_seconds
 
     async def run(
         self,

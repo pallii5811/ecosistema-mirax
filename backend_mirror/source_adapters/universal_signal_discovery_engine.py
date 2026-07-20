@@ -363,7 +363,13 @@ class UniversalSignalDiscoveryEngine:
 
             # P0-1: always pass compatible adapters as mandatory for this strategy batch.
             run_mandatory = tuple(batch_adapters)
-            round_budget = max(0.0, hard_budget - spent)
+            # Keep residual for SemanticCommercialEventInterpreter + identity SERP.
+            # Without this, multi-strategy rounds spend 100% on search_hits_http and
+            # the next reserve() raises ResearchBudgetExceeded (shadow fails closed).
+            semantic_reserve = 0.0
+            if request.technical_filters.get("semantic_authority_required") is True:
+                semantic_reserve = max(0.015, min(0.025, hard_budget * 0.4))
+            round_budget = max(0.0, hard_budget - spent - semantic_reserve)
             if round_budget <= 0:
                 notes.append("cost_budget_reached")
                 break

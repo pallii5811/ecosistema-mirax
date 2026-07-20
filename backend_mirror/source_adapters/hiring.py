@@ -104,7 +104,15 @@ _ROLE_SIGNAL_PATTERNS = {
         re.I,
     ),
     "hiring_marketing": re.compile(r"\b(?:marketing|seo|content|social media|advertising|brand|performance marketer)\b", re.I),
-    "hiring_technology": re.compile(r"\b(?:developer|software|data engineer|programmat|sistemist|devops|cyber|it technician)\b", re.I),
+    "hiring_technology": re.compile(
+        # Exclude bare "developer" — matches "Business Developer" and wastes semantic budget.
+        r"\b(?:software\s+(?:engineer|developer)|data\s+engineer|full[\s-]?stack|"
+        r"backend(?:\s+developer)?|frontend(?:\s+developer)?|programmat(?:ore|rice)|"
+        r"sviluppat(?:ore|rice)|sistemista|devops|sre|cyber(?:\s*security)?|"
+        r"ingegnere\s+(?:informatico|software)|it\s+technician|"
+        r"machine\s+learning\s+engineer|ml\s+engineer)\b",
+        re.I,
+    ),
 }
 _HIRING_SALES_ROLE_TERMS = (
     "commerciale", "sales manager", "business developer", "account executive",
@@ -159,7 +167,7 @@ def _build_hiring_discovery_queries(request: AdapterDiscoveryRequest) -> List[Tu
     elif "hiring_marketing" in request.signal_ids:
         roles = _HIRING_MARKETING_ROLE_TERMS
     elif "hiring_technology" in request.signal_ids:
-        roles = ("developer", "software engineer", "data engineer", "devops")
+        roles = ("software engineer", "sviluppatore", "data engineer", "ingegnere informatico", "devops")
     elif "hiring_operational" in request.signal_ids:
         roles = ("operaio", "tecnico", "magazziniere", "autista")
     else:
@@ -182,25 +190,53 @@ def _build_hiring_discovery_queries(request: AdapterDiscoveryRequest) -> List[Tu
         pairs.append((key, template, source))
 
     # Wave 1 — high-yield regional vacancy + ATS (2–3 templates).
-    _add(
-        "serp:local_vacancy",
-        f'"{primary_role}" "{primary_geo}" ("posizione aperta" OR candidati OR apply OR assum)',
-    )
-    _add(
-        "serp:ats",
-        f'"{primary_role}" "{primary_geo}" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)',
-    )
-    _add(
-        "serp:careers",
-        f'"{primary_role}" "lavora con noi" {primary_geo}'.strip(),
-    )
-    # Optional second role still regional before province expansion.
-    if len(roles) > 1:
+    if "hiring_technology" in request.signal_ids and primary_geo.casefold() in {"italia", "italy"}:
+        # Workday /it-it/ is Italian locale, not Italy location — pin cities to avoid
+        # Shanghai/India/US false positives that burn the partition on GEO_OUT_OF_SCOPE.
+        city_or = (
+            "(Milano OR Roma OR Torino OR Bologna OR Napoli OR Padova OR Verona OR "
+            "Firenze OR Genova OR Brescia OR Bari OR Italy OR Italia)"
+        )
         _add(
             "serp:local_vacancy",
-            f'"{roles[1]}" "{primary_geo}" ("posizione aperta" OR candidati OR apply)',
-            role=roles[1],
+            f'"{primary_role}" {city_or} ("posizione aperta" OR candidati OR apply OR assum)',
         )
+        _add(
+            "serp:ats",
+            f'"{primary_role}" {city_or} '
+            f'(site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)',
+        )
+        _add(
+            "serp:careers",
+            f'("{primary_role}" OR sviluppatore OR "ingegnere informatico") '
+            f'"lavora con noi" {city_or}',
+        )
+        if len(roles) > 1:
+            _add(
+                "serp:local_vacancy",
+                f'"{roles[1]}" {city_or} ("posizione aperta" OR candidati OR apply)',
+                role=roles[1],
+            )
+    else:
+        _add(
+            "serp:local_vacancy",
+            f'"{primary_role}" "{primary_geo}" ("posizione aperta" OR candidati OR apply OR assum)',
+        )
+        _add(
+            "serp:ats",
+            f'"{primary_role}" "{primary_geo}" (site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)',
+        )
+        _add(
+            "serp:careers",
+            f'"{primary_role}" "lavora con noi" {primary_geo}'.strip(),
+        )
+        # Optional second role still regional before province expansion.
+        if len(roles) > 1:
+            _add(
+                "serp:local_vacancy",
+                f'"{roles[1]}" "{primary_geo}" ("posizione aperta" OR candidati OR apply)',
+                role=roles[1],
+            )
     # Universal engine strategies after the focused wave.
     from .universal_strategy_queries import universal_strategy_queries_from_filters
     for query in universal_strategy_queries_from_filters(

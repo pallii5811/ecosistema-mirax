@@ -24,9 +24,17 @@ from .contracts import (
     SourceCapability,
     SourceExhaustion,
 )
-
-
-_QUERY_COST_EUR = 0.005
+from .generic_web_budget import (
+    BUFFER_EUR,
+    IDENTITY_RESERVE_EUR,
+    QUERY_COST_EUR,
+    SEMANTIC_RESERVE_EUR,
+    URLS_PER_WAVE,
+    decode_generic_web_v2_payload,
+    encode_generic_web_cursor,
+    load_generic_web_state,
+    persist_generic_web_state,
+)
 _SIGNAL_ALIASES: Dict[str, Tuple[str, ...]] = {
     "seeking_supplier": ("ricerca fornitori", "nuovi fornitori", "albo fornitori", "supplier search"),
     "regulatory_change": ("adeguamento normativo", "nuovo obbligo", "nuova normativa", "compliance"),
@@ -440,24 +448,51 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
     from .universal_evidence import extract_evidence_from_text
 
     queries = diversified_queries(request)
-    max_queries = min(len(queries), math.floor((request.budget_eur + 1e-9) / _QUERY_COST_EUR))
-    if max_queries <= 0:
-        return GenericWebProviderResult((), 0.0, ("BUDGET_TOO_LOW_FOR_SEARCH",))
+    state = load_generic_web_state(request.cursor, request.technical_filters)
+    hard_cap = float(request.budget_eur)
+    remaining_for_query = max(0.0, hard_cap - float(state.discovery_spent_eur or 0.0))
+    max_queries = min(len(queries), math.floor((remaining_for_query + 1e-9) / QUERY_COST_EUR))
+    plan_search_cap = request.technical_filters.get("maximum_search_calls")
+    try:
+        if plan_search_cap is not None:
+            max_queries = min(max_queries, max(1, int(plan_search_cap)))
+    except (TypeError, ValueError):
+        pass
     scope = hashlib.sha256(f"{request.query}|{request.signal_ids}|{request.geographies}".encode()).hexdigest()[:20]
-    target = min(100, offset + max(limit * 2, 30))
+    target = min(100, max(limit, URLS_PER_WAVE))
     universal = bool((request.technical_filters or {}).get("universal_engine"))
     spy_search = (request.technical_filters or {}).get("universal_serp_search")
     spent = 0.0
     accepted_hits: List[Any] = []
     seen: set[str] = set()
     provider_warnings: List[str] = []
-
-    for index, query in enumerate(queries[:max_queries]):
-        if spent + _QUERY_COST_EUR > request.budget_eur + 1e-9:
+    raw_meta = {
+        str(item.get("url") or "").lower().rstrip("/"): dict(item)
+        for item in state.url_meta
+        if isinstance(item, Mapping) and item.get("url")
+    }
+    terminal = {str(item).strip().lower().rstrip("/") for item in state.processed_terminal_urls}
+    for url in state.pending_urls:
+        key = str(url).strip().lower().rstrip("/")
+        if key and key not in terminal and key not in seen:
+            seen.add(key)
+            accepted_hits.append(raw_meta.get(key) or {"url": url, "title": "", "snippet": "", "source_type": "search", "provider": "resume"})
+    pending_queries = list(queries[state.query_index:])
+    from cost_context import current_cost_governor
+    governor = current_cost_governor()
+    remaining_governor = float(getattr(governor, "remaining_eur", 0.0) or 0.0) if governor is not None else float("inf")
+    if not accepted_hits and max_queries > 0:
+        if universal and remaining_governor + 1e-9 < QUERY_COST_EUR + SEMANTIC_RESERVE_EUR + IDENTITY_RESERVE_EUR + BUFFER_EUR:
+            return GenericWebProviderResult((), 0.0, ("DISCOVERY_BUDGET_RESERVED",))
+    queries_run = 0
+    for index, query in enumerate(pending_queries[:max_queries]):
+        if accepted_hits and (state.pages_fetched > 0 or state.wave_terminal_rejections > 0):
+            break
+        if spent + QUERY_COST_EUR > request.budget_eur + 1e-9:
             break
         if callable(spy_search):
             found_hits = await asyncio.to_thread(spy_search, query, target)
-            spent += _QUERY_COST_EUR
+            spent += QUERY_COST_EUR
             if found_hits and isinstance(found_hits[0], str):
                 found_hits = _hits_from_urls(found_hits, query=query)
         else:
@@ -470,7 +505,11 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                     search_urls_http, query, target, cost_scope=f"generic-web:{scope}:{index}",
                 )
                 found_hits = _hits_from_urls(found_urls, query=query)
-            spent += _QUERY_COST_EUR
+            spent += QUERY_COST_EUR
+        queries_run += 1
+        state.query_index += 1
+        state.provider_calls += 1
+        state.discovery_spent_eur = round(float(state.discovery_spent_eur) + QUERY_COST_EUR, 6)
         if universal:
             gated = _gate_serp_hits(request, found_hits, provider_query=query)
             rich_by_url = {
@@ -480,6 +519,8 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
             }
             for hit in gated:
                 key = hit.url.lower().rstrip("/")
+                if key in terminal:
+                    continue
                 if key not in seen:
                     seen.add(key)
                     original = rich_by_url.get(key) or {}
@@ -490,6 +531,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                         "publisher": hit.publisher,
                         "source_type": str(original.get("source_type") or "search"),
                         "provider": str(original.get("provider") or "unknown"),
+                        "rank": int(original.get("rank") or 0),
                         "provider_query": query,
                     })
         else:
@@ -499,39 +541,58 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                 if url and key not in seen:
                     seen.add(key)
                     accepted_hits.append(item)
+        if accepted_hits:
+            break
 
     records: List[Mapping[str, Any]] = []
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Generic/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
     pages_opened = 0
     async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=headers) as client:
         page_fetch = (request.technical_filters or {}).get("universal_page_fetch")
-        for item in accepted_hits[offset:offset + limit]:
+        next_pending_urls: List[str] = []
+        next_url_meta: Dict[str, Dict[str, Any]] = dict(raw_meta)
+        wave = accepted_hits[: max(3, min(limit, URLS_PER_WAVE))]
+        for item in wave:
             url = item.url if hasattr(item, "url") else str(item.get("url") or "")
             title = item.title if hasattr(item, "title") else str(item.get("title") or "")
             snippet = item.snippet if hasattr(item, "snippet") else str(item.get("snippet") or "")
             search_provider = str(item.get("provider") or "unknown") if isinstance(item, Mapping) else "unknown"
             provider_query = str(item.get("provider_query") or request.query) if isinstance(item, Mapping) else request.query
+            key = url.lower().rstrip("/")
+            if key:
+                next_url_meta[key] = {
+                    "url": url,
+                    "title": title,
+                    "snippet": snippet,
+                    "provider": search_provider,
+                    "source_type": str(item.get("source_type") or "search") if isinstance(item, Mapping) else "search",
+                    "rank": int(item.get("rank") or 0) if isinstance(item, Mapping) else 0,
+                    "provider_query": provider_query,
+                }
             try:
                 if callable(page_fetch):
                     html, final_url = await asyncio.to_thread(page_fetch, url)
                 else:
                     response = await client.get(url)
                     if response.status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
+                        state.wave_terminal_rejections += 1
+                        state.processed_terminal_urls = (*state.processed_terminal_urls, url)
                         continue
                     html = response.text[:2_000_000]
                     final_url = str(response.url)
                 pages_opened += 1
+                state.pages_fetched += 1
+                state.processed_terminal_urls = (*state.processed_terminal_urls, url)
                 if universal:
                     page_host = _host(final_url)
                     # Dynamic relationships are acquisition hypotheses only.
                     # Final event type, role and query match are decided by the
                     # semantic interpreter and exact grounding verifier.
                     semantic_contract = request.technical_filters.get("semantic_query_contract")
+                    identities: Tuple[Mapping[str, Any], ...] = ()
                     if isinstance(semantic_contract, Mapping):
                         identities = _structured_subject_identities(html, page_host=page_host)
-                        if not identities:
-                            provider_warnings.append("COMPANY_IDENTITY_UNRESOLVED")
-                            continue
+                    if identities:
                         visible_text = _text(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)) or ""
                         published = _structured_page_date(html)
                         if not visible_text or not published:
@@ -566,9 +627,13 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 "search_provider": search_provider,
                             })
                         continue
+                    # Open-world pages often lack JSON-LD about/mentions. Keep the
+                    # page as source_text via universal evidence extraction so
+                    # SemanticCommercialEventInterpreter can still run.
                     company_hint = _company_identity_hint(title=title, snippet=snippet, html=html)
                     if not company_hint:
                         provider_warnings.append("COMPANY_IDENTITY_UNRESOLVED")
+                        state.wave_terminal_rejections += 1
                         continue
                     events = extract_evidence_from_text(
                         text=html,
@@ -587,6 +652,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             company_name_hint=company_hint,
                             requested_signals=(),
                         )
+                    # Never invent publisher host as the target company domain.
                     for event in events:
                         if not event.company_name or not event.evidence_excerpt or not event.event_date:
                             continue
@@ -606,6 +672,8 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 family = related.get(event.event_type or "", set()) | {event.event_type or ""}
                                 if req in family or event.event_type == req:
                                     matched_ids.append(req)
+                        if not matched_ids and isinstance(semantic_contract, Mapping):
+                            matched_ids = list(request.signal_ids)
                         if not matched_ids:
                             continue
                         records.append({
@@ -621,6 +689,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             "source_class": event.source_class,
                             "evidence_excerpt": event.evidence_excerpt,
                             "extraction_method": "universal_evidence",
+                            "source_text": (_text(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)) or "")[:250_000],
                             "why_now": event.evidence_excerpt[:260],
                             "buyer_fit": 0.75,
                             "query_origin": request.technical_filters.get("query_origin") or request.query,
@@ -632,7 +701,16 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                 else:
                     records.extend(parse_primary_evidence_page(html, final_url, request))
             except Exception:
+                state.wave_terminal_rejections += 1
+                state.processed_terminal_urls = (*state.processed_terminal_urls, url)
                 continue
+        for item in accepted_hits[len(wave):]:
+            url = item.url if hasattr(item, "url") else str(item.get("url") or "")
+            if url and url.lower().rstrip("/") not in terminal:
+                next_pending_urls.append(url)
+        state.pending_urls = tuple(dict.fromkeys(next_pending_urls))
+        state.url_meta = tuple(next_url_meta.values())
+        persist_generic_web_state(request.technical_filters, state)
     if universal:
         _record_prefilter(request, raw=0, accepted=0, rejected=0, codes={}, pages=pages_opened)
     return GenericWebProviderResult(tuple(records), spent, tuple(provider_warnings))
@@ -640,6 +718,14 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
 
 def _cursor_offset(cursor: Optional[DiscoveryCursor]) -> int:
     if not cursor:
+        return 0
+    if cursor.value.startswith("generic-web:v2:"):
+        payload = decode_generic_web_v2_payload(cursor.value)
+        if isinstance(payload, Mapping):
+            try:
+                return max(0, int(payload.get("legacy_offset") or 0))
+            except (TypeError, ValueError):
+                return 0
         return 0
     match = re.fullmatch(r"generic-web:v1:(\d+)", cursor.value)
     if not match:
@@ -718,7 +804,7 @@ class GenericWebResearchAdapter:
         source_classes=("search_snippet", "official_company_website"), geographic_coverage=("global",),
         freshness_max_age_days=None, discovery_mode="generic_fallback", supports_pagination=True,
         supports_cursor_resume=True, max_results_per_page=100, max_results_per_run=None,
-        estimated_cost_eur_per_operation=_QUERY_COST_EUR,
+        estimated_cost_eur_per_operation=QUERY_COST_EUR,
         authentication_requirements=("search_provider_with_cost_governor",), rate_limit_per_minute=20,
         provenance_guarantees=("query_origin", "parent_query", "discovery_round", "source_url", "publisher"),
         evidence_guarantees=("explicit_signal_phrase", "published_at", "official_company_identity"),
@@ -754,6 +840,10 @@ class GenericWebResearchAdapter:
             results.append(result)
             spent += result.cost_eur
         observed = datetime.now(timezone.utc).isoformat()
+        state = load_generic_web_state(request.cursor, request.technical_filters)
+        next_legacy_offset = max(offset + page_size, int(state.legacy_offset or 0))
+        state.legacy_offset = next_legacy_offset
+        persist_generic_web_state(request.technical_filters, state)
         warnings = [warning for result in results for warning in result.warnings]
         candidates: List[OpportunityCandidate] = []
         seen: set[str] = set()
@@ -770,14 +860,18 @@ class GenericWebResearchAdapter:
                         EntityIdentityRequest,
                         resolve_entity_identity,
                     )
+                    # ponytail: identity SERP capped at one cheap query; upgrade =
+                    # governor residual after discovery. Without this, news pages
+                    # with company hints never reach SemanticCommercialEventInterpreter.
+                    identity_budget = IDENTITY_RESERVE_EUR if semantic_required else 0.0
                     identity = resolve_entity_identity(
                         EntityIdentityRequest(
                             company_name=company,
                             evidence_url=source_url,
                             presented_domain=domain,
                             geography=_text(record.get("geography")) or "",
-                            budget_eur=0.0,
-                            allow_serp=False,
+                            budget_eur=identity_budget,
+                            allow_serp=bool(semantic_required and identity_budget > 0),
                             allowed_entity_classes=tuple(COMMERCIAL_ENTITY_CLASSES),
                             source_payload=dict(record),
                         )
@@ -895,7 +989,7 @@ class GenericWebResearchAdapter:
                 exhausted=False, scope="partition",
                 reason="requested_count_reached_partial_coverage" if len(candidates) >= request.requested_count else "sample_partition_complete_not_global_exhaustion",
                 authoritative=False,
-                next_cursor=DiscoveryCursor(f"generic-web:v1:{offset + page_size}", partition="sampled_web"),
+                next_cursor=encode_generic_web_cursor(load_generic_web_state(request.cursor, request.technical_filters)),
             ),
             operations=sum(len(result.records) for result in results), cost_eur=spent,
             started_at=started, completed_at=observed, warnings=tuple(sorted(set(warnings))),

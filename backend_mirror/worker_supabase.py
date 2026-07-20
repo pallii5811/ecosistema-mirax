@@ -4927,18 +4927,20 @@ def main() -> None:
             try:
                 default_max = int(os.getenv("DEMO_MAX_RESULTS", "50") or "50")
                 job_max = default_max
+                # Shadow/matrix jobs honor exact requested_leads; Maps demo keeps floor 5.
+                target_floor = 1 if _source_adapter_shadow_is_requested(intent) else 5
                 z = job.get("zone")
                 if isinstance(z, str) and z.strip().isdigit():
-                    job_max = min(10000, max(5, int(z.strip())))
+                    job_max = min(10000, max(target_floor, int(z.strip())))
                 elif isinstance(z, dict) and z.get("max_results"):
-                    job_max = min(10000, max(5, int(z.get("max_results") or default_max)))
+                    job_max = min(10000, max(target_floor, int(z.get("max_results") or default_max)))
                 elif isinstance(intent, dict):
                     for target_key in ("max_leads", "requested_leads", "lead_target", "target"):
                         raw_target = intent.get(target_key)
                         if raw_target is None:
                             continue
                         try:
-                            job_max = min(10000, max(5, int(str(raw_target).strip())))
+                            job_max = min(10000, max(target_floor, int(str(raw_target).strip())))
                             break
                         except Exception:
                             continue
@@ -5658,6 +5660,12 @@ def main() -> None:
                     )
                     import traceback as _tb
                     print(_tb.format_exc(), flush=True)
+                    runtime_started = bool(prior_shadow_resume.get("prior_cost_eur")) or bool(prior_shadow_resume.get("resume_cursors"))
+                    budget_after_runtime = (
+                        shadow_error.__class__.__name__ == "ResearchBudgetExceeded"
+                        and runtime_started
+                    )
+                    termination = "partial_budget_exhausted" if budget_after_runtime else "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED"
                     supabase.table("searches").update({
                         "status": "error",
                         "results": prior_qualified_payloads,
@@ -5666,17 +5674,20 @@ def main() -> None:
                         "lease_expires_at": None,
                         "progress": {
                             "stage": "source_adapter_shadow_failed",
-                            "stop_reason": "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED",
-                            "termination": "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED",
-                            "termination_reason": "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED",
+                            "stop_reason": termination,
+                            "termination": termination,
+                            "termination_reason": termination,
                             "requested_execution_runtime": requested_runtime,
-                            "actual_execution_runtime": None,
-                            "selected_adapter_ids": [],
-                            "executed_adapter_ids": [],
+                            "actual_execution_runtime": "source_adapter_orchestrator" if runtime_started else None,
+                            "selected_adapter_ids": selected_adapter_ids if runtime_started else [],
+                            "executed_adapter_ids": selected_adapter_ids if runtime_started else [],
                             "fallback_used": False,
                             "fallback_reason": f"{shadow_error.__class__.__name__}:{str(shadow_error)[:200]}",
                             "error_type": shadow_error.__class__.__name__,
                             "error_message": str(shadow_error)[:500],
+                            "runtime_started": runtime_started,
+                            "budget_stage": "post_runtime" if budget_after_runtime else "pre_runtime",
+                            "remaining_budget": max(0.0, 0.05 - float(prior_shadow_resume.get("prior_cost_eur") or 0.0)),
                             "target": job_max,
                             "found": len(prior_qualified_payloads),
                             "unique_lifecycle_accepted_count": unique_prior_count,
