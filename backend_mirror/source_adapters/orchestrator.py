@@ -19,6 +19,7 @@ from .contracts import (
     SourceAdapter,
 )
 from .opportunity_scoring import score_opportunity
+from .generic_web_provenance import evidence_has_fetch_provenance, semantic_call_id
 
 
 _SEO_GROUP_SIGNALS = frozenset({"website_weakness", "seo_errors", "site_stale"})
@@ -535,7 +536,15 @@ async def semantic_authority_qualifier(
         rejection_codes: list[str] = []
         for evidence in candidate.evidence:
             provenance = evidence.provenance if isinstance(evidence.provenance, Mapping) else {}
-            source_text = str(provenance.get("source_text") or evidence.excerpt)
+            if request.technical_filters.get("semantic_authority_required") is True:
+                ok_prov, prov_code = evidence_has_fetch_provenance(provenance)
+                if not ok_prov:
+                    rejection_codes.append(prov_code)
+                    continue
+            source_text = str(provenance.get("source_text") or "")
+            if len(source_text.strip()) < 120:
+                rejection_codes.append("SOURCE_TEXT_MISSING")
+                continue
             if len(source_text) > 12_000:
                 evidence_offset = source_text.find(evidence.excerpt)
                 if evidence_offset >= 0:
@@ -571,6 +580,9 @@ async def semantic_authority_qualifier(
             if hiring_early_reject:
                 rejection_codes.append(hiring_early_reject)
                 continue
+            if interpretation.target_entity_role in set(contract.excluded_roles):
+                rejection_codes.append("ACTOR_ROLE_EXCLUDED")
+                continue
             # Verify every source independently. Relationship/rubric completeness
             # is aggregated afterwards so legitimate multi-source queries work.
             per_source_contract = replace(
@@ -598,10 +610,12 @@ async def semantic_authority_qualifier(
                 structured_metadata=structured_metadata,
             )
             if verdict.accepted:
+                call_id = semantic_call_id(contract_hash=contract.contract_hash, source_url=evidence.source_url)
                 grounded.append({
                     "interpretation": interpretation.to_dict(),
                     "verdict": verdict.to_dict(),
                     "evidence_signal_id": evidence.signal_id,
+                    "origin_semantic_call_id": call_id,
                 })
                 supported_relationships.update(interpretation.satisfied_relationships)
                 passed_rubric.update(interpretation.acceptance_rubric_passed)

@@ -151,6 +151,12 @@ def _corporate_from_careers_host(host: str) -> str:
     parts = host.split(".")
     if len(parts) >= 3 and parts[0] in _CAREERS_PREFIXES:
         return normalize_domain(".".join(parts[1:]))
+    # jobs.abbott -> abbott.com (two-label dedicated careers hosts).
+    if len(parts) == 2 and parts[0] in _CAREERS_PREFIXES:
+        brand = normalize_domain(parts[1])
+        if brand and "." not in brand:
+            return normalize_domain(f"{brand}.com")
+        return brand
     return ""
 
 

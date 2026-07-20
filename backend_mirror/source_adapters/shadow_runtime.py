@@ -486,12 +486,21 @@ def candidate_to_lifecycle_shadow_payload(
         "revenue": field(None, "unavailable", 0.0),
         "decision_makers": field(None, "unavailable", 0.0),
     }
+    origin = candidate.provenance if isinstance(candidate.provenance, Mapping) else {}
     payload: MutableMapping[str, Any] = {
         "azienda": candidate.canonical_company_name,
         "name": candidate.canonical_company_name,
         "legal_name": legal_name,
+        "official_domain": candidate.official_domain,
         "sito": f"https://{candidate.official_domain}",
         "website": f"https://{candidate.official_domain}",
+        "origin_adapter_id": origin.get("origin_adapter_id") or candidate.adapter_id,
+        "origin_execution_round": origin.get("origin_execution_round"),
+        "origin_provider_call_id": origin.get("origin_provider_call_id"),
+        "origin_page_fetch_id": origin.get("origin_page_fetch_id"),
+        "origin_semantic_call_id": origin.get("origin_semantic_call_id"),
+        "origin_source_text_hash": origin.get("origin_source_text_hash"),
+        "origin_cursor_version": origin.get("origin_cursor_version"),
         "entity_type": "company",
         "citta": geography,
         "company_size_class": size,

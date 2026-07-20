@@ -312,6 +312,58 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
         )
         priority += 20
 
+    if "technology_adoption" in signals:
+        crm_vendor_exclude = _DEFAULT_EXCLUDED + (
+            "salesforce.com", "hubspot.com", "microsoft.com", "zoho.com", "pipedrive.com",
+        )
+        crm_queries = (
+            '"ricerca nuovo CRM" Italia azienda -Salesforce -HubSpot',
+            '"selezione piattaforma CRM" OR "migrazione CRM" Italia azienda',
+            '"sostituzione CRM" OR "implementazione nuovo CRM" Italia',
+            '"gara CRM" OR "RFP CRM" Italia azienda',
+            '"partner per implementazione CRM" Italia azienda',
+            '"CRM manager" OR "responsabile CRM" migrazione implementazione Italia',
+        )
+        for idx, query in enumerate(crm_queries):
+            strategies.append(
+                DiscoveryStrategy(
+                    strategy_id=f"technology_adoption:crm_hypothesis_{idx}",
+                    signal_type="technology_adoption",
+                    source_class="recognized_news",
+                    search_query=query,
+                    preferred_domains=(),
+                    excluded_domains=crm_vendor_exclude,
+                    freshness_days=spec.freshness_days,
+                    expected_evidence=("company_name", "evidence_excerpt", "source_url"),
+                    estimated_cost=0.005,
+                    priority=max(1, priority - 15 + idx),
+                    fallback_level=0,
+                    adapter_affinity=("generic_web_research_v1",),
+                )
+            )
+
+    if "funding" in signals:
+        strategies.insert(
+            0,
+            DiscoveryStrategy(
+                strategy_id="funding:startup_recipient",
+                signal_type="funding",
+                source_class="recognized_news",
+                search_query=(
+                    f'startup {geo} ("ha raccolto" OR "round di investimento" OR "chiude un round" '
+                    f'OR "annuncia un investimento") -investitori -"venture capital" -fondo -banca'
+                ).strip(),
+                preferred_domains=(),
+                excluded_domains=_DEFAULT_EXCLUDED,
+                freshness_days=spec.freshness_days,
+                expected_evidence=("company_name", "event_date", "evidence_excerpt", "source_url"),
+                estimated_cost=0.005,
+                priority=1,
+                fallback_level=0,
+                adapter_affinity=("generic_web_research_v1",),
+            ),
+        )
+
     # Stable sort: lower priority number first, then fallback_level.
     strategies.sort(key=lambda item: (item.priority, item.fallback_level, item.strategy_id))
     return tuple(strategies)

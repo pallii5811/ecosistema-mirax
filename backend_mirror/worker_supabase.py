@@ -1114,6 +1114,21 @@ def _get_supabase_key() -> str:
     return k
 
 
+def _shadow_unique_target_stop_reason(
+    *,
+    shadow_status: str,
+    unique_lifecycle_count: int,
+    job_max: int,
+    canonical_plan: dict,
+) -> str:
+    if unique_lifecycle_count >= int(job_max):
+        return shadow_status
+    required = (canonical_plan.get("signal_policy") or {}).get("required_signals") or []
+    if any(str(item).startswith("hiring") for item in required):
+        return "UNIQUE_EMPLOYER_TARGET_NOT_REACHED"
+    return "UNIQUE_TARGET_COMPANY_COUNT_NOT_REACHED"
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -5560,9 +5575,15 @@ def main() -> None:
                         for item in shadow_result.adapter_progress
                         if int(getattr(item, "calls", 0) or 0) > 0
                     ]
+                    unique_stop_reason = _shadow_unique_target_stop_reason(
+                        shadow_status=shadow_result.status,
+                        unique_lifecycle_count=len(unique_lifecycle_keys),
+                        job_max=int(job_max),
+                        canonical_plan=canonical_shadow_plan if isinstance(canonical_shadow_plan, dict) else {},
+                    )
                     final_shadow_progress = {
                         "stage": "source_adapter_shadow_resumable" if resumable else "source_adapter_shadow_completed",
-                        "stop_reason": shadow_result.status if len(unique_lifecycle_keys) >= int(job_max) else "UNIQUE_EMPLOYER_TARGET_NOT_REACHED",
+                        "stop_reason": unique_stop_reason,
                         "execution_runtime": "source_adapter_orchestrator",
                         "requested_execution_runtime": requested_runtime,
                         "actual_execution_runtime": "source_adapter_orchestrator",

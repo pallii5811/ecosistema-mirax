@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from contracts.signal_ontology import canonical_signal_id
 from contracts.source_registry import load_source_registry
+from source_adapters.generic_web_provenance import is_careers_only_host
 
 _EXPLICIT_SIZE_CONSTRAINT_RE = re.compile(
     r"\b(?:"
@@ -494,7 +495,14 @@ def evaluate_publication_gate(
     *,
     cost_within_budget: bool = False,
 ) -> Dict[str, Any]:
-    domain = canonical_domain(lead.get("sito") or lead.get("website"))
+    domain = canonical_domain(
+        lead.get("official_domain")
+        or lead.get("employer_official_domain")
+        or lead.get("sito")
+        or lead.get("website")
+    )
+    if domain and is_careers_only_host(domain):
+        domain = ""
     identity = lead.get("domain_verification") if isinstance(lead.get("domain_verification"), dict) else {}
     quality = lead.get("lead_quality_contract") if isinstance(lead.get("lead_quality_contract"), dict) else {}
     semantic_contract = (

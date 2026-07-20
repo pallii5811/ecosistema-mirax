@@ -35,6 +35,14 @@ from .generic_web_budget import (
     load_generic_web_state,
     persist_generic_web_state,
 )
+from .generic_web_provenance import (
+    append_query_telemetry,
+    attach_generic_provenance,
+    evidence_has_fetch_provenance,
+    generic_record_has_fetch_provenance,
+    page_fetch_id,
+    semantic_call_id,
+)
 _SIGNAL_ALIASES: Dict[str, Tuple[str, ...]] = {
     "seeking_supplier": ("ricerca fornitori", "nuovi fornitori", "albo fornitori", "supplier search"),
     "regulatory_change": ("adeguamento normativo", "nuovo obbligo", "nuova normativa", "compliance"),
@@ -307,6 +315,17 @@ def _gate_serp_hits(
         codes=codes,
         provider_query=provider_query,
     )
+    filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
+    append_query_telemetry(
+        filters,
+        query_text=provider_query,
+        raw_provider_hits=raw,
+        prefilter_accepted=len(accepted),
+        prefilter_rejected=raw - len(accepted),
+        rejection_histogram=codes,
+        provider_error=None,
+        cost_eur=QUERY_COST_EUR,
+    )
     return accepted
 
 
@@ -486,7 +505,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
             return GenericWebProviderResult((), 0.0, ("DISCOVERY_BUDGET_RESERVED",))
     queries_run = 0
     for index, query in enumerate(pending_queries[:max_queries]):
-        if accepted_hits and (state.pages_fetched > 0 or state.wave_terminal_rejections > 0):
+        if queries_run > 0:
             break
         if spent + QUERY_COST_EUR > request.budget_eur + 1e-9:
             break
@@ -583,6 +602,12 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                 pages_opened += 1
                 state.pages_fetched += 1
                 state.processed_terminal_urls = (*state.processed_terminal_urls, url)
+                visible_text = _text(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)) or ""
+                fetch_provenance = {
+                    "scope": scope,
+                    "final_url": final_url,
+                    "source_text": visible_text,
+                }
                 if universal:
                     page_host = _host(final_url)
                     # Dynamic relationships are acquisition hypotheses only.
@@ -593,8 +618,8 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                     if isinstance(semantic_contract, Mapping):
                         identities = _structured_subject_identities(html, page_host=page_host)
                     if identities:
-                        visible_text = _text(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)) or ""
                         published = _structured_page_date(html)
+                        visible_text = fetch_provenance["source_text"]
                         if not visible_text or not published:
                             provider_warnings.append("SEMANTIC_SOURCE_PROVENANCE_INCOMPLETE")
                             continue
@@ -602,7 +627,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             company = str(identity.get("name") or "")
                             domain = str(identity.get("domain") or "")
                             excerpt = title.strip() if title.strip() and title.strip() in visible_text else visible_text[:1200]
-                            records.append({
+                            row = {
                                 "company_name": company,
                                 "official_domain": domain,
                                 "organization_url": identity.get("url"),
@@ -625,7 +650,22 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 "discovery_round": int(request.technical_filters.get("discovery_round") or 1),
                                 "provider_query": provider_query,
                                 "search_provider": search_provider,
-                            })
+                            }
+                            attach_generic_provenance(
+                                row,
+                                adapter_id="generic_web_research_v1",
+                                search_scope=scope,
+                                execution_round=int(request.technical_filters.get("discovery_round") or state.provider_calls or 1),
+                                provider_call_id=f"serp:{scope}:{state.provider_calls}",
+                                page_fetch_id_value=page_fetch_id(
+                                    search_scope=scope,
+                                    url=str(fetch_provenance["final_url"]),
+                                    wave_index=state.pages_fetched,
+                                ),
+                                source_text=visible_text,
+                                cursor_version=request.cursor.value if request.cursor else "generic-web:v2",
+                            )
+                            records.append(row)
                         continue
                     # Open-world pages often lack JSON-LD about/mentions. Keep the
                     # page as source_text via universal evidence extraction so
@@ -643,7 +683,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                         company_name_hint=company_hint,
                         requested_signals=(),
                     )
-                    if not events and snippet:
+                    if not events and snippet and request.technical_filters.get("semantic_authority_required") is not True:
                         events = extract_evidence_from_text(
                             text=f"{title}. {snippet}",
                             source_url=final_url,
@@ -676,7 +716,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             matched_ids = list(request.signal_ids)
                         if not matched_ids:
                             continue
-                        records.append({
+                        row = {
                             "company_name": event.company_name,
                             "official_domain": domain,
                             "official_domain_verified": False,
@@ -689,7 +729,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             "source_class": event.source_class,
                             "evidence_excerpt": event.evidence_excerpt,
                             "extraction_method": "universal_evidence",
-                            "source_text": (_text(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)) or "")[:250_000],
+                            "source_text": visible_text[:250_000],
                             "why_now": event.evidence_excerpt[:260],
                             "buyer_fit": 0.75,
                             "query_origin": request.technical_filters.get("query_origin") or request.query,
@@ -697,7 +737,22 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             "discovery_round": int(request.technical_filters.get("discovery_round") or 1),
                             "provider_query": provider_query,
                             "search_provider": search_provider,
-                        })
+                        }
+                        attach_generic_provenance(
+                            row,
+                            adapter_id="generic_web_research_v1",
+                            search_scope=scope,
+                            execution_round=int(request.technical_filters.get("discovery_round") or state.provider_calls or 1),
+                            provider_call_id=f"serp:{scope}:{state.provider_calls}",
+                            page_fetch_id_value=page_fetch_id(
+                                search_scope=scope,
+                                url=str(fetch_provenance["final_url"]),
+                                wave_index=state.pages_fetched,
+                            ),
+                            source_text=visible_text,
+                            cursor_version=request.cursor.value if request.cursor else "generic-web:v2",
+                        )
+                        records.append(row)
                 else:
                     records.extend(parse_primary_evidence_page(html, final_url, request))
             except Exception:
@@ -746,6 +801,10 @@ def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
         return False, "COMPANY_MISSING"
     if not domain or is_blacklisted_domain(domain):
         return False, "OFFICIAL_DOMAIN_UNRESOLVED"
+    if universal:
+        ok_prov, prov_code = generic_record_has_fetch_provenance(record)
+        if not ok_prov:
+            return False, prov_code
     if record.get("official_domain_verified") is not True:
         return False, "OFFICIAL_DOMAIN_UNVERIFIED"
     if (_text(record.get("entity_class")) or "") != "operating_company":
@@ -949,6 +1008,12 @@ class GenericWebResearchAdapter:
                         "page_title": record.get("page_title"),
                         "search_snippet": record.get("search_snippet"),
                         "structured_metadata": record.get("structured_metadata") or {},
+                        "origin_adapter_id": record.get("origin_adapter_id"),
+                        "origin_execution_round": record.get("origin_execution_round"),
+                        "origin_provider_call_id": record.get("origin_provider_call_id"),
+                        "origin_page_fetch_id": record.get("origin_page_fetch_id"),
+                        "origin_source_text_hash": record.get("origin_source_text_hash"),
+                        "origin_cursor_version": record.get("origin_cursor_version"),
                     },
                 ) for signal in matched)
                 if not evidence:
@@ -973,6 +1038,12 @@ class GenericWebResearchAdapter:
                         "provider_query": record.get("provider_query"),
                         "limitations": "sampled web evidence; no global source exhaustion claim",
                         "domain_verification": domain_verification,
+                        "origin_adapter_id": record.get("origin_adapter_id"),
+                        "origin_execution_round": record.get("origin_execution_round"),
+                        "origin_provider_call_id": record.get("origin_provider_call_id"),
+                        "origin_page_fetch_id": record.get("origin_page_fetch_id"),
+                        "origin_source_text_hash": record.get("origin_source_text_hash"),
+                        "origin_cursor_version": record.get("origin_cursor_version"),
                     },
                     adapter_id=self.capability.adapter_id, adapter_version=self.capability.adapter_version,
                     official_domain_verified=record.get("official_domain_verified") is True,
