@@ -503,7 +503,7 @@ _LEGAL_SUFFIX_RE = re.compile(
 def _company_core_tokens(value: str) -> set[str]:
     import unicodedata
 
-    text = unicodedata.normalize("NFKC", _text(value).casefold())
+    text = unicodedata.normalize("NFKC", (_text(value) or "").casefold())
     text = _LEGAL_SUFFIX_RE.sub(" ", text)
     stop = {"the", "and", "per", "del", "della", "delle", "dei", "degli", "della", "news", "notizie"}
     return {
@@ -551,8 +551,10 @@ def _company_identity_hint(*, title: str, snippet: str, html: str) -> str:
         return leading
     combined = f"{title} {snippet} {visible[:100_000]}"
     legal = _LEGAL_ENTITY_RE.search(combined)
-    if legal and _company_core_tokens(legal.group(1)) & _company_core_tokens(f"{title} {snippet}"):
-        return legal.group(1).strip()
+    if legal:
+        legal_name = legal.group(1).strip()
+        if legal_name and _company_core_tokens(legal_name) & _company_core_tokens(f"{title} {snippet}"):
+            return legal_name
     structured = _structured_subject_company(html)
     if structured and _company_core_tokens(structured) & _company_core_tokens(f"{title} {snippet}"):
         return structured
