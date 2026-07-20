@@ -51,16 +51,19 @@ def capability(adapter_id: str, signals: tuple[str, ...], *, fallback=False, cos
 
 
 def candidate(company: str, domain: str, signal: str, adapter_id: str) -> OpportunityCandidate:
+    excerpt = f"{company} prova esplicita {signal}"
+    source_text = f"{excerpt}. " + ("contesto letterale sufficiente per il grounding semantico. " * 4)
     evidence = EvidenceRecord(
         signal_id=signal,
         source_url=f"https://source.test/{adapter_id}/{domain}",
         source_publisher="Fixture Publisher",
         source_class=f"{adapter_id}_source",
-        excerpt=f"{company} prova esplicita {signal}",
+        excerpt=excerpt,
         observed_at=datetime.now(timezone.utc).isoformat(),
         published_at=date.today().isoformat(),
         extraction_method="fixture",
         confidence=0.95,
+        provenance={"source_text": source_text, "page_title": company, "search_snippet": excerpt},
     )
     return OpportunityCandidate(
         canonical_company_name=company,

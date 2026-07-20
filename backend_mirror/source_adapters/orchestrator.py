@@ -1074,6 +1074,20 @@ class UniversalSourceOrchestrator:
                                 reasons=(identity_code,),
                                 semantic_grounding=decision.semantic_grounding,
                             )
+                        elif not decision.qualified:
+                            requalified = await default_candidate_qualifier(merged)
+                            decision = QualificationDecision(
+                                requalified.qualified,
+                                decision.audited or requalified.audited,
+                                decision.evidence_verified or requalified.evidence_verified,
+                                requalified.rejection_code,
+                                reasons=(
+                                    ("semantic_authority_passed", "post_semantic_identity", *requalified.reasons)
+                                    if requalified.qualified
+                                    else requalified.reasons
+                                ),
+                                semantic_grounding=decision.semantic_grounding,
+                            )
                     decisions[key] = decision
                     if not decision.qualified:
                         code = decision.rejection_code or "QUALIFICATION_FAILED"
