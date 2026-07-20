@@ -7,6 +7,9 @@ sys.path.insert(0, str(Path("/tmp")))
 from mirax_forensic_provenance import extract
 
 IDS = {
+    "q7_live2": "ca7b0d50-37b3-44e5-b553-11583851384e",
+    "q2_live2": "1c7fb323-a03d-474a-bd6e-c469888a634a",
+    "q4_live2": "1169e4b7-69ca-47cc-99fa-04d637f53982",
     "q7_live": "590daa06-adf7-48f2-bc45-935f6a55e75a",
     "q2_live": "84da94c5-6eee-4dfa-9393-bf29a26548c0",
     "q4_live": "8ed5e2a1-d78d-43ac-be36-050b43f44d76",
