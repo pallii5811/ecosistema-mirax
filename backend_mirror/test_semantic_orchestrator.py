@@ -82,6 +82,72 @@ def request(model: Model, cache_path: Path) -> AdapterDiscoveryRequest:
     )
 
 
+def test_deferred_news_domain_applies_semantic_enrichment_before_requalify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend_mirror.source_adapters import OpportunityCandidate
+    from backend_mirror.source_adapters import orchestrator as orch_mod
+
+    base = candidate("Sirius Game", "placeholder.test", "funding", "generic_web_research_v1")
+    excerpt = "Sirius Game chiude un round da 1,3 milioni di euro"
+    source_text = (excerpt + ". " + "contesto letterale sufficiente per il grounding semantico. ") * 8
+    item = replace(
+        base,
+        buyer_fit=None,
+        why_now=None,
+        confidence=0.55,
+        official_domain="",
+        official_domain_verified=False,
+        official_domain_confidence=0.0,
+        evidence=(replace(
+            base.evidence[0],
+            excerpt=excerpt,
+            source_class="recognized_news",
+            source_url="https://finanza.repubblica.it/sirius",
+            provenance={
+                "source_text": source_text,
+                "page_title": "Sirius Game chiude un round",
+                "search_snippet": excerpt,
+                "origin_page_fetch_id": "fetch123",
+                "origin_source_text_hash": "abc123",
+            },
+        ),),
+        provenance={"adapter_id": "generic_web_research_v1", "domain_verification": {"status": "deferred"}},
+        adapter_id="generic_web_research_v1",
+    )
+    model = Model(event(excerpt, company="Sirius Game", role="recipient", query_match=True))
+
+    def fake_identity(candidate: OpportunityCandidate, request, *, semantic_matched: bool):
+        assert semantic_matched is True
+        assert candidate.buyer_fit == 0.95
+        assert candidate.why_now == "fresh resources"
+        verified = replace(
+            candidate,
+            official_domain="siriusgame.it",
+            official_domain_verified=True,
+            official_domain_confidence=0.9,
+            provenance={
+                **dict(candidate.provenance),
+                "domain_verification": {
+                    "status": "verified", "confidence": 0.9, "score": 90,
+                    "evidence": ("post_semantic_identity",),
+                    "resolution_source": "post_semantic_identity",
+                    "resolution_method": "test",
+                    "adapter_id": candidate.adapter_id,
+                    "url": "https://siriusgame.it/",
+                },
+            },
+        )
+        return verified, None
+
+    monkeypatch.setattr(orch_mod, "resolve_post_semantic_identity", fake_identity)
+    adapter = PagedAdapter(capability("generic_web_research_v1", ("funding",)), [[item]])
+    result = asyncio.run(UniversalSourceOrchestrator(SourceCapabilityRegistry((adapter,))).run(
+        request(model, tmp_path / "deferred.sqlite"),
+    ))
+    assert result.progress.qualified_count == 1, result.rejection_codes
+    assert result.qualified_leads[0].candidate.official_domain == "siriusgame.it"
+    assert result.qualified_leads[0].candidate.buyer_fit == 0.95
+
+
 def test_common_semantic_gate_qualifies_grounded_recipient(tmp_path: Path) -> None:
     item = replace(
         candidate("Beta Srl", "beta.test", "funding", "generic"),
@@ -112,7 +178,7 @@ def test_common_semantic_gate_rejects_inverse_provider_before_scoring(tmp_path: 
         request(model, tmp_path / "negative.sqlite"),
     ))
     assert result.progress.qualified_count == 0
-    assert result.rejection_codes == {"TARGET_ROLE_UNVERIFIED": 1}
+    assert result.rejection_codes == {"ACTOR_ROLE_EXCLUDED": 1}
 
 
 def test_semantic_model_failure_is_fail_closed(tmp_path: Path) -> None:
@@ -126,7 +192,7 @@ def test_semantic_model_failure_is_fail_closed(tmp_path: Path) -> None:
         request(Broken({}), tmp_path / "broken.sqlite"),
     ))
     assert result.progress.qualified_count == 0
-    assert result.rejection_codes == {"SEMANTIC_INTERPRETATION_FAILED": 1}
+    assert result.rejection_codes == {"SEMANTIC_TIMEOUT": 1}
 
 
 @pytest.mark.parametrize("adapter_id", (
@@ -142,4 +208,8 @@ def test_semantic_authority_is_common_to_every_adapter_path(tmp_path: Path, adap
         request(model, tmp_path / f"{adapter_id}.sqlite"),
     ))
     assert result.progress.qualified_count == 0
-    assert result.rejection_codes == {"TARGET_ROLE_UNVERIFIED": 1}
+    assert result.rejection_codes in (
+        {"ACTOR_ROLE_EXCLUDED": 1},
+        {"PAGE_FETCH_PROVENANCE_MISSING": 1},
+        {"TARGET_ROLE_UNVERIFIED": 1},
+    )

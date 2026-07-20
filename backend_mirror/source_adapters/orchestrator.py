@@ -442,6 +442,32 @@ def _apply_semantic_enrichment(
     )
 
 
+def _apply_semantic_candidate_enrichment(
+    candidate: OpportunityCandidate,
+    enrichment: Mapping[str, Any],
+) -> OpportunityCandidate:
+    """Apply semantic enrichment onto the live candidate before identity/requalify."""
+    buyer_fit = enrichment.get("buyer_fit")
+    why_now = str(enrichment.get("why_now") or "").strip()
+    signal_date = str(enrichment.get("signal_date") or "").strip()
+    confidence = enrichment.get("confidence")
+    try:
+        buyer_fit_value = float(buyer_fit) if buyer_fit is not None else candidate.buyer_fit
+    except (TypeError, ValueError):
+        buyer_fit_value = candidate.buyer_fit
+    try:
+        confidence_value = float(confidence) if confidence is not None else candidate.confidence
+    except (TypeError, ValueError):
+        confidence_value = candidate.confidence
+    return replace(
+        candidate,
+        buyer_fit=buyer_fit_value if buyer_fit_value is not None else candidate.buyer_fit,
+        why_now=why_now or candidate.why_now,
+        signal_date=signal_date or candidate.signal_date,
+        confidence=max(candidate.confidence, confidence_value or 0.0),
+    )
+
+
 async def default_candidate_qualifier(candidate: OpportunityCandidate) -> QualificationDecision:
     if not candidate.official_domain:
         return QualificationDecision(False, False, False, "OFFICIAL_DOMAIN_UNRESOLVED")
@@ -1068,6 +1094,10 @@ class UniversalSourceOrchestrator:
                     else:
                         decision = await self.qualifier(merged)
                     if decision.semantic_grounding and decision.semantic_grounding.get("accepted"):
+                        enrichment = decision.semantic_grounding.get("candidate_enrichment")
+                        if isinstance(enrichment, Mapping):
+                            merged = _apply_semantic_candidate_enrichment(merged, enrichment)
+                            accumulated[key] = merged
                         merged, identity_code = resolve_post_semantic_identity(
                             merged,
                             request,
