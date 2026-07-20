@@ -65,6 +65,10 @@ class GenericWebDiscoveryState:
             return False
         if float(hard_cap_eur) + 1e-9 < self.reserved_floor_eur():
             return governor_remaining + 1e-9 >= QUERY_COST_EUR
+        # Content-shell follow-ups run after semantic may already have spent the
+        # reserve floor. Only require room for the SERP itself.
+        if self.followup_queries:
+            return governor_remaining + 1e-9 >= QUERY_COST_EUR
         need = QUERY_COST_EUR + self.reserved_floor_eur()
         if governor_remaining + 1e-9 < need and spent_eur + QUERY_COST_EUR > hard_cap_eur - self.reserved_floor_eur() + 1e-9:
             return False
