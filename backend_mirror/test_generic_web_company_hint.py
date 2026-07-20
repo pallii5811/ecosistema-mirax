@@ -33,6 +33,18 @@ def test_company_hint_accepts_abbreviated_commercial_name() -> None:
     assert company_hint_present_in_source("International Business Machines S.p.A.", source)
 
 
+def test_company_hint_accepts_verified_acronym_when_expanded_in_source() -> None:
+    source = "IBM (International Business Machines) annuncia un nuovo round."
+    assert company_hint_present_in_source("IBM", source)
+    assert company_hint_present_in_source("International Business Machines", source)
+
+
+def test_company_hint_matches_whitespace_and_punctuation_noise() -> None:
+    source = "Sirius   Game — la startup edutech chiude un round."
+    assert company_hint_present_in_source("Sirius Game", source)
+    assert company_hint_present_in_source("Sirius-Game S.r.l.", source)
+
+
 def test_company_hint_rejects_missing_target_on_listing_shell() -> None:
     source = "Notizie dalle agenzie - Borsa Italiana Accedi Registrati"
     assert not company_hint_present_in_source("Sirius Game", source)

@@ -320,7 +320,28 @@ def resolve_official_identity(
         return None
 
     loc = (location or "").strip()
-    query = f'"{name}" {loc} sito ufficiale'.strip()
+    # Prefer owned-host guesses before paying for SERP. Brand.TLD names and
+    # compact token hosts (siriusgame.it) often verify while news SERPs do not.
+    try:
+        from backend_mirror.agents.entity_identity_resolver import (
+            company_owns_host,
+            domain_candidates_from_company_name,
+        )
+    except Exception:  # pragma: no cover - packaging fallback
+        from .entity_identity_resolver import (  # type: ignore
+            company_owns_host,
+            domain_candidates_from_company_name,
+        )
+
+    for host in domain_candidates_from_company_name(name):
+        if not company_owns_host(name, host):
+            continue
+        verified = verify_company_domain(name, f"https://{host}/", location)
+        if verified:
+            verified["resolution_source"] = "name_shaped_host"
+            return verified
+
+    query = f'"{name}" {loc} (sito ufficiale OR "official website" OR homepage)'.strip()
     try:
         from .search_serp import search_urls_http
 
@@ -335,7 +356,15 @@ def resolve_official_identity(
 
     seen: Set[str] = set()
     verified_candidates: List[Dict[str, Any]] = []
-    for url in urls:
+    # Score owned hosts first so news/directory SERP noise is deprioritized.
+    ranked_urls = sorted(
+        enumerate(urls),
+        key=lambda pair: (
+            0 if company_owns_host(name, normalize_domain(pair[1])) else 1,
+            pair[0],
+        ),
+    )
+    for _idx, url in ranked_urls:
         host = normalize_domain(url)
         if not host or host in seen:
             continue

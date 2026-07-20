@@ -185,6 +185,68 @@ def company_owns_host(company_name: str, host: str, *, brand_name: str = "", acr
     return False
 
 
+# Brand names that already look like hostnames (LexDo.it, Sintropy.AI).
+_DOMAIN_SHAPED_NAME_RE = re.compile(
+    r"^([A-Za-z0-9][A-Za-z0-9-]{1,40})\.(ai|io|it|com|eu|co|net|app|dev|tech|cloud)$",
+    re.I,
+)
+_DOMAIN_IN_TEXT_RE = re.compile(
+    r"(?:https?://(?:www\.)?)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z]{2,24}){1,2})",
+    re.I,
+)
+_COMMON_CORPORATE_TLDS = ("it", "com", "ai", "io", "eu", "net", "co")
+
+
+def domain_candidates_from_company_name(company_name: str) -> Tuple[str, ...]:
+    """Deterministic hostname candidates derived only from the company name."""
+    text = re.sub(r"\s+", " ", str(company_name or "")).strip()
+    if not text:
+        return ()
+    out: list[str] = []
+    shaped = _DOMAIN_SHAPED_NAME_RE.match(text)
+    if shaped:
+        out.append(f"{shaped.group(1).casefold()}.{shaped.group(2).casefold()}")
+    # Strip legal suffix then retry shape on the commercial core.
+    core = _LEGAL_SUFFIX_RE.sub(" ", text).strip(" ,.-")
+    if core and core.casefold() != text.casefold():
+        shaped_core = _DOMAIN_SHAPED_NAME_RE.match(core)
+        if shaped_core:
+            out.append(f"{shaped_core.group(1).casefold()}.{shaped_core.group(2).casefold()}")
+    tokens = identity_tokens(text)
+    if tokens:
+        joined = "".join(tokens)
+        if len(joined) >= 4:
+            for tld in _COMMON_CORPORATE_TLDS:
+                out.append(f"{joined}.{tld}")
+        if len(tokens) >= 2:
+            hyphen = "-".join(tokens)
+            if len(hyphen) >= 5:
+                for tld in ("it", "com", "eu"):
+                    out.append(f"{hyphen}.{tld}")
+    return tuple(dict.fromkeys(item for item in out if item and not is_blacklisted_domain(item)))
+
+
+def domain_candidates_from_evidence_text(
+    company_name: str,
+    text: str,
+    *,
+    brand_name: str = "",
+    acronym: str = "",
+) -> Tuple[str, ...]:
+    """Pull hostname mentions from already-fetched evidence that the company owns."""
+    blob = str(text or "")
+    if not blob or not company_name:
+        return ()
+    out: list[str] = []
+    for match in _DOMAIN_IN_TEXT_RE.finditer(blob):
+        host = host_of(match.group(1))
+        if not host or is_blacklisted_domain(host):
+            continue
+        if company_owns_host(company_name, host, brand_name=brand_name, acronym=acronym):
+            out.append(host)
+    return tuple(dict.fromkeys(out))
+
+
 def classify_entity(
     company_name: str,
     *,
@@ -504,6 +566,48 @@ def resolve_entity_identity(
                 evidence=tuple(raw.get("evidence") or ()) + ("structured_data_identity",),
                 method="structured_data_verification",
                 source="structured_data",
+                cost_eur=cost,
+                cache=active_cache,
+                geography=request.geography,
+            )
+
+    # 5b) Free candidates from name shape + already-fetched evidence text.
+    # News SERPs often bury the corporate homepage; verifying an owned host
+    # mentioned in source_text (or implied by Brand.TLD names) costs €0.
+    evidence_blobs = [
+        str(request.page_html or ""),
+        str(request.source_payload.get("source_text") or ""),
+        str(request.source_payload.get("evidence_excerpt") or ""),
+        str(request.source_payload.get("page_title") or ""),
+        str(request.source_payload.get("search_snippet") or ""),
+    ]
+    free_hosts: list[str] = []
+    free_hosts.extend(domain_candidates_from_company_name(name))
+    if brand:
+        free_hosts.extend(domain_candidates_from_company_name(brand))
+    for blob in evidence_blobs:
+        free_hosts.extend(
+            domain_candidates_from_evidence_text(
+                name, blob, brand_name=brand, acronym=acronym
+            )
+        )
+    free_attempts = 0
+    for host in dict.fromkeys(free_hosts):
+        if free_attempts >= 6:
+            break
+        if not company_owns_host(name, host, brand_name=brand, acronym=acronym):
+            continue
+        free_attempts += 1
+        raw = _verify_candidate(verify_fn, name, f"https://{host}/", request.geography)
+        if raw:
+            return _accept(
+                name=name,
+                domain=str(raw.get("url") or host),
+                entity_class="operating_company" if entity_class in {"unknown", "operating_company"} else entity_class,
+                confidence=float(raw.get("confidence") or 0.9),
+                evidence=tuple(raw.get("evidence") or ()) + ("free_owned_host_candidate",),
+                method="free_owned_host_verification",
+                source="name_or_evidence_host_candidate",
                 cost_eur=cost,
                 cache=active_cache,
                 geography=request.geography,

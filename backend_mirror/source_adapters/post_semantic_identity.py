@@ -26,8 +26,24 @@ def resolve_post_semantic_identity(
 
     provenance = candidate.provenance if isinstance(candidate.provenance, Mapping) else {}
     source_url = ""
+    source_text = ""
+    page_title = ""
+    search_snippet = ""
+    evidence_excerpt = ""
     if candidate.evidence:
         source_url = str(candidate.evidence[0].source_url or "")
+        evidence_excerpt = str(candidate.evidence[0].excerpt or "")
+        ev_prov = candidate.evidence[0].provenance if isinstance(candidate.evidence[0].provenance, Mapping) else {}
+        source_text = str(ev_prov.get("source_text") or provenance.get("source_text") or "")
+        page_title = str(ev_prov.get("page_title") or provenance.get("page_title") or "")
+        search_snippet = str(ev_prov.get("search_snippet") or provenance.get("search_snippet") or "")
+    identity_payload = {
+        **dict(provenance),
+        "source_text": source_text,
+        "page_title": page_title,
+        "search_snippet": search_snippet,
+        "evidence_excerpt": evidence_excerpt,
+    }
     identity = resolve_entity_identity(
         EntityIdentityRequest(
             company_name=candidate.canonical_company_name,
@@ -37,7 +53,7 @@ def resolve_post_semantic_identity(
             budget_eur=IDENTITY_RESERVE_EUR,
             allow_serp=True,
             allowed_entity_classes=tuple(COMMERCIAL_ENTITY_CLASSES),
-            source_payload=dict(provenance),
+            source_payload=identity_payload,
         )
     )
     if not identity.official_domain or str(identity.identity_status or "").lower() != "verified":

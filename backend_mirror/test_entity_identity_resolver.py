@@ -263,6 +263,9 @@ def test_12_max_cost_respected() -> None:
         serp_calls["n"] += 1
         return _serp_ok(company, location, max_results)
 
+    def verify_none(*_a, **_k):
+        return None
+
     result = resolve_entity_identity(
         EntityIdentityRequest(
             company_name="Delta Srl",
@@ -270,7 +273,7 @@ def test_12_max_cost_respected() -> None:
             budget_eur=0.001,
         ),
         cache=MemoryEntityDomainCache(),
-        verify_fn=_verify_ok,
+        verify_fn=verify_none,
         serp_fn=serp_fn,
     )
     assert result.rejection_code == "IDENTITY_BUDGET_EXCEEDED"
@@ -392,3 +395,58 @@ def test_news_evidence_host_does_not_classify_target_as_directory() -> None:
     assert result.identity_status == "verified", result.rejection_code
     assert result.official_domain == "siriusgame.it"
     assert result.rejection_code is None
+
+
+def test_domain_shaped_company_name_resolves_without_serp() -> None:
+    """LexDo.it / Sintropy.AI style names imply a verifiable corporate host."""
+    from backend_mirror.agents.entity_identity_resolver import domain_candidates_from_company_name
+
+    assert "sintropy.ai" in domain_candidates_from_company_name("Sintropy.AI")
+    assert "lexdo.it" in domain_candidates_from_company_name("LexDo.it")
+    assert "acme.it" in domain_candidates_from_company_name("ACME S.p.A.") or "acme.com" in domain_candidates_from_company_name(
+        "ACME S.p.A."
+    )
+
+    def _serp_must_not_run(*_a, **_k):
+        raise AssertionError("SERP must not run when name-shaped host verifies")
+
+    result = resolve_entity_identity(
+        EntityIdentityRequest(
+            company_name="Sintropy.AI",
+            evidence_url="https://www.energiamercato.it/notizie/enertech/sintropy-ai-round/",
+            presented_domain="",
+            geography="Italia",
+            budget_eur=0.0,
+            allow_serp=True,
+            allowed_entity_classes=tuple(COMMERCIAL_ENTITY_CLASSES),
+            source_payload={"source_text": "Sintropy.AI chiude un round. Visita sintropy.ai per dettagli."},
+        ),
+        cache=MemoryEntityDomainCache(),
+        verify_fn=_verify_ok,
+        serp_fn=_serp_must_not_run,
+    )
+    assert result.identity_status == "verified", result.rejection_code
+    assert result.official_domain == "sintropy.ai"
+    assert "free_owned_host_candidate" in result.identity_evidence
+
+
+def test_compact_brand_host_guess_for_multi_token_name() -> None:
+    def _serp_must_not_run(*_a, **_k):
+        raise AssertionError("SERP must not run when compact host verifies")
+
+    result = resolve_entity_identity(
+        EntityIdentityRequest(
+            company_name="Sirius Game",
+            evidence_url="https://example-news.test/sirius",
+            presented_domain="",
+            geography="Italia",
+            budget_eur=0.0,
+            allow_serp=True,
+            allowed_entity_classes=tuple(COMMERCIAL_ENTITY_CLASSES),
+        ),
+        cache=MemoryEntityDomainCache(),
+        verify_fn=_verify_ok,
+        serp_fn=_serp_must_not_run,
+    )
+    assert result.identity_status == "verified", result.rejection_code
+    assert result.official_domain == "siriusgame.it"
