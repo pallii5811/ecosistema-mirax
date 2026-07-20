@@ -119,3 +119,20 @@ def test_can_reserve_serp_after_first_semantic_for_second_lead() -> None:
     assert state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.02, governor_remaining=0.03)
     assert not state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.035, governor_remaining=0.015)
 
+
+def test_discovery_soft_cap_lifts_after_first_wave_drained() -> None:
+    from backend_mirror.source_adapters.generic_web_budget import (
+        DISCOVERY_SOFT_CAP_EUR,
+        GenericWebDiscoveryState,
+    )
+
+    state = GenericWebDiscoveryState(
+        provider_calls=3,
+        discovery_spent_eur=DISCOVERY_SOFT_CAP_EUR,
+        pages_fetched=40,
+        pending_urls=(),
+    )
+    assert state.discovery_cap_eur(0.05) > DISCOVERY_SOFT_CAP_EUR
+    assert state.discovery_remaining_eur(0.05) + 1e-9 >= 0.005
+    assert state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.015, governor_remaining=0.035)
+

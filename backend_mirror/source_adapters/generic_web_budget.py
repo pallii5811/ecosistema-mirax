@@ -52,6 +52,16 @@ class GenericWebDiscoveryState:
         base = min(DISCOVERY_SOFT_CAP_EUR, hard_discovery)
         if self.followup_queries:
             return hard_discovery
+        # Soft cap bounds the first wave only. Once that wave is drained and
+        # pages were already fetched, allow further SERPs up to hard_discovery
+        # so a second unique lead can be discovered inside the canary envelope.
+        if (
+            self.provider_calls >= 1
+            and self.pages_fetched > 0
+            and not self.pending_urls
+            and float(self.discovery_spent_eur) + 1e-9 >= DISCOVERY_SOFT_CAP_EUR
+        ):
+            return hard_discovery
         return base
 
     def discovery_remaining_eur(self, hard_cap_eur: float) -> float:
