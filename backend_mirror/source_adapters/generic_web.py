@@ -348,10 +348,17 @@ _CONTENT_SHELL_HOST_SUFFIXES = (
 _PREFERRED_NEWS_HOST_SUFFIXES = (
     "repubblica.it",
     "ansa.it",
-    "startupitalia.eu",
+    "bebeez.it",
     "ilsole24ore.com",
     "corriere.it",
     "energiamercato.it",
+    # startupitalia.eu frequently returns Cloudflare challenges to datacenter IPs;
+    # keep it fetchable but not preferred over hosts that return real article HTML.
+)
+_CHALLENGE_PAGE_RE = re.compile(
+    r"(just a moment|attention required|cf-browser-verification|checking your browser|"
+    r"enable javascript and cookies|verify you are human|access denied|ddos-guard)",
+    re.I,
 )
 
 
@@ -576,13 +583,19 @@ def company_hint_present_in_source(hint: str, source_text: str) -> bool:
     return len(overlap) >= max(1, len(hint_tokens) - 1)
 
 
+_STARTUP_DESCRIPTOR = (
+    r"(?:italiana|italo-americana|edutech|deeptech|fintech|biotech|cleantech|saas|ai|tech)?"
+)
 _SNIPPET_COMPANY_PATTERNS = (
+    # Prefer "la startup … Name chiude/ha/annuncia" over topical prefixes.
     re.compile(
-        r"^([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,4})\s*,?\s*la startup",
+        rf"\bla startup(?:\s+{_STARTUP_DESCRIPTOR})?\s+"
+        r"([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+"
+        r"(?:chiude|ha|annuncia|raccoglie)\b",
         re.I,
     ),
     re.compile(
-        r"\bla startup(?:\s+\w+){0,3}\s+([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+chiude",
+        r"^([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,4})\s*,?\s*la startup",
         re.I,
     ),
     re.compile(
@@ -607,7 +620,7 @@ def _snippet_company_hint(snippet: str) -> str:
         if not match:
             continue
         name = match.group(1).strip()
-        if name and not _GENERIC_TITLE_RE.search(name):
+        if name and not _GENERIC_TITLE_RE.search(name) and _looks_like_company_name(name):
             return name
     return ""
 
@@ -621,14 +634,27 @@ _TITLE_ACTION_TAIL_RE = re.compile(
 
 
 def _looks_like_company_name(value: str) -> bool:
-    text = (_text(value) or "").strip()
+    text = (_text(value) or "").strip().strip(".")
     if not text or len(text) > _COMPANY_NAME_MAX_LEN:
         return False
     if len(text.split()) > _COMPANY_NAME_MAX_WORDS:
         return False
     if _GENERIC_TITLE_RE.search(text):
         return False
-    if re.match(r"^(Le|La|Lo|Gli|I|Un|Una|Uno|Più|Molte|Tutte|Tutti|Press|News|Blog|Home)\b", text, re.I):
+    if re.match(
+        r"^(Le|La|Lo|Gli|I|Un|Una|Uno|Più|Molte|Tutte|Tutti|Press|News|Blog|Home|"
+        r"Our|The|This|Just|Pubblicit[aà])\b",
+        text,
+        re.I,
+    ):
+        return False
+    # Sector/topic labels and bot-challenge chrome are not companies.
+    if re.fullmatch(
+        r"(?:digital\s+)?(?:bio|fin|edu|clean|deep|health|food)?tech|"
+        r"admissions?\s+process|just a moment(?:\s+\.+)?|equity crowdfunding",
+        text,
+        re.I,
+    ):
         return False
     # Job titles must never become funding followup targets.
     if re.search(
@@ -639,12 +665,35 @@ def _looks_like_company_name(value: str) -> bool:
     ):
         return False
     if re.search(
-        r"\b(milioni di investimenti|startup italiane|mercato|economia|notizie|modalit[aà]|adesione|iscrizione)\b",
+        r"\b(milioni di investimenti|startup italiane|mercato|economia|notizie|modalit[aà]|"
+        r"adesione|iscrizione|checking your browser)\b",
         text,
         re.I,
     ):
         return False
     return bool(re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", text))
+
+
+def _is_challenge_or_empty_page(*, status_code: int, title: str, visible_text: str, html: str = "") -> bool:
+    if int(status_code or 0) != 200:
+        return True
+    blob = f"{title} {visible_text[:2500]} {(html or '')[:2500]}"
+    if _CHALLENGE_PAGE_RE.search(blob):
+        return True
+    # Only treat near-empty shells as missing content. Short fixture articles must remain valid.
+    return len((visible_text or "").strip()) < 24
+
+
+def _serp_company_hint(*, title: str, snippet: str) -> str:
+    """Company identity from SERP fields only — used before/without HTML body."""
+    for text in (title, snippet, f"{title} {snippet}"):
+        hint = _snippet_company_hint(text)
+        if hint and _looks_like_company_name(hint):
+            return hint
+    leading = _title_company_leading(title)
+    if leading and _looks_like_company_name(leading):
+        return leading
+    return ""
 
 
 def _trim_title_company_candidate(value: str) -> str:
@@ -687,7 +736,17 @@ def _enqueue_content_shell_followup(
 
 
 def _title_company_leading(title: str) -> str:
-    leading = re.split(r"\s+[|–—-]\s+|:\s+", title or "", maxsplit=1)[0].strip()
+    text = (_text(title) or "").strip()
+    # Prefer explicit "… la startup [descriptor] Name chiude/ha/annuncia …".
+    startup_named = _snippet_company_hint(text)
+    if startup_named and _looks_like_company_name(startup_named):
+        return startup_named
+    leading = re.split(r"\s+[|–—-]\s+|:\s+", text, maxsplit=1)[0].strip()
+    # When the headline is "Topic, la startup Name …", skip the topical clause.
+    if ", la startup" in leading.casefold() or ", la startup" in text.casefold():
+        startup_named = _snippet_company_hint(text)
+        if startup_named and _looks_like_company_name(startup_named):
+            return startup_named
     for raw in (leading.split(",", 1)[0].strip(), leading):
         candidate = _trim_title_company_candidate(raw)
         if _looks_like_company_name(candidate):
@@ -783,13 +842,19 @@ def _append_semantic_deferred_news_record(
 def _company_identity_hint(*, title: str, snippet: str, html: str) -> str:
     """Return only an identity explicitly present in acquired evidence."""
     visible = _text(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)) or ""
+    if _is_challenge_or_empty_page(status_code=200, title=title, visible_text=visible, html=html):
+        # Challenge/empty HTML must not invent identities; SERP fields remain usable.
+        return _serp_company_hint(title=title, snippet=snippet)
     serp_text = f"{title} {snippet}".casefold()
+    # Prefer explicit startup-name patterns over topical title prefixes
+    # ("Digital biotech, la startup italiana GenomeUp …").
+    for text in (snippet, title, f"{title} {snippet}"):
+        snippet_hint = _snippet_company_hint(text)
+        if snippet_hint and snippet_hint.casefold() in serp_text and _looks_like_company_name(snippet_hint):
+            return snippet_hint
     leading = _title_company_leading(title)
-    if leading and leading.casefold() in serp_text:
+    if leading and leading.casefold() in serp_text and _looks_like_company_name(leading):
         return leading
-    snippet_hint = _snippet_company_hint(snippet)
-    if snippet_hint and snippet_hint.casefold() in serp_text and _looks_like_company_name(snippet_hint):
-        return snippet_hint
     combined = f"{title} {snippet} {visible[:100_000]}"
     legal = _LEGAL_ENTITY_RE.search(combined)
     if legal:
@@ -948,7 +1013,14 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                 break
 
     records: List[Mapping[str, Any]] = []
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Generic/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
     pages_opened = 0
     async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=headers) as client:
         page_fetch = (request.technical_filters or {}).get("universal_page_fetch")
@@ -975,18 +1047,29 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
             try:
                 if callable(page_fetch):
                     html, final_url = await asyncio.to_thread(page_fetch, url)
+                    status_code = 200
                 else:
                     response = await client.get(url)
-                    if response.status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
+                    status_code = int(response.status_code)
+                    if status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
                         filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
                         _record_url_outcome(filters, {
                             "url": url,
                             "query": provider_query,
                             "fetch_attempted": True,
-                            "status_code": int(response.status_code),
+                            "status_code": status_code,
                             "parse_status": "rejected_fetch",
                             "rejection_code": "PAGE_FETCH_FAILED",
                         })
+                        # Recover from blocked preferred hosts using SERP identity.
+                        if request.technical_filters.get("semantic_authority_required") is True:
+                            serp_hint = _serp_company_hint(title=title, snippet=snippet)
+                            if serp_hint:
+                                _enqueue_content_shell_followup(
+                                    state,
+                                    identity_hint=serp_hint,
+                                    failed_url=url,
+                                )
                         state.wave_terminal_rejections += 1
                         state.processed_terminal_urls = (*state.processed_terminal_urls, url)
                         continue
@@ -1009,10 +1092,16 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             page_host == suffix or page_host.endswith("." + suffix)
                             for suffix in _CONTENT_SHELL_HOST_SUFFIXES
                         )
+                        challenge_page = _is_challenge_or_empty_page(
+                            status_code=status_code if not callable(page_fetch) else 200,
+                            title=title,
+                            visible_text=visible_text,
+                            html=html,
+                        )
                         missing_company = bool(identity_hint) and not company_hint_present_in_source(
                             identity_hint, visible_text
                         )
-                        if identity_hint and (missing_company or shell_host):
+                        if identity_hint and (missing_company or shell_host or challenge_page):
                             filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
                             _record_url_outcome(filters, {
                                 "url": url,
@@ -1022,11 +1111,33 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 "parse_status": "rejected_content",
                                 "rejection_code": "PAGE_CONTENT_MISSING",
                             })
+                            recover_hint = identity_hint if not challenge_page else _serp_company_hint(
+                                title=title, snippet=snippet
+                            )
                             _enqueue_content_shell_followup(
                                 state,
-                                identity_hint=identity_hint,
+                                identity_hint=recover_hint or identity_hint,
                                 failed_url=final_url or url,
                             )
+                            state.wave_terminal_rejections += 1
+                            continue
+                        if challenge_page and not identity_hint:
+                            filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
+                            _record_url_outcome(filters, {
+                                "url": url,
+                                "query": provider_query,
+                                "fetch_attempted": True,
+                                "status_code": 200,
+                                "parse_status": "rejected_content",
+                                "rejection_code": "PAGE_CONTENT_MISSING",
+                            })
+                            recover_hint = _serp_company_hint(title=title, snippet=snippet)
+                            if recover_hint:
+                                _enqueue_content_shell_followup(
+                                    state,
+                                    identity_hint=recover_hint,
+                                    failed_url=final_url or url,
+                                )
                             state.wave_terminal_rejections += 1
                             continue
                     # Dynamic relationships are acquisition hypotheses only.

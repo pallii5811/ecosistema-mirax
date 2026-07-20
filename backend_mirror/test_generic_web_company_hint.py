@@ -144,6 +144,47 @@ def test_looks_like_company_rejects_job_titles() -> None:
     assert not _looks_like_company_name("AI Engineer")
     assert not _looks_like_company_name("Software Developer")
     assert not _looks_like_company_name("Sales Manager")
+    assert not _looks_like_company_name("Just a moment...")
+    assert not _looks_like_company_name("Our Admissions Process")
+    assert not _looks_like_company_name("Digital biotech")
+    assert not _looks_like_company_name("Pubblicità Borsa Italiana Spa")
+
+
+def test_title_extracts_genomeup_not_digital_biotech() -> None:
+    title = "Digital biotech, la startup italiana GenomeUp chiude un round d'investimento"
+    snippet = (
+        "La startup italiana GenomeUp ha annunciato la chiusura di un round di "
+        "investimento da 1,1 milioni di euro a cui hanno partecipato Lumen ..."
+    )
+    assert _title_company_leading(title) == "GenomeUp"
+    assert _snippet_company_hint(snippet) == "GenomeUp"
+    assert _company_identity_hint(title=title, snippet=snippet, html="<html></html>") == "GenomeUp"
+
+
+def test_challenge_html_falls_back_to_serp_company_hint() -> None:
+    html = "<html><body>Just a moment... Enable JavaScript and cookies to continue</body></html>"
+    title = "Matchplat chiude un round da 3,5 milioni di euro"
+    snippet = "Matchplat chiude un round da 3,5 milioni di euro ... Da startup a realtà internazionale"
+    assert _company_identity_hint(title=title, snippet=snippet, html=html) == "Matchplat"
+
+
+def test_fetch_failure_enqueues_serp_company_followup() -> None:
+    from backend_mirror.source_adapters.generic_web import _enqueue_content_shell_followup, _serp_company_hint
+    from backend_mirror.source_adapters.generic_web_budget import GenericWebDiscoveryState
+
+    title = "Matchplat chiude un round da 3,5 milioni di euro"
+    snippet = "Matchplat, società che offre analisi ..."
+    hint = _serp_company_hint(title=title, snippet=snippet)
+    assert hint == "Matchplat"
+    state = GenericWebDiscoveryState()
+    _enqueue_content_shell_followup(
+        state,
+        identity_hint=hint,
+        failed_url="https://startupitalia.eu/startup/investimenti/matchplat/",
+    )
+    assert state.followup_queries
+    assert "Matchplat" in state.followup_queries[0]
+    assert "startupitalia.eu" in state.followup_queries[0]
 
 
 def test_diversified_funding_queries_skip_raw_nl_and_market_roundups() -> None:
