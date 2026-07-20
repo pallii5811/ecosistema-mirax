@@ -336,6 +336,8 @@ class UniversalSignalDiscoveryEngine:
         remaining = max(1, spec.requested_count)
         hard_budget = float(request.budget_eur)
         batches_run = 0
+        accumulated_rejections: Dict[str, int] = {}
+        accumulated_raw = 0
 
         while batches_run < self.max_strategy_batches:
             if remaining <= 0:
@@ -447,6 +449,9 @@ class UniversalSignalDiscoveryEngine:
             qualified_by_key = _merge_qualified(qualified_by_key, result.qualified_leads)
             gained = len(qualified_by_key) - before
             remaining = max(0, spec.requested_count - len(qualified_by_key))
+            accumulated_raw += int(result.progress.raw_candidate_count or 0)
+            for code, count in dict(result.rejection_codes or {}).items():
+                accumulated_rejections[str(code)] = accumulated_rejections.get(str(code), 0) + int(count or 0)
 
             # P0-4: true per-strategy telemetry (one strategy executed this batch).
             stats.rounds += 1
@@ -505,23 +510,28 @@ class UniversalSignalDiscoveryEngine:
             qualified_count=len(leads),
             qualified_leads=leads,
             cost_eur=spent,
+            raw_candidate_count=max(int(last_result.progress.raw_candidate_count or 0), accumulated_raw),
         )
         status: TerminalStatus = last_result.status
         if len(leads) >= spec.requested_count:
             status = "completed_requested_count"
         elif spent + 1e-9 >= hard_budget:
             status = "partial_budget_exhausted"
+        merged_rejections = dict(last_result.rejection_codes or {})
+        for code, count in accumulated_rejections.items():
+            merged_rejections[code] = max(int(merged_rejections.get(code) or 0), int(count))
         orchestration = OrchestrationResult(
             status=status,
             coverage=last_result.coverage,
             qualified_leads=leads,
             progress=progress,
-            rejection_codes=last_result.rejection_codes,
+            rejection_codes=merged_rejections,
             adapter_progress=last_result.adapter_progress,
             cost_eur=spent,
             started_at=last_result.started_at,
             completed_at=datetime.now(timezone.utc).isoformat(),
             limitations=tuple(dict.fromkeys((*last_result.limitations, *notes))),
+            semantic_telemetry=last_result.semantic_telemetry,
         )
         strategies_exhausted = all(
             stats_map[item.strategy_id].aborted or stats_map[item.strategy_id].rounds > 0 for item in strategies

@@ -365,13 +365,18 @@ def resolve_entity_identity(
 
     presented = host_of(request.presented_domain) or normalize_domain(request.presented_domain) or ""
     evidence_host = host_of(request.evidence_url)
-    entity_class = classify_entity(name, host=presented or evidence_host, source_payload=request.source_payload)
+    # Classify the target company from its own presented host / name.
+    # Never treat a third-party evidence host (news, ATS, register) as the
+    # company's identity class — that falsely rejects news-grounded leads.
+    entity_class = classify_entity(name, host=presented, source_payload=request.source_payload)
     if request.group_domain_proof and entity_class == "operating_company":
         entity_class = "company_group"
 
     allowed = {str(item) for item in request.allowed_entity_classes} or set(COMMERCIAL_ENTITY_CLASSES)
-    if entity_class == "directory" or (presented and is_blacklisted_domain(presented)):
-        return _reject(name, "directory", "DIRECTORY_OR_PORTAL_DOMAIN", evidence=("blacklisted_domain",))
+    if presented and is_blacklisted_domain(presented):
+        return _reject(name, "directory", "DIRECTORY_OR_PORTAL_DOMAIN", evidence=("presented_blacklisted_domain",))
+    if entity_class == "directory":
+        return _reject(name, "directory", "DIRECTORY_OR_PORTAL_DOMAIN", evidence=("directory_classifier",))
     if entity_class == "publisher":
         return _reject(name, "publisher", "PUBLISHER_AS_COMPANY", evidence=("publisher_classifier",))
     if entity_class == "public_authority" and entity_class not in allowed:

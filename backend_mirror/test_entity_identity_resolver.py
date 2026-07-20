@@ -361,3 +361,34 @@ def test_15_normalize_legal_suffix_and_classifier_coverage() -> None:
     assert classify_entity("Associazione Sportiva APS") == "association"
     assert classify_entity("CGIL Lombardia") == "trade_union"
     assert classify_entity("Acme Industria Srl") == "operating_company"
+
+def test_news_evidence_host_does_not_classify_target_as_directory() -> None:
+    """Funding/news evidence URLs are portals; they must not poison company class."""
+    def _serp_sirius(company: str, location: str = "", max_results: int = 5):
+        return {
+            "url": "https://siriusgame.it/",
+            "status": "verified",
+            "confidence": 0.91,
+            "score": 91,
+            "evidence": ["company_tokens_in_host"],
+            "resolution_method": "serp_identity",
+            "resolution_source": "serp_identity",
+        }
+
+    result = resolve_entity_identity(
+        EntityIdentityRequest(
+            company_name="Sirius Game",
+            evidence_url="https://finanza.repubblica.it/News/2026/06/15/sirius_game_round/",
+            presented_domain="",
+            geography="Italia",
+            budget_eur=0.005,
+            allow_serp=True,
+            allowed_entity_classes=tuple(COMMERCIAL_ENTITY_CLASSES),
+        ),
+        cache=MemoryEntityDomainCache(),
+        verify_fn=_verify_ok,
+        serp_fn=_serp_sirius,
+    )
+    assert result.identity_status == "verified", result.rejection_code
+    assert result.official_domain == "siriusgame.it"
+    assert result.rejection_code is None
