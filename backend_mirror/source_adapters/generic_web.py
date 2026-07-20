@@ -490,6 +490,10 @@ def _structured_page_date(html: str) -> Optional[str]:
     return _iso_date(node.get("datetime") if node else None)
 
 
+def _canonical_token(value: str) -> str:
+    return "".join(char.casefold() for char in _text(value) if char.isalnum())
+
+
 def _company_identity_hint(*, title: str, snippet: str, html: str) -> str:
     """Return only an identity explicitly present in acquired evidence."""
     structured = _structured_subject_company(html)
@@ -680,6 +684,23 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                 }
                 if universal:
                     page_host = _host(final_url)
+                    if request.technical_filters.get("semantic_authority_required") is True:
+                        identity_hint = _company_identity_hint(title=title, snippet=snippet, html=html)
+                        if (
+                            identity_hint
+                            and _canonical_token(identity_hint) not in _canonical_token(visible_text)
+                        ):
+                            filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
+                            _record_url_outcome(filters, {
+                                "url": url,
+                                "query": provider_query,
+                                "fetch_attempted": True,
+                                "status_code": 200,
+                                "parse_status": "rejected_content",
+                                "rejection_code": "PAGE_CONTENT_MISSING",
+                            })
+                            state.wave_terminal_rejections += 1
+                            continue
                     # Dynamic relationships are acquisition hypotheses only.
                     # Final event type, role and query match are decided by the
                     # semantic interpreter and exact grounding verifier.
