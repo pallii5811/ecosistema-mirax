@@ -678,17 +678,46 @@ def _normalize_literal_surface(value: str) -> str:
 
 
 def _recover_literal_excerpt(source_text: str, excerpt: str) -> tuple[int, int, str] | None:
-    """Recover a unique literal span when model offsets or whitespace diverge."""
+    """Recover a unique literal span when model offsets or whitespace diverge.
+
+    Cached interpretations often carry offsets from a different source_text window
+    or an over-long excerpt that includes publisher chrome. Re-anchor to the
+    longest unique literal prefix that still appears in the text under verify.
+    """
     excerpt = str(excerpt or "")
-    if not excerpt.strip():
+    source_text = str(source_text or "")
+    if not excerpt.strip() or not source_text:
         return None
     exact_start = source_text.find(excerpt)
     if exact_start >= 0 and source_text.find(excerpt, exact_start + 1) < 0:
         return exact_start, exact_start + len(excerpt), excerpt
-    parts = [re.escape(part) for part in _normalize_literal_surface(excerpt).split() if part]
-    if not parts:
+
+    cleaned = " ".join(excerpt.split()).strip()
+    if not cleaned:
         return None
-    pattern = r"\s+".join(parts)
+    # Longest unique literal prefix first — keeps funding sentence, drops chrome.
+    candidate_sizes = []
+    for size in (1200, 900, 600, 400, 280, 180, 120, 80):
+        if len(cleaned) >= size:
+            candidate_sizes.append(size)
+    if len(cleaned) not in candidate_sizes:
+        candidate_sizes.append(len(cleaned))
+    for size in candidate_sizes:
+        prefix = cleaned[:size]
+        if size < len(cleaned):
+            cut = prefix.rfind(" ")
+            if cut >= 80:
+                prefix = prefix[:cut]
+        start = source_text.find(prefix)
+        if start >= 0 and source_text.find(prefix, start + 1) < 0:
+            return start, start + len(prefix), source_text[start:start + len(prefix)]
+
+    bounded = cleaned[:900]
+    parts = [re.escape(part) for part in _normalize_literal_surface(bounded).split() if part]
+    if len(parts) < 4:
+        return None
+    # Cap pattern length so recovery stays deterministic and cheap.
+    pattern = r"\s+".join(parts[:40])
     matches = list(re.finditer(pattern, source_text, flags=re.I))
     if len(matches) != 1:
         return None
@@ -949,12 +978,19 @@ class SemanticEvidenceGroundingVerifier:
     ) -> GroundingVerdict:
         excerpt = interpretation.evidence_excerpt
         start, end = interpretation.evidence_start, interpretation.evidence_end
-        literal = bool(excerpt) and start >= 0 and end == start + len(excerpt) and source_text[start:end] == excerpt
-        if excerpt and not literal:
-            recovered = _recover_literal_excerpt(source_text, excerpt)
-            if recovered is not None:
-                start, end, excerpt = recovered
-                literal = source_text[start:end] == excerpt
+        # Prefer re-anchoring to the source_text under verification. Cached
+        # offsets are often relative to a different semantic window.
+        recovered = _recover_literal_excerpt(source_text, excerpt) if excerpt else None
+        if recovered is not None:
+            start, end, excerpt = recovered
+            literal = source_text[start:end] == excerpt
+        else:
+            literal = bool(excerpt) and start >= 0 and end == start + len(excerpt) and source_text[start:end] == excerpt
+            if excerpt and not literal:
+                recovered = _recover_literal_excerpt(source_text, excerpt)
+                if recovered is not None:
+                    start, end, excerpt = recovered
+                    literal = source_text[start:end] == excerpt
         target_name = _canonical_name(interpretation.target_company)
         candidate_name = _canonical_name(candidate_company or interpretation.target_company)
         target_identity = bool(target_name) and target_name == candidate_name

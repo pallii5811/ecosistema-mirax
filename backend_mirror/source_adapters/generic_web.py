@@ -725,6 +725,12 @@ def _enqueue_content_shell_followup(
         return
     if len(state.followup_queries) >= 2:
         return
+    company_key = company.casefold()
+    # One recovery wave per company — don't burn both slots on the same name.
+    if any(company_key in str(item).casefold() for item in state.followup_queries):
+        return
+    if any(company_key in str(item).casefold() for item in state.executed_query_keys):
+        return
     failed_host = _host(failed_url)
     exclude = f" -site:{failed_host}" if failed_host else ""
     followup = f'"{company}" (chiude un round OR ha raccolto OR funding round OR seed round){exclude}'

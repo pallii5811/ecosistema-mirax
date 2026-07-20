@@ -210,6 +210,99 @@ def test_grounder_derives_exact_offsets_for_unique_literal_excerpt(tmp_path: Pat
     assert verdict.evidence_end == text.index(excerpt) + len(excerpt)
 
 
+def test_grounder_recovers_overlong_cached_excerpt_prefix() -> None:
+    """Cached excerpts often exceed offset windows or include publisher chrome."""
+    event_day = "2026-06-17"
+    funding = (
+        "Bestie Bite, app dedicata alle video recensioni autentiche nel settore "
+        "hospitality, incassa nuovo round da 1,5 mln euro"
+    )
+    text = (
+        f"BeBeez header Contatti Newsletter. {funding}. "
+        "Il round e stato guidato dalla famiglia Grassi con uno strumento SAFE."
+    )
+    overlong = funding + " - BeBeez Contatti lunedì English Newsletter Capitale di Rischio " * 30
+    contract = SemanticQueryContract.from_model(
+        {
+            "original_query": "Trovami startup che stanno raccogliendo fondi di investimento.",
+            "query_goal": "funding",
+            "target_role_in_event": "recipient",
+            "required_relationships": ["startup_raising_or_receiving_investment"],
+            "excluded_roles": ["publisher", "investor"],
+            "acceptance_rubric": [
+                "recipient_grounded",
+                "startup_raising_or_receiving_investment_grounded",
+            ],
+            "target_entity_types": ["operating_company"],
+            "acceptance_rubric_passed": [],
+        },
+        original_query="Trovami startup che stanno raccogliendo fondi di investimento.",
+        requested_count=2,
+    )
+    # Build interpretation via from_model with mismatched offsets.
+    interpretation = SemanticEventInterpretation.from_model(
+        {
+            "entities": [{"name": "Bestie Bite", "role": "startup_recipient", "type": "operating_company"}],
+            "events": [{
+                "event_type": "funding_round",
+                "event_date": event_day,
+                "event_status": "completed",
+                "recipient": "Bestie Bite",
+            }],
+            "relations": [{
+                "relationship_id": "startup_raising_or_receiving_investment",
+                "subject": "Bestie Bite",
+                "subject_role": "recipient",
+                "supported": True,
+                "supporting_excerpt": funding,
+            }],
+            "target_company": "Bestie Bite",
+            "target_entity_role": "recipient",
+            "event_type": "funding_round",
+            "open_predicate": "incassa nuovo round",
+            "recipient": "Bestie Bite",
+            "predicate": "startup_raising_or_receiving_investment",
+            "direction": "inbound",
+            "event_status": "completed",
+            "event_date": event_day,
+            "certainty": 0.95,
+            "query_match": True,
+            "query_match_reason": "startup raised funds",
+            "satisfied_relationships": ["startup_raising_or_receiving_investment"],
+            "acceptance_rubric_passed": [
+                "recipient_grounded",
+                "startup_raising_or_receiving_investment_grounded",
+            ],
+            "buyer_need": "post-raise",
+            "why_now": funding,
+            "evidence_excerpt": overlong,
+            "evidence_start": 0,
+            "evidence_end": 2500,
+            "confidence": 0.95,
+            "negated": False,
+            "hypothetical": False,
+            "conditional": False,
+            "rumor": False,
+            "historical": False,
+        }
+    )
+    verdict = SemanticEvidenceGroundingVerifier().verify(
+        contract,
+        interpretation,
+        source_text=text,
+        source_url="https://bebeez.it/bestie-bite",
+        source_publisher="BeBeez",
+        official_domain_verified=False,
+        official_domain_confidence=0.0,
+        entity_class="operating_company",
+        candidate_company="Bestie Bite",
+        maximum_age_days=3650,
+        identity_verification_deferred=True,
+    )
+    assert verdict.accepted is True, verdict.reasons
+    assert funding[:40] in (verdict.evidence_excerpt or "")
+
+
 def test_grounder_rejects_ambiguous_repeated_excerpt_with_wrong_offsets(tmp_path: Path) -> None:
     excerpt = "Beta Srl ha ricevuto nuove risorse."
     text = f"{excerpt} {excerpt}"
