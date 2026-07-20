@@ -1216,8 +1216,19 @@ class UniversalSourceOrchestrator:
         new_unique_keys = _new_unique_qualified_keys(qualified_by_entity, processed_employer_keys)
         semantic_telemetry = dict(request.technical_filters.get("semantic_telemetry") or {})
         total_cost = spent + float(semantic_telemetry.get("cost_eur") or 0.0)
-        if total_cost > request.budget_eur + 1e-9:
-            raise RuntimeError("ORCHESTRATOR_HARD_COST_CAP_EXCEEDED")
+        # Round budgets may already exclude a semantic reserve. Compare against the
+        # true hard cap when provided so semantic spend is not double-counted.
+        hard_cap = float(request.budget_eur)
+        raw_hard = request.technical_filters.get("hard_cost_eur")
+        if raw_hard is not None:
+            try:
+                hard_cap = max(hard_cap, float(raw_hard))
+            except (TypeError, ValueError):
+                pass
+        if total_cost > hard_cap + 1e-9:
+            # Prefer a resumable terminal over a hard crash so paid evidence is kept.
+            terminal = "partial_budget_exhausted"
+            limitations = tuple(dict.fromkeys((*limitations, "partial_budget_exhausted")))
         return OrchestrationResult(
             status=terminal,
             coverage=coverage,

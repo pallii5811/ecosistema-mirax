@@ -5682,11 +5682,36 @@ def main() -> None:
                     import traceback as _tb
                     print(_tb.format_exc(), flush=True)
                     runtime_started = bool(prior_shadow_resume.get("prior_cost_eur")) or bool(prior_shadow_resume.get("resume_cursors"))
-                    budget_after_runtime = (
+                    budget_like = (
                         shadow_error.__class__.__name__ == "ResearchBudgetExceeded"
-                        and runtime_started
+                        or "HARD_COST_CAP" in str(shadow_error)
+                        or "BUDGET" in str(shadow_error).upper()
                     )
-                    termination = "partial_budget_exhausted" if budget_after_runtime else "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED"
+                    budget_after_runtime = budget_like and (runtime_started or True)
+                    # If provider spend already hit the ledger, never claim runtime did not execute.
+                    try:
+                        ledger_rows = (
+                            supabase.table("search_cost_ledger")
+                            .select("actual_cost_eur")
+                            .eq("search_id", job_id)
+                            .execute()
+                            .data
+                            or []
+                        )
+                        ledger_spent = sum(float(row.get("actual_cost_eur") or 0.0) for row in ledger_rows)
+                    except Exception:
+                        ledger_spent = 0.0
+                    if ledger_spent > 1e-9:
+                        runtime_started = True
+                    termination = "partial_budget_exhausted" if budget_like else (
+                        "partial_budget_exhausted" if ledger_spent > 1e-9 and budget_like else "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED"
+                    )
+                    if budget_like or ledger_spent > 1e-9:
+                        termination = "partial_budget_exhausted" if budget_like else (
+                            "SOURCE_ADAPTER_RUNTIME_NOT_EXECUTED" if not runtime_started else "partial_sources_exhausted"
+                        )
+                    if budget_like:
+                        termination = "partial_budget_exhausted"
                     supabase.table("searches").update({
                         "status": "error",
                         "results": prior_qualified_payloads,

@@ -408,6 +408,10 @@ class UniversalSignalDiscoveryEngine:
                 technical_filters={
                     **dict(request.technical_filters or {}),
                     "universal_engine": True,
+                    # True search hard cap — round_budget is discovery-only after
+                    # semantic reserve. Orchestrator must not re-add semantic cost
+                    # against the reduced round budget or it false-trips the cap.
+                    "hard_cost_eur": hard_budget,
                     "universal_strategy_id": strategy.strategy_id,
                     "universal_strategies": [item.to_dict() for item in strategies],
                     "universal_active_strategies": [strategy.to_dict()],

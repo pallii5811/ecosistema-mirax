@@ -221,6 +221,26 @@ def test_adapter_overspend_is_quarantined_by_hard_cap() -> None:
         ))
 
 
+def test_semantic_cost_uses_hard_cap_not_round_budget() -> None:
+    """Round budget may exclude semantic reserve; semantic telemetry must use hard_cost_eur."""
+    from dataclasses import replace as dc_replace
+
+    adapter = PagedAdapter(capability("generic", ("signal_a",), cost=0.005), [[]], costs=[0.005])
+    req = request(("signal_a",), count=1, budget=0.03)
+    req = dc_replace(
+        req,
+        technical_filters={
+            **dict(req.technical_filters or {}),
+            "hard_cost_eur": 0.05,
+            "semantic_telemetry": {"cost_eur": 0.022},
+        },
+    )
+    result = asyncio.run(UniversalSourceOrchestrator(SourceCapabilityRegistry((adapter,))).run(req))
+    assert result.cost_eur == pytest.approx(0.027)
+    assert result.status != "error"
+    assert "partial_budget_exhausted" not in result.limitations
+
+
 def test_partial_fallback_never_claims_global_exhaustion() -> None:
     fallback = PagedAdapter(capability("generic", ("*",), fallback=True), [[]], never_exhaust=True)
     result = asyncio.run(UniversalSourceOrchestrator(
