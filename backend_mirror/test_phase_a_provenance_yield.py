@@ -249,6 +249,53 @@ def test_second_serp_blocked_until_pending_wave_processed(monkeypatch) -> None:
     assert result.cost_eur <= 0.05
 
 
+def test_resume_rehydrates_url_meta_without_pending_urls(monkeypatch) -> None:
+    fetched: list[str] = []
+
+    def _spy_search(query: str, target: int, *, cost_scope: str = "") -> list[dict[str, str]]:
+        raise AssertionError("second SERP must not run while url_meta has pending hits")
+
+    def _page_fetch(url: str) -> tuple[str, str]:
+        fetched.append(url)
+        return (f"<html><body>{'startup round investimento ' * 40}</body></html>", url)
+
+    monkeypatch.setattr("backend_mirror.agents.search_serp.search_hits_http", _spy_search)
+    state = GenericWebDiscoveryState(
+        query_index=1,
+        url_meta=(
+            {
+                "url": "https://example-resume.it/funding",
+                "title": "Startup round",
+                "snippet": "round da 1M",
+                "provider": "serper",
+                "provider_query": "startup round",
+            },
+        ),
+    )
+    cursor = encode_generic_web_cursor(state)
+    request = AdapterDiscoveryRequest(
+        intent="funding",
+        signal_ids=("funding",),
+        signal_match_mode="any",
+        geographies=("Italia",),
+        freshness_max_age_days=180,
+        requested_count=2,
+        budget_eur=0.05,
+        query="funding",
+        sectors=(),
+        technical_filters={
+            "universal_engine": True,
+            "semantic_authority_required": True,
+            "universal_search_queries": ("startup round",),
+            "universal_page_fetch": _page_fetch,
+        },
+        cursor=cursor,
+    )
+    adapter = GenericWebResearchAdapter()
+    asyncio.run(adapter.discover(request))
+    assert fetched == ["https://example-resume.it/funding"]
+
+
 def test_careers_only_host_rejected_for_lifecycle_domain() -> None:
     assert is_careers_only_host("jobs.abbott")
     assert not is_careers_only_host("abbott.com")

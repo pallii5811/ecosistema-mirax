@@ -496,6 +496,15 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
         if key and key not in terminal and key not in seen:
             seen.add(key)
             accepted_hits.append(raw_meta.get(key) or {"url": url, "title": "", "snippet": "", "source_type": "search", "provider": "resume"})
+    # Resume must re-queue SERP hits persisted in url_meta even when pending_urls was empty.
+    for meta in state.url_meta:
+        if not isinstance(meta, Mapping):
+            continue
+        url = str(meta.get("url") or "")
+        key = url.strip().lower().rstrip("/")
+        if key and key not in terminal and key not in seen:
+            seen.add(key)
+            accepted_hits.append(dict(meta))
     pending_queries = list(queries[state.query_index:])
     from cost_context import current_cost_governor
     governor = current_cost_governor()
@@ -504,64 +513,65 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
         if universal and remaining_governor + 1e-9 < QUERY_COST_EUR + SEMANTIC_RESERVE_EUR + IDENTITY_RESERVE_EUR + BUFFER_EUR:
             return GenericWebProviderResult((), 0.0, ("DISCOVERY_BUDGET_RESERVED",))
     queries_run = 0
-    for index, query in enumerate(pending_queries[:max_queries]):
-        if queries_run > 0:
-            break
-        if spent + QUERY_COST_EUR > request.budget_eur + 1e-9:
-            break
-        if callable(spy_search):
-            found_hits = await asyncio.to_thread(spy_search, query, target)
-            spent += QUERY_COST_EUR
-            if found_hits and isinstance(found_hits[0], str):
-                found_hits = _hits_from_urls(found_hits, query=query)
-        else:
-            if universal:
-                found_hits = await asyncio.to_thread(
-                    search_hits_http, query, target, cost_scope=f"generic-web:{scope}:{index}",
-                )
+    if not accepted_hits:
+        for index, query in enumerate(pending_queries[:max_queries]):
+            if queries_run > 0:
+                break
+            if spent + QUERY_COST_EUR > request.budget_eur + 1e-9:
+                break
+            if callable(spy_search):
+                found_hits = await asyncio.to_thread(spy_search, query, target)
+                spent += QUERY_COST_EUR
+                if found_hits and isinstance(found_hits[0], str):
+                    found_hits = _hits_from_urls(found_hits, query=query)
             else:
-                found_urls = await asyncio.to_thread(
-                    search_urls_http, query, target, cost_scope=f"generic-web:{scope}:{index}",
-                )
-                found_hits = _hits_from_urls(found_urls, query=query)
-            spent += QUERY_COST_EUR
-        queries_run += 1
-        state.query_index += 1
-        state.provider_calls += 1
-        state.discovery_spent_eur = round(float(state.discovery_spent_eur) + QUERY_COST_EUR, 6)
-        if universal:
-            gated = _gate_serp_hits(request, found_hits, provider_query=query)
-            rich_by_url = {
-                str(item.get("url") or item.get("link") or "").lower().rstrip("/"): item
-                for item in found_hits
-                if isinstance(item, Mapping)
-            }
-            for hit in gated:
-                key = hit.url.lower().rstrip("/")
-                if key in terminal:
-                    continue
-                if key not in seen:
-                    seen.add(key)
-                    original = rich_by_url.get(key) or {}
-                    accepted_hits.append({
-                        "url": hit.url,
-                        "title": hit.title,
-                        "snippet": hit.snippet,
-                        "publisher": hit.publisher,
-                        "source_type": str(original.get("source_type") or "search"),
-                        "provider": str(original.get("provider") or "unknown"),
-                        "rank": int(original.get("rank") or 0),
-                        "provider_query": query,
-                    })
-        else:
-            for item in found_hits:
-                url = str(item.get("url") or "")
-                key = url.lower().rstrip("/")
-                if url and key not in seen:
-                    seen.add(key)
-                    accepted_hits.append(item)
-        if accepted_hits:
-            break
+                if universal:
+                    found_hits = await asyncio.to_thread(
+                        search_hits_http, query, target, cost_scope=f"generic-web:{scope}:{index}",
+                    )
+                else:
+                    found_urls = await asyncio.to_thread(
+                        search_urls_http, query, target, cost_scope=f"generic-web:{scope}:{index}",
+                    )
+                    found_hits = _hits_from_urls(found_urls, query=query)
+                spent += QUERY_COST_EUR
+            queries_run += 1
+            state.query_index += 1
+            state.provider_calls += 1
+            state.discovery_spent_eur = round(float(state.discovery_spent_eur) + QUERY_COST_EUR, 6)
+            if universal:
+                gated = _gate_serp_hits(request, found_hits, provider_query=query)
+                rich_by_url = {
+                    str(item.get("url") or item.get("link") or "").lower().rstrip("/"): item
+                    for item in found_hits
+                    if isinstance(item, Mapping)
+                }
+                for hit in gated:
+                    key = hit.url.lower().rstrip("/")
+                    if key in terminal:
+                        continue
+                    if key not in seen:
+                        seen.add(key)
+                        original = rich_by_url.get(key) or {}
+                        accepted_hits.append({
+                            "url": hit.url,
+                            "title": hit.title,
+                            "snippet": hit.snippet,
+                            "publisher": hit.publisher,
+                            "source_type": str(original.get("source_type") or "search"),
+                            "provider": str(original.get("provider") or "unknown"),
+                            "rank": int(original.get("rank") or 0),
+                            "provider_query": query,
+                        })
+            else:
+                for item in found_hits:
+                    url = str(item.get("url") or "")
+                    key = url.lower().rstrip("/")
+                    if url and key not in seen:
+                        seen.add(key)
+                        accepted_hits.append(item)
+            if accepted_hits:
+                break
 
     records: List[Mapping[str, Any]] = []
     headers = {"User-Agent": "Mozilla/5.0 (compatible; MIRAX-Generic/1.0)", "Accept-Language": "it-IT,it;q=0.9"}
