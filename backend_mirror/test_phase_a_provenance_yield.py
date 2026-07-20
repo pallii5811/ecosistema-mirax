@@ -204,6 +204,9 @@ def test_q2_retrieval_queries_include_crm_hypotheses() -> None:
     queries = [item.search_query for item in plan_strategies(spec)]
     assert any("ricerca nuovo CRM" in q for q in queries)
     assert any("migrazione CRM" in q for q in queries)
+    crm_idx = next(i for i, q in enumerate(queries) if "ricerca nuovo CRM" in q)
+    generic_idx = next(i for i, q in enumerate(queries) if "comunicato stampa" in q)
+    assert crm_idx < generic_idx
 
 
 def test_second_serp_blocked_until_pending_wave_processed(monkeypatch) -> None:

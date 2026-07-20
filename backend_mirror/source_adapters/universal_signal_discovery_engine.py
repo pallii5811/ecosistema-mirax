@@ -179,6 +179,17 @@ def _cursor_store_key(adapter_id: str, strategy_id: str) -> str:
     return f"{adapter_id}::{strategy_id}"
 
 
+def _legacy_cursor_belongs_to_strategy(cursor: DiscoveryCursor, strategy: DiscoveryStrategy) -> bool:
+    """Do not transplant a prior strategy's SERP state onto a different query."""
+    from .generic_web_budget import decode_generic_web_v2_payload
+
+    payload = decode_generic_web_v2_payload(cursor.value)
+    if not isinstance(payload, Mapping):
+        return False
+    executed = {str(item) for item in (payload.get("executed_query_keys") or ()) if str(item).strip()}
+    return bool(strategy.search_query) and strategy.search_query in executed
+
+
 def _strategy_schedule(strategies: Sequence[DiscoveryStrategy], stats_map: Mapping[str, StrategyRuntimeStats]) -> List[DiscoveryStrategy]:
     """One strategy per batch; rotate by rounds, prefer productive on ties."""
     pending = [item for item in strategies if not stats_map[item.strategy_id].aborted]
@@ -382,9 +393,11 @@ class UniversalSignalDiscoveryEngine:
             for adapter_id in run_mandatory:
                 stored = strategy_cursors.get(_cursor_store_key(adapter_id, strategy.strategy_id))
                 if stored is None:
-                    stored = strategy_cursors.get(_cursor_store_key(adapter_id, "__legacy__"))
-                    if stored is not None:
+                    legacy = strategy_cursors.get(_cursor_store_key(adapter_id, "__legacy__"))
+                    if legacy is not None and _legacy_cursor_belongs_to_strategy(legacy, strategy):
+                        stored = legacy
                         strategy_cursors[_cursor_store_key(adapter_id, strategy.strategy_id)] = stored
+                        strategy_cursors.pop(_cursor_store_key(adapter_id, "__legacy__"), None)
                 if stored is not None:
                     batch_resume[adapter_id] = stored
 

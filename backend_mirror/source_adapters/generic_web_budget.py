@@ -43,6 +43,9 @@ class GenericWebDiscoveryState:
     # re-openable — fetch marks them terminal before orchestrator can finish
     # semantic qualification, which stranded Invertix after Sirius at 1/2.
     candidate_source_urls: Tuple[str, ...] = ()
+    # Salvage each candidate URL at most once — otherwise zero-yield resumes
+    # re-fetch the same pages until the time box (Q2 CRM canary: 90+ fetches).
+    salvaged_urls: Tuple[str, ...] = ()
 
     def discovery_cap_eur(self, hard_cap_eur: float) -> float:
         """SERP pool stays inside hard_cap minus semantic/identity reserves."""
@@ -137,6 +140,7 @@ class GenericWebDiscoveryState:
             "wave_terminal_rejections": self.wave_terminal_rejections,
             "followup_queries": list(self.followup_queries),
             "candidate_source_urls": list(self.candidate_source_urls),
+            "salvaged_urls": list(self.salvaged_urls),
         }
 
     @classmethod
@@ -157,6 +161,9 @@ class GenericWebDiscoveryState:
             followup_queries=tuple(str(item) for item in payload.get("followup_queries") or () if str(item).strip()),
             candidate_source_urls=tuple(
                 str(item) for item in payload.get("candidate_source_urls") or () if str(item).strip()
+            ),
+            salvaged_urls=tuple(
+                str(item) for item in payload.get("salvaged_urls") or () if str(item).strip()
             ),
         )
 

@@ -36,6 +36,7 @@ from .generic_web_budget import (
     load_generic_web_state,
     persist_generic_web_state,
 )
+from .generic_web_budget import _url_key
 from .generic_web_provenance import (
     append_query_telemetry,
     attach_generic_provenance,
@@ -962,10 +963,11 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
             for item in (request.technical_filters.get("processed_employer_keys") or ())
             if str(item).startswith("domain:")
         }
+        already_salvaged = {_url_key(item) for item in state.salvaged_urls}
         salvage_keys: List[str] = []
         for url in state.candidate_source_urls:
             key = str(url).strip().lower().rstrip("/")
-            if not key or key in seen:
+            if not key or key in seen or key in already_salvaged:
                 continue
             meta = raw_meta.get(key) or {"url": url, "title": "", "snippet": "", "source_type": "search", "provider": "resume"}
             hint = _serp_company_hint(title=str(meta.get("title") or ""), snippet=str(meta.get("snippet") or ""))
@@ -979,6 +981,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                 break
         if salvage_keys:
             salvage_set = set(salvage_keys)
+            state.salvaged_urls = tuple(dict.fromkeys((*state.salvaged_urls, *salvage_keys)))
             state.processed_terminal_urls = tuple(
                 item for item in state.processed_terminal_urls
                 if str(item).strip().lower().rstrip("/") not in salvage_set

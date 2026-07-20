@@ -176,6 +176,20 @@ def _geo_phrase(spec: UniversalQuerySpec) -> str:
     return "Italia"
 
 
+def _wants_crm_hypotheses(spec: UniversalQuerySpec) -> bool:
+    """Prefer CRM-grounded SERPs when the commercial brief is about CRM."""
+    blob = " ".join(
+        (
+            spec.original_query or "",
+            spec.seller_offer or "",
+            spec.seller_profile or "",
+            spec.business_problem or "",
+            " ".join(spec.commercial_hypotheses or ()),
+        )
+    ).casefold()
+    return "crm" in blob
+
+
 def _industry_phrase(spec: UniversalQuerySpec) -> str:
     return " ".join(spec.target_industries[:2]).strip()
 
@@ -312,7 +326,10 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
         )
         priority += 20
 
-    if "technology_adoption" in signals:
+    if "technology_adoption" in signals and _wants_crm_hypotheses(spec):
+        # CRM hypotheses must outrank generic technology_adoption SERPs
+        # (comunicato stampa + adotta/implementa without "CRM") — otherwise the
+        # first €0.05/time-boxed wave never reaches buyer-relevant queries.
         crm_vendor_exclude = _DEFAULT_EXCLUDED + (
             "salesforce.com", "hubspot.com", "microsoft.com", "zoho.com", "pipedrive.com",
         )
@@ -325,7 +342,8 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
             '"CRM manager" OR "responsabile CRM" migrazione implementazione Italia',
         )
         for idx, query in enumerate(crm_queries):
-            strategies.append(
+            strategies.insert(
+                idx,
                 DiscoveryStrategy(
                     strategy_id=f"technology_adoption:crm_hypothesis_{idx}",
                     signal_type="technology_adoption",
@@ -336,10 +354,10 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
                     freshness_days=spec.freshness_days,
                     expected_evidence=("company_name", "evidence_excerpt", "source_url"),
                     estimated_cost=0.005,
-                    priority=max(1, priority - 15 + idx),
+                    priority=1 + idx,
                     fallback_level=0,
                     adapter_affinity=("generic_web_research_v1",),
-                )
+                ),
             )
 
     if "funding" in signals:
