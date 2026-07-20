@@ -525,7 +525,7 @@ def test_truncated_provider_output_is_charged_and_not_returned(monkeypatch) -> N
             assert str(exc) == "SEMANTIC_OUTPUT_TRUNCATED"
         else:
             raise AssertionError("truncated tool output must fail closed")
-        assert bodies[0]["max_tokens"] == 2000
+        assert bodies[0]["max_tokens"] == 4000
         assert governor.committed_micro_eur == 10_100
         assert next(iter(governor.reservations.values())).status == "settled"
     finally:
@@ -588,3 +588,63 @@ def test_provider_error_is_sanitized_and_reservation_fails(monkeypatch) -> None:
 def test_tier_one_actual_cost_uses_economy_rates() -> None:
     assert AnthropicSemanticModel._actual_cost(1_000_000, 1_000_000, tier=1) == 6.0
     assert AnthropicSemanticModel._actual_cost(1_000_000, 1_000_000, tier=2) == 18.0
+
+
+def test_startup_recipient_role_aliases_to_recipient() -> None:
+    from backend_mirror.semantic_intelligence import _roles_compatible
+
+    assert _roles_compatible("startup_recipient", "recipient")
+    assert _roles_compatible("beneficiary", "recipient")
+    assert not _roles_compatible("investor", "recipient")
+    parsed = SemanticEventInterpretation.from_model(event_payload(
+        "Sirius Game chiude un round",
+        target_company="",
+        beneficiary="Sirius Game",
+        target_entity_role="startup_recipient",
+    ))
+    assert parsed.target_company == "Sirius Game"
+    assert parsed.target_entity_role == "recipient"
+
+
+def test_semantic_cache_key_is_url_stable(tmp_path: Path) -> None:
+    from backend_mirror.semantic_intelligence import (
+        EVENT_SCHEMA_VERSION,
+        SemanticTelemetry,
+        _canonical_source_url,
+        _digest,
+    )
+
+    class StubModel:
+        model_version = "stub-v1"
+
+        async def complete_json(self, **_: Any) -> dict[str, Any]:
+            raise AssertionError("cache hit must not call the model")
+
+    contract = SemanticQueryContract.from_model(
+        query_payload(), original_query="Trova aziende finanziate", requested_count=2,
+    )
+    store = cache(tmp_path)
+    telemetry = SemanticTelemetry()
+    interpreter = SemanticCommercialEventInterpreter(StubModel(), cache=store, telemetry=telemetry)
+    url = "https://finanza.repubblica.it/News/2026/06/15/sirius_game/"
+    text = "Sirius Game, la startup edutech chiude un round da 1,3 milioni di euro guidato da CDP."
+    payload = event_payload(text, target_company="Sirius Game", beneficiary="Sirius Game")
+    key = SemanticResultCache.key(
+        content_hash=_digest({"source_url": _canonical_source_url(url)}),
+        semantic_query_contract_hash=contract.contract_hash,
+        model_version="stub-v1",
+        interpreter_schema_version=EVENT_SCHEMA_VERSION,
+    )
+    store.set(key, payload)
+    first = asyncio.run(interpreter.interpret(
+        contract, title="t1", snippet="s1", source_text=text,
+        source_url=url, publisher="Repubblica",
+    ))
+    second = asyncio.run(interpreter.interpret(
+        contract, title="different title", snippet="different snippet",
+        source_text=("other window " * 40) + text,
+        source_url=url + "?utm=1#frag", publisher="Repubblica",
+    ))
+    assert first.target_company == "Sirius Game"
+    assert second.target_company == "Sirius Game"
+    assert telemetry.semantic_cache_hits == 2

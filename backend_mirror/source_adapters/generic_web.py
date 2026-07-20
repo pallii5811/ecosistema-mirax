@@ -328,7 +328,34 @@ def _gate_serp_hits(
         provider_error=None,
         cost_eur=QUERY_COST_EUR,
     )
+    accepted.sort(key=_serp_fetch_priority)
     return accepted
+
+
+_CONTENT_SHELL_HOST_SUFFIXES = (
+    "borsaitaliana.it",
+)
+_PREFERRED_NEWS_HOST_SUFFIXES = (
+    "repubblica.it",
+    "ansa.it",
+    "startupitalia.eu",
+    "ilsole24ore.com",
+    "corriere.it",
+    "energiamercato.it",
+)
+
+
+def _serp_fetch_priority(hit: Any) -> Tuple[int, int, str]:
+    """Fetch real articles before exchange/archive shells in the same SERP wave."""
+    url = str(getattr(hit, "url", "") or "")
+    host = _host(url)
+    if any(host == suffix or host.endswith("." + suffix) for suffix in _CONTENT_SHELL_HOST_SUFFIXES):
+        tier = 2
+    elif any(host == suffix or host.endswith("." + suffix) for suffix in _PREFERRED_NEWS_HOST_SUFFIXES):
+        tier = 0
+    else:
+        tier = 1
+    return (tier, len(url), url.casefold())
 
 
 def _hits_from_urls(urls: Sequence[str], *, query: str) -> List[Dict[str, str]]:

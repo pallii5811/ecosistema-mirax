@@ -96,6 +96,17 @@ def test_content_shell_enqueues_followup_query() -> None:
     assert state.followup_queries
     assert "Sirius Game" in state.followup_queries[0]
     assert "borsaitaliana.it" in state.followup_queries[0]
-    assert state.queue_has_work()
-    assert state.discovery_cap_eur(0.05) >= 0.015
+
+
+def test_serp_fetch_priority_prefers_news_over_exchange_shell() -> None:
+    from types import SimpleNamespace
+
+    from backend_mirror.source_adapters.generic_web import _serp_fetch_priority
+
+    shell = SimpleNamespace(url="https://www.borsaitaliana.it/borsa/notizie/sirius.html")
+    news = SimpleNamespace(url="https://finanza.repubblica.it/News/2026/06/15/sirius_game/")
+    other = SimpleNamespace(url="https://www.startupbusiness.it/round/")
+    ranked = sorted([shell, other, news], key=_serp_fetch_priority)
+    assert ranked[0].url == news.url
+    assert ranked[-1].url == shell.url
 

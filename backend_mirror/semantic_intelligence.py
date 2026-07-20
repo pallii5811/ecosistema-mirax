@@ -63,6 +63,52 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()
 
 
+def _canonical_source_url(url: str) -> str:
+    """Normalize article URLs so cache hits survive query/fragment/trailing-slash drift."""
+    text = _clean(url).casefold()
+    if not text:
+        return ""
+    for marker in ("#", "?"):
+        if marker in text:
+            text = text.split(marker, 1)[0]
+    return text.rstrip("/")
+
+
+# Model paraphrases of the same commercial role must not fail a strict string match.
+_ROLE_ALIASES: Mapping[str, frozenset[str]] = {
+    "recipient": frozenset({
+        "recipient", "beneficiary", "startup_recipient", "funding_recipient",
+        "investee", "raise_recipient",
+    }),
+    "beneficiary": frozenset({
+        "beneficiary", "recipient", "startup_recipient", "funding_recipient",
+    }),
+    "buyer": frozenset({"buyer", "adopter", "migrating_company", "customer", "prospect"}),
+    "adopter": frozenset({"adopter", "buyer", "migrating_company", "customer"}),
+    "migrating_company": frozenset({"migrating_company", "buyer", "adopter"}),
+    "employer": frozenset({"employer", "hiring_company", "company"}),
+}
+
+
+def _roles_compatible(observed: str, required: str) -> bool:
+    left = _clean(observed).casefold()
+    right = _clean(required).casefold()
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    for group in _ROLE_ALIASES.values():
+        if left in group and right in group:
+            return True
+    required_group = _ROLE_ALIASES.get(right)
+    if required_group and left in required_group:
+        return True
+    observed_group = _ROLE_ALIASES.get(left)
+    if observed_group and right in observed_group:
+        return True
+    return False
+
+
 @dataclass(frozen=True)
 class SemanticQueryContract:
     original_query: str
@@ -212,12 +258,22 @@ class SemanticEventInterpretation:
             end = int(value.get("evidence_end"))
         except (TypeError, ValueError):
             start, end = -1, -1
+        target_company = (
+            _clean(value.get("target_company"))
+            or _clean(value.get("beneficiary"))
+            or _clean(value.get("recipient"))
+            or _clean(value.get("employer"))
+            or ""
+        )
+        target_role = _clean(value.get("target_entity_role")) or _clean(value.get("role")) or ""
+        if target_role in {"startup_recipient", "funding_recipient", "investee", "raise_recipient"}:
+            target_role = "recipient"
         return cls(
             entities=tuple(dict(item) for item in value.get("entities") or () if isinstance(item, Mapping)),
             events=tuple(dict(item) for item in value.get("events") or () if isinstance(item, Mapping)),
             relations=tuple(dict(item) for item in value.get("relations") or () if isinstance(item, Mapping)),
-            target_company=_clean(value.get("target_company")),
-            target_entity_role=_clean(value.get("target_entity_role")),
+            target_company=target_company,
+            target_entity_role=target_role,
             event_type=_clean(value.get("event_type")),
             open_predicate=_clean(value.get("open_predicate")),
             actor=optional("actor"), recipient=optional("recipient"), provider=optional("provider"),
@@ -547,15 +603,29 @@ class SemanticCommercialEventInterpreter:
             "source_text": content, "source_url": str(source_url), "publisher": str(publisher or ""),
             "structured_metadata": dict(structured_metadata or {}), "entity_hints": list(_tuple(entity_hints)),
         }
-        content_hash = _digest({
-            "title": payload["title"], "snippet": payload["snippet"], "source_text": content,
-            "source_url": payload["source_url"], "structured_metadata": payload["structured_metadata"],
-        })
+        # URL-stable primary key: windowing/snippet drift must not force a paid
+        # re-interpretation of the same article. Grounding still re-checks the
+        # literal excerpt against the freshly fetched source_text.
+        canonical_url = _canonical_source_url(str(source_url))
+        content_hash = _digest({"source_url": canonical_url})
         key = SemanticResultCache.key(
             content_hash=content_hash, semantic_query_contract_hash=contract.contract_hash,
             model_version=self.model.model_version, interpreter_schema_version=EVENT_SCHEMA_VERSION,
         )
         cached = self.cache.get(key)
+        if cached is None:
+            # Legacy key (title+snippet+full text) for entries written before URL-stable keys.
+            legacy_hash = _digest({
+                "title": payload["title"], "snippet": payload["snippet"], "source_text": content,
+                "source_url": payload["source_url"], "structured_metadata": payload["structured_metadata"],
+            })
+            legacy_key = SemanticResultCache.key(
+                content_hash=legacy_hash, semantic_query_contract_hash=contract.contract_hash,
+                model_version=self.model.model_version, interpreter_schema_version=EVENT_SCHEMA_VERSION,
+            )
+            cached = self.cache.get(legacy_key)
+            if cached is not None:
+                self.cache.set(key, cached)
         if cached is not None:
             self.telemetry.semantic_cache_hits += 1
             return SemanticEventInterpretation.from_model(cached)
@@ -937,7 +1007,7 @@ class SemanticEvidenceGroundingVerifier:
             for relation in interpretation.relations
         )
         role_match = bool(interpretation.target_entity_role) and (
-            interpretation.target_entity_role == contract.target_role_in_event
+            _roles_compatible(interpretation.target_entity_role, contract.target_role_in_event)
             or (relationships_pass and target_in_relation)
             or (hiring_proxy is not None and hiring_proxy["employer_role"] and contract.target_role_in_event == "employer")
         )
@@ -1133,9 +1203,10 @@ class AnthropicSemanticModel:
             if task.startswith("semantic_commercial_event")
             else "MIRAX_SEMANTIC_QUERY_MAX_OUTPUT_TOKENS"
         )
-        # Sonnet 5 query compilation needs room for its structured tool result;
-        # event interpretation remains the high-volume 2k-token Tier 1 path.
-        default_output_tokens = "2000" if task.startswith("semantic_commercial_event") else "3000"
+        # Event interpretations regularly overflow 2k tool JSON on news pages
+        # (relations + rubric + excerpt). 4k keeps canaries under the €0.028
+        # reserve ceiling while avoiding SEMANTIC_OUTPUT_TRUNCATED dead-ends.
+        default_output_tokens = "4000" if task.startswith("semantic_commercial_event") else "3000"
         max_output_tokens = int(
             os.getenv(task_output_env)
             or os.getenv("MIRAX_SEMANTIC_MAX_OUTPUT_TOKENS")
