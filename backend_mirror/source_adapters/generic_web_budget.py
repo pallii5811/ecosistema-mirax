@@ -10,11 +10,11 @@ from typing import Any, Mapping, MutableMapping, Sequence, Tuple
 from .contracts import DiscoveryCursor
 
 QUERY_COST_EUR = 0.005
-# Discovery must leave room for ≥1 paid semantic reserve (~€0.028–0.032 on
-# typical news pages). €0.020 soft-cap exhausted the €0.05 hard budget before
-# the second lead could reserve interpretation.
+# Discovery must leave room for ≥1 paid semantic reserve (~€0.018 on
+# typical news pages after the tighter Haiku envelope). €0.020 soft-cap
+# exhausted the €0.05 hard budget before the second lead could interpret.
 DISCOVERY_SOFT_CAP_EUR = 0.015
-SEMANTIC_RESERVE_EUR = 0.020
+SEMANTIC_RESERVE_EUR = 0.018
 IDENTITY_RESERVE_EUR = 0.005
 BUFFER_EUR = 0.005
 INITIAL_SERP_QUERIES = 1
@@ -73,7 +73,7 @@ class GenericWebDiscoveryState:
         # is partly consumed. Still allow another discovery query when remaining
         # covers SERP + one more interpretation (~€0.015–0.016 observed).
         if self.provider_calls >= 1 and float(spent_eur) + 1e-9 >= QUERY_COST_EUR:
-            continued_need = QUERY_COST_EUR + 0.016
+            continued_need = QUERY_COST_EUR + SEMANTIC_RESERVE_EUR
             return governor_remaining + 1e-9 >= continued_need
         need = QUERY_COST_EUR + self.reserved_floor_eur()
         if governor_remaining + 1e-9 < need and spent_eur + QUERY_COST_EUR > hard_cap_eur - self.reserved_floor_eur() + 1e-9:

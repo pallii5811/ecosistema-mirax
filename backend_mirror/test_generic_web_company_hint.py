@@ -117,5 +117,5 @@ def test_can_reserve_serp_after_first_semantic_for_second_lead() -> None:
     state = GenericWebDiscoveryState(provider_calls=1, discovery_spent_eur=0.005, pages_fetched=12)
     # Mirror live Q7: €0.02 spent, €0.03 remaining, soft discovery still open.
     assert state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.02, governor_remaining=0.03)
-    assert not state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.04, governor_remaining=0.01)
+    assert not state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.035, governor_remaining=0.015)
 
