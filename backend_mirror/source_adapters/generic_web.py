@@ -530,6 +530,38 @@ def company_hint_present_in_source(hint: str, source_text: str) -> bool:
     return len(overlap) >= max(1, len(hint_tokens) - 1)
 
 
+_SNIPPET_COMPANY_PATTERNS = (
+    re.compile(
+        r"^([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,4})\s*,?\s*la startup",
+        re.I,
+    ),
+    re.compile(
+        r"^([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+chiude un round",
+        re.I,
+    ),
+    re.compile(
+        r"^([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+ha raccolto",
+        re.I,
+    ),
+    re.compile(
+        r"^([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+raccoglie",
+        re.I,
+    ),
+)
+
+
+def _snippet_company_hint(snippet: str) -> str:
+    text = (_text(snippet) or "").strip()
+    for pattern in _SNIPPET_COMPANY_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        name = match.group(1).strip()
+        if name and not _GENERIC_TITLE_RE.search(name):
+            return name
+    return ""
+
+
 def _title_company_leading(title: str) -> str:
     leading = re.split(r"\s+[|–—-]\s+|:\s+", title or "", maxsplit=1)[0].strip()
     for candidate in (leading.split(",", 1)[0].strip(), leading):
@@ -549,6 +581,9 @@ def _company_identity_hint(*, title: str, snippet: str, html: str) -> str:
     leading = _title_company_leading(title)
     if leading and leading.casefold() in serp_text:
         return leading
+    snippet_hint = _snippet_company_hint(snippet)
+    if snippet_hint and snippet_hint.casefold() in serp_text:
+        return snippet_hint
     combined = f"{title} {snippet} {visible[:100_000]}"
     legal = _LEGAL_ENTITY_RE.search(combined)
     if legal:
@@ -611,7 +646,15 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
     governor = current_cost_governor()
     remaining_governor = float(getattr(governor, "remaining_eur", 0.0) or 0.0) if governor is not None else float("inf")
     if not accepted_hits and max_queries > 0:
-        if universal and remaining_governor + 1e-9 < QUERY_COST_EUR + SEMANTIC_RESERVE_EUR + IDENTITY_RESERVE_EUR + BUFFER_EUR:
+        if universal and not state.can_reserve_serp(
+            hard_cap_eur=hard_cap,
+            spent_eur=(
+                float(getattr(governor, "committed_micro_eur", 0) or 0) / 1_000_000
+                if governor is not None
+                else spent
+            ),
+            governor_remaining=remaining_governor,
+        ):
             return GenericWebProviderResult((), 0.0, ("DISCOVERY_BUDGET_RESERVED",))
     queries_run = 0
     if not accepted_hits:

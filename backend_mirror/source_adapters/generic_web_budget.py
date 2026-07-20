@@ -62,7 +62,13 @@ class GenericWebDiscoveryState:
 
     def queue_has_work(self) -> bool:
         terminal = {_url_key(item) for item in self.processed_terminal_urls}
-        return any(_url_key(url) not in terminal for url in self.pending_urls)
+        if any(_url_key(url) not in terminal for url in self.pending_urls):
+            return True
+        return any(
+            _url_key(meta.get("url")) not in terminal
+            for meta in self.url_meta
+            if isinstance(meta, Mapping) and meta.get("url")
+        )
 
     def wave_urls_terminal(self) -> bool:
         if self.pages_fetched > 0:
