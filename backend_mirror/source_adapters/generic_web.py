@@ -537,6 +537,10 @@ _SNIPPET_COMPANY_PATTERNS = (
         re.I,
     ),
     re.compile(
+        r"\bla startup(?:\s+\w+){0,3}\s+([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+chiude",
+        re.I,
+    ),
+    re.compile(
         r"^([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+chiude un round",
         re.I,
     ),
@@ -579,9 +583,13 @@ def _looks_like_company_name(value: str) -> bool:
         return False
     if _GENERIC_TITLE_RE.search(text):
         return False
-    if re.match(r"^(Le|La|Lo|Gli|I|Un|Una|Uno|Più|Molte|Tutte|Tutti)\b", text, re.I):
+    if re.match(r"^(Le|La|Lo|Gli|I|Un|Una|Uno|Più|Molte|Tutte|Tutti|Press|News|Blog|Home)\b", text, re.I):
         return False
-    if re.search(r"\b(milioni di investimenti|startup italiane|mercato|economia|notizie)\b", text, re.I):
+    if re.search(
+        r"\b(milioni di investimenti|startup italiane|mercato|economia|notizie|modalit[aà]|adesione|iscrizione)\b",
+        text,
+        re.I,
+    ):
         return False
     return bool(re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", text))
 
@@ -920,56 +928,57 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                     if identities:
                         published = _structured_page_date(html)
                         visible_text = fetch_provenance["source_text"]
-                        if not visible_text or not published:
-                            provider_warnings.append("SEMANTIC_SOURCE_PROVENANCE_INCOMPLETE")
-                            continue
-                        for identity in identities:
-                            company = str(identity.get("name") or "")
-                            if not _looks_like_company_name(company):
-                                continue
-                            domain = str(identity.get("domain") or "")
-                            excerpt = title.strip() if title.strip() and title.strip() in visible_text else visible_text[:1200]
-                            row = {
-                                "company_name": company,
-                                "official_domain": domain,
-                                "organization_url": identity.get("url"),
-                                "official_domain_verified": False,
-                                "entity_class": "operating_company",
-                                "matched_signal_ids": list(request.signal_ids),
-                                "published_at": published,
-                                "geography": next((g for g in request.geographies if g.casefold() not in {"italy", "italia"}), ""),
-                                "source_url": final_url,
-                                "source_publisher": str(item.get("publisher") or title or page_host) if isinstance(item, Mapping) else (title or page_host),
-                                "source_class": "official_company_website" if domain == page_host else "recognized_news",
-                                "evidence_excerpt": excerpt,
-                                "extraction_method": "structured_identity_semantic_candidate",
-                                "source_text": visible_text[:250_000],
-                                "page_title": title,
-                                "search_snippet": snippet,
-                                "structured_metadata": {"target_organization": dict(identity)},
-                                "query_origin": request.technical_filters.get("query_origin") or request.query,
-                                "parent_query": request.technical_filters.get("parent_query") or request.query,
-                                "discovery_round": int(request.technical_filters.get("discovery_round") or 1),
-                                "provider_query": provider_query,
-                                "search_provider": search_provider,
-                            }
-                            attach_generic_provenance(
-                                row,
-                                adapter_id="generic_web_research_v1",
-                                search_scope=scope,
-                                execution_round=int(request.technical_filters.get("discovery_round") or state.provider_calls or 1),
-                                provider_call_id=f"serp:{scope}:{state.provider_calls}",
-                                page_fetch_id_value=page_fetch_id(
+                        structured_before = len(records)
+                        if visible_text and published:
+                            for identity in identities:
+                                company = str(identity.get("name") or "")
+                                if not _looks_like_company_name(company):
+                                    continue
+                                domain = str(identity.get("domain") or "")
+                                excerpt = title.strip() if title.strip() and title.strip() in visible_text else visible_text[:1200]
+                                row = {
+                                    "company_name": company,
+                                    "official_domain": domain,
+                                    "organization_url": identity.get("url"),
+                                    "official_domain_verified": False,
+                                    "entity_class": "operating_company",
+                                    "matched_signal_ids": list(request.signal_ids),
+                                    "published_at": published,
+                                    "geography": next((g for g in request.geographies if g.casefold() not in {"italy", "italia"}), ""),
+                                    "source_url": final_url,
+                                    "source_publisher": str(item.get("publisher") or title or page_host) if isinstance(item, Mapping) else (title or page_host),
+                                    "source_class": "official_company_website" if domain == page_host else "recognized_news",
+                                    "evidence_excerpt": excerpt,
+                                    "extraction_method": "structured_identity_semantic_candidate",
+                                    "source_text": visible_text[:250_000],
+                                    "page_title": title,
+                                    "search_snippet": snippet,
+                                    "structured_metadata": {"target_organization": dict(identity)},
+                                    "query_origin": request.technical_filters.get("query_origin") or request.query,
+                                    "parent_query": request.technical_filters.get("parent_query") or request.query,
+                                    "discovery_round": int(request.technical_filters.get("discovery_round") or 1),
+                                    "provider_query": provider_query,
+                                    "search_provider": search_provider,
+                                }
+                                attach_generic_provenance(
+                                    row,
+                                    adapter_id="generic_web_research_v1",
                                     search_scope=scope,
-                                    url=str(fetch_provenance["final_url"]),
-                                    wave_index=state.pages_fetched,
-                                ),
-                                source_text=visible_text,
-                                cursor_version=request.cursor.value if request.cursor else "generic-web:v2",
-                            )
-                            row = _apply_free_identity(row, request)
-                            records.append(row)
-                        continue
+                                    execution_round=int(request.technical_filters.get("discovery_round") or state.provider_calls or 1),
+                                    provider_call_id=f"serp:{scope}:{state.provider_calls}",
+                                    page_fetch_id_value=page_fetch_id(
+                                        search_scope=scope,
+                                        url=str(fetch_provenance["final_url"]),
+                                        wave_index=state.pages_fetched,
+                                    ),
+                                    source_text=visible_text,
+                                    cursor_version=request.cursor.value if request.cursor else "generic-web:v2",
+                                )
+                                row = _apply_free_identity(row, request)
+                                records.append(row)
+                            if len(records) > structured_before:
+                                continue
+                        provider_warnings.append("SEMANTIC_SOURCE_PROVENANCE_INCOMPLETE")
                     # Open-world pages often lack JSON-LD about/mentions. Keep the
                     # page as source_text via universal evidence extraction so
                     # SemanticCommercialEventInterpreter can still run.

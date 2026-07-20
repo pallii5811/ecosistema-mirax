@@ -278,6 +278,58 @@ def test_open_world_acquisition_uses_structured_target_not_publisher() -> None:
     assert "destinate nuove risorse" in record["source_text"]
 
 
+def test_structured_identity_incomplete_falls_through_to_open_world() -> None:
+    published = date.today().isoformat()
+    article = {
+        "@context": "https://schema.org",
+        "@type": "NewsArticle",
+        "publisher": {"@type": "Organization", "name": "Energia News", "url": "https://news.test"},
+        "about": {"@type": "Organization", "name": "Sintropy.AI", "url": "https://sintropy.ai"},
+        # intentionally no datePublished — must not block open-world extraction
+    }
+    html = (
+        f'<html><head><script type="application/ld+json">{json.dumps(article)}</script>'
+        f'<meta property="article:published_time" content="{published}T10:00:00Z"></head>'
+        "<body><p>Sintropy.AI chiude un round seed da 1 milione di euro.</p></body></html>"
+    )
+    # Remove meta so structured path has identity but no structured date from JSON-LD only.
+    html_no_meta = (
+        f'<html><head><script type="application/ld+json">{json.dumps(article)}</script></head>'
+        "<body><article><p>Sintropy.AI chiude un round seed da 1 milione di euro per accelerare "
+        "lo sviluppo della piattaforma di efficientamento energetico dedicata a retail e industria "
+        f"alimentare. L'annuncio e stato pubblicato il {published[8:10]}/{published[5:7]}/{published[0:4]} "
+        "con il coinvolgimento di investitori italiani.</p></article></body></html>"
+    )
+    funding_request = AdapterDiscoveryRequest(
+        intent="commercial_search",
+        signal_ids=("funding",),
+        signal_match_mode="any",
+        geographies=("Italia",),
+        freshness_max_age_days=180,
+        requested_count=2,
+        budget_eur=0.05,
+        query="Trovami startup che stanno raccogliendo fondi di investimento.",
+        technical_filters={
+            "universal_engine": True,
+            "semantic_authority_required": True,
+            "semantic_query_contract": {"required_relationships": ["startup_raising_or_receiving_investment"]},
+            "universal_search_queries": ("startup round",),
+            "universal_serp_search": lambda _query, _limit: [{
+                "title": "Sintropy.AI chiude un round seed da 1 milione di euro",
+                "url": "https://news.test/sintropy",
+                "snippet": "Sintropy.AI chiude un round seed da 1 milione di euro",
+                "publisher": "Energia News",
+                "provider": "fixture",
+            }],
+            "universal_page_fetch": lambda url: (html_no_meta, url),
+            "universal_prefilter_telemetry": {},
+        },
+    )
+    result = asyncio.run(GenericWebResearchAdapter((_default_generic_provider,)).discover(funding_request))
+    assert len(result.candidates) == 1, result.warnings
+    assert result.candidates[0].canonical_company_name == "Sintropy.AI"
+
+
 def test_open_world_invertix_article_emits_raw_candidate() -> None:
     published = date.today().isoformat()
     body = (
