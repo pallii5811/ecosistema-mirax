@@ -278,6 +278,49 @@ def test_open_world_acquisition_uses_structured_target_not_publisher() -> None:
     assert "destinate nuove risorse" in record["source_text"]
 
 
+def test_open_world_invertix_article_emits_raw_candidate() -> None:
+    published = date.today().isoformat()
+    body = (
+        "Invertix chiude un round pre-seed da 1,7 milioni di euro. "
+        "Invertix, startup con sede tra Italia e Germania che sviluppa agenti AI per il settore energy, "
+        "annuncia la chiusura del round."
+    )
+    html = (
+        f'<html><head><meta property="article:published_time" content="{published}T10:00:00Z"></head>'
+        f"<body><article><p>{body}</p></article></body></html>"
+    )
+    funding_request = AdapterDiscoveryRequest(
+        intent="commercial_search",
+        signal_ids=("funding",),
+        signal_match_mode="any",
+        geographies=("Italia",),
+        freshness_max_age_days=180,
+        requested_count=2,
+        budget_eur=0.05,
+        query="Trovami startup che stanno raccogliendo fondi di investimento.",
+        technical_filters={
+            "universal_engine": True,
+            "semantic_authority_required": True,
+            "semantic_query_contract": {"required_relationships": ["startup_raising_or_receiving_investment"]},
+            "universal_search_queries": ("startup round investimento italia",),
+            "universal_serp_search": lambda _query, _limit: [{
+                "title": "Invertix chiude un round pre-seed da 1,7 milioni di euro",
+                "url": "https://www.energiamercato.it/notizie/enertech/invertix-round-di-finanziamento",
+                "snippet": "Invertix chiude un round pre-seed da 1,7 milioni di euro",
+                "publisher": "Energiamercato",
+                "provider": "fixture",
+            }],
+            "universal_page_fetch": lambda url: (html, url),
+            "universal_prefilter_telemetry": {},
+        },
+    )
+    adapter_result = asyncio.run(GenericWebResearchAdapter((_default_generic_provider,)).discover(funding_request))
+    assert len(adapter_result.candidates) == 1, adapter_result.warnings
+    assert adapter_result.candidates[0].canonical_company_name == "Invertix"
+    assert not adapter_result.candidates[0].official_domain
+    assert adapter_result.candidates[0].official_domain_verified is False
+
+
 def test_open_world_funding_news_uses_page_date_when_body_has_no_date() -> None:
     published = date.today().isoformat()
     html = (

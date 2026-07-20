@@ -4,8 +4,14 @@ from backend_mirror.source_adapters.generic_web import (
     _company_identity_hint,
     _literal_excerpt_for_hint,
     _snippet_company_hint,
+    _title_company_leading,
     company_hint_present_in_source,
 )
+
+
+def test_title_company_rejects_market_summary_headlines() -> None:
+    assert _title_company_leading("Le startup Italiane sfiorano i 700 milioni di investimenti nel ...") == ""
+    assert _title_company_leading("Invertix chiude un round pre-seed da 1,7 milioni di euro") == "Invertix"
 
 
 def test_company_hint_matches_legal_suffix_variants() -> None:

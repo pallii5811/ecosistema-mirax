@@ -563,14 +563,51 @@ def _snippet_company_hint(snippet: str) -> str:
     return ""
 
 
+_COMPANY_NAME_MAX_LEN = 45
+_COMPANY_NAME_MAX_WORDS = 5
+_TITLE_ACTION_TAIL_RE = re.compile(
+    r"\s+(?:chiude un|chiude il|chiude la|ha raccolto|hanno raccolto|raccoglie|annuncia|annunciano|sfiora|supera|porta a)\b",
+    re.I,
+)
+
+
+def _looks_like_company_name(value: str) -> bool:
+    text = (_text(value) or "").strip()
+    if not text or len(text) > _COMPANY_NAME_MAX_LEN:
+        return False
+    if len(text.split()) > _COMPANY_NAME_MAX_WORDS:
+        return False
+    if _GENERIC_TITLE_RE.search(text):
+        return False
+    if re.match(r"^(Le|La|Lo|Gli|I|Un|Una|Uno|Più|Molte|Tutte|Tutti)\b", text, re.I):
+        return False
+    if re.search(r"\b(milioni di investimenti|startup italiane|mercato|economia|notizie)\b", text, re.I):
+        return False
+    return bool(re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", text))
+
+
+def _trim_title_company_candidate(value: str) -> str:
+    candidate = (_text(value) or "").strip()
+    match = _TITLE_ACTION_TAIL_RE.search(candidate)
+    if match:
+        candidate = candidate[: match.start()].strip(" ,:-")
+    return candidate
+
+
+def _candidate_official_domain(*, page_host: str, source_class: str, semantic_required: bool) -> str:
+    host = _host(page_host) or ""
+    if source_class == "recognized_news" and semantic_required:
+        return ""
+    if not host or is_blacklisted_domain(host):
+        return ""
+    return host
+
+
 def _title_company_leading(title: str) -> str:
     leading = re.split(r"\s+[|–—-]\s+|:\s+", title or "", maxsplit=1)[0].strip()
-    for candidate in (leading.split(",", 1)[0].strip(), leading):
-        if (
-            2 <= len(candidate) <= 90
-            and not _GENERIC_TITLE_RE.search(candidate)
-            and re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", candidate)
-        ):
+    for raw in (leading.split(",", 1)[0].strip(), leading):
+        candidate = _trim_title_company_candidate(raw)
+        if _looks_like_company_name(candidate):
             return candidate
     return ""
 
@@ -617,7 +654,11 @@ def _append_semantic_deferred_news_record(
     publisher = str(item.get("publisher") or title or page_host) if isinstance(item, Mapping) else (title or page_host)
     row: Dict[str, Any] = {
         "company_name": company_hint,
-        "official_domain": page_host,
+        "official_domain": _candidate_official_domain(
+            page_host=page_host,
+            source_class="recognized_news",
+            semantic_required=request.technical_filters.get("semantic_authority_required") is True,
+        ),
         "official_domain_verified": False,
         "entity_class": "operating_company",
         "matched_signal_ids": list(request.signal_ids),
@@ -664,7 +705,7 @@ def _company_identity_hint(*, title: str, snippet: str, html: str) -> str:
     if leading and leading.casefold() in serp_text:
         return leading
     snippet_hint = _snippet_company_hint(snippet)
-    if snippet_hint and snippet_hint.casefold() in serp_text:
+    if snippet_hint and snippet_hint.casefold() in serp_text and _looks_like_company_name(snippet_hint):
         return snippet_hint
     combined = f"{title} {snippet} {visible[:100_000]}"
     legal = _LEGAL_ENTITY_RE.search(combined)
@@ -884,6 +925,8 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             continue
                         for identity in identities:
                             company = str(identity.get("name") or "")
+                            if not _looks_like_company_name(company):
+                                continue
                             domain = str(identity.get("domain") or "")
                             excerpt = title.strip() if title.strip() and title.strip() in visible_text else visible_text[:1200]
                             row = {
@@ -960,7 +1003,11 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                     for event in events:
                         if not event.company_name or not event.evidence_excerpt or not event.event_date:
                             continue
-                        domain = event.official_domain_candidate or _host(final_url)
+                        domain = _candidate_official_domain(
+                            page_host=_host(final_url) or "",
+                            source_class="recognized_news",
+                            semantic_required=request.technical_filters.get("semantic_authority_required") is True,
+                        ) or (event.official_domain_candidate or "")
                         matched_ids = []
                         if event.event_type and event.event_type in request.signal_ids:
                             matched_ids = [event.event_type]
@@ -1106,9 +1153,13 @@ def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
     domain = _host(record.get("official_domain"))
     universal = bool((request.technical_filters or {}).get("universal_engine"))
     semantic_required = request.technical_filters.get("semantic_authority_required") is True
-    if not company:
+    source_class = _text(record.get("source_class")) or ""
+    if not company or not _looks_like_company_name(company):
         return False, "COMPANY_MISSING"
-    if not domain or is_blacklisted_domain(domain):
+    if semantic_required and source_class == "recognized_news":
+        if domain and is_blacklisted_domain(domain):
+            return False, "OFFICIAL_DOMAIN_UNRESOLVED"
+    elif not domain or is_blacklisted_domain(domain):
         return False, "OFFICIAL_DOMAIN_UNRESOLVED"
     if universal:
         ok_prov, prov_code = generic_record_has_fetch_provenance(record)
@@ -1117,11 +1168,10 @@ def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
     if record.get("official_domain_verified") is not True:
         if not semantic_required:
             return False, "OFFICIAL_DOMAIN_UNVERIFIED"
-        if not domain:
+        if not domain and source_class != "recognized_news":
             return False, "OFFICIAL_DOMAIN_UNRESOLVED"
     if (_text(record.get("entity_class")) or "") != "operating_company":
         return False, "NON_OPERATING_ENTITY"
-    source_class = _text(record.get("source_class")) or ""
     if universal:
         if source_class not in {"official_company_website", "recognized_news", "industry_publication", "corporate_newsroom"}:
             return False, "NON_PRIMARY_SOURCE"
@@ -1229,11 +1279,16 @@ class GenericWebResearchAdapter:
                 if not valid:
                     warnings.append(rejection)
                     continue
-                domain = _host(record.get("official_domain"))
-                if domain in seen:
+                source_class = _text(record.get("source_class")) or "official_company_website"
+                dedupe_key = (
+                    f"company:{company.casefold()}"
+                    if semantic_required and source_class == "recognized_news"
+                    else (domain or f"company:{company.casefold()}")
+                )
+                if dedupe_key in seen:
                     warnings.append("DUPLICATE_COMPANY")
                     continue
-                seen.add(domain)
+                seen.add(dedupe_key)
                 matched = tuple(str(item) for item in record.get("matched_signal_ids") or () if str(item) in request.signal_ids)
                 if not matched:
                     warnings.append("NO_REQUESTED_SIGNAL_EVIDENCE")
@@ -1252,14 +1307,28 @@ class GenericWebResearchAdapter:
                         buyer_fit = float(record.get("buyer_fit") if record.get("buyer_fit") is not None else 0.75)
                     except (TypeError, ValueError):
                         buyer_fit = 0.75
-                domain_verification = record.get("domain_verification") if isinstance(record.get("domain_verification"), Mapping) else {
-                    "status": "verified", "confidence": 0.80, "score": 80,
-                    "evidence": ("schema_org_identity_match", "official_page_host_match"),
-                    "resolution_source": "source_adapter",
-                    "resolution_method": "verified_source_adapter",
-                    "adapter_id": self.capability.adapter_id,
-                    "url": f"https://{domain}/",
-                }
+                if isinstance(record.get("domain_verification"), Mapping):
+                    domain_verification = record.get("domain_verification")
+                elif domain:
+                    domain_verification = {
+                        "status": "verified", "confidence": 0.80, "score": 80,
+                        "evidence": ("schema_org_identity_match", "official_page_host_match"),
+                        "resolution_source": "source_adapter",
+                        "resolution_method": "verified_source_adapter",
+                        "adapter_id": self.capability.adapter_id,
+                        "url": f"https://{domain}/",
+                    }
+                else:
+                    domain_verification = {
+                        "status": "deferred",
+                        "confidence": 0.0,
+                        "score": 0,
+                        "evidence": ("post_semantic_identity_required",),
+                        "resolution_source": "deferred",
+                        "resolution_method": "news_source_without_target_domain",
+                        "adapter_id": self.capability.adapter_id,
+                        "url": "",
+                    }
                 evidence = tuple(EvidenceRecord(
                     signal_id=signal, source_url=source_url, source_publisher=publisher,
                     source_class=source_class, excerpt=excerpt[:1200], observed_at=observed,
@@ -1316,8 +1385,8 @@ class GenericWebResearchAdapter:
                         "origin_cursor_version": record.get("origin_cursor_version"),
                     },
                     adapter_id=self.capability.adapter_id, adapter_version=self.capability.adapter_version,
-                    official_domain_verified=record.get("official_domain_verified") is True,
-                    official_domain_confidence=float(domain_verification.get("confidence") or 0.80),
+                    official_domain_verified=bool(domain) and record.get("official_domain_verified") is True,
+                    official_domain_confidence=float(domain_verification.get("confidence") or 0.0) if domain else 0.0,
                 ))
                 if len(candidates) >= request.requested_count:
                     break
