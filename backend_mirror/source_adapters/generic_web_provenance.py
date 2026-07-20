@@ -5,7 +5,8 @@ import hashlib
 import re
 from typing import Any, Mapping, MutableMapping, Optional
 
-_CAREERS_HOST_PREFIXES = frozenset({"careers", "jobs", "job", "lavora", "work", "join", "recruiting"})
+from careers_host import is_careers_only_host
+
 _MIN_SOURCE_TEXT_CHARS = 120
 
 
@@ -22,19 +23,6 @@ def page_fetch_id(*, search_scope: str, url: str, wave_index: int) -> str:
 def semantic_call_id(*, contract_hash: str, source_url: str) -> str:
     token = f"{contract_hash}|{source_url.lower().rstrip('/')}"
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:20]
-
-
-def is_careers_only_host(domain: str) -> bool:
-    host = str(domain or "").lower().removeprefix("www.")
-    parts = host.split(".")
-    if not parts:
-        return False
-    if parts[0] in _CAREERS_HOST_PREFIXES:
-        return True
-    return any(part in _ATS_MARKERS for part in parts)
-
-
-_ATS_MARKERS = ("myworkdayjobs", "greenhouse", "lever.co", "smartrecruiters")
 
 
 def attach_generic_provenance(

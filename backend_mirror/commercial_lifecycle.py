@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from contracts.signal_ontology import canonical_signal_id
 from contracts.source_registry import load_source_registry
-from source_adapters.generic_web_provenance import is_careers_only_host
+from careers_host import is_careers_only_host
 
 _EXPLICIT_SIZE_CONSTRAINT_RE = re.compile(
     r"\b(?:"
