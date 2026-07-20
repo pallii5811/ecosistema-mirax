@@ -494,24 +494,68 @@ def _canonical_token(value: str) -> str:
     return "".join(char.casefold() for char in _text(value) if char.isalnum())
 
 
+_LEGAL_SUFFIX_RE = re.compile(
+    r"\b(?:s\.?\s?r\.?\s?l\.?|s\.?\s?p\.?\s?a\.?|srl|spa|gmbh|inc|ltd|llc)\b",
+    re.I,
+)
+
+
+def _company_core_tokens(value: str) -> set[str]:
+    import unicodedata
+
+    text = unicodedata.normalize("NFKC", _text(value).casefold())
+    text = _LEGAL_SUFFIX_RE.sub(" ", text)
+    stop = {"the", "and", "per", "del", "della", "delle", "dei", "degli", "della", "news", "notizie"}
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]{2,}", text)
+        if token not in stop
+    }
+
+
+def company_hint_present_in_source(hint: str, source_text: str) -> bool:
+    """True when the hinted company identity is evidenced in fetched page text."""
+    if not _text(hint) or not _text(source_text):
+        return False
+    hint_tokens = _company_core_tokens(hint)
+    if not hint_tokens:
+        return False
+    source_tokens = _company_core_tokens(source_text)
+    if hint_tokens <= source_tokens:
+        return True
+    if len(hint_tokens) == 1:
+        token = next(iter(hint_tokens))
+        return token in source_tokens or token in _canonical_token(source_text)
+    overlap = hint_tokens & source_tokens
+    return len(overlap) >= max(1, len(hint_tokens) - 1)
+
+
+def _title_company_leading(title: str) -> str:
+    leading = re.split(r"\s+[|–—-]\s+|:\s+", title or "", maxsplit=1)[0].strip()
+    for candidate in (leading.split(",", 1)[0].strip(), leading):
+        if (
+            2 <= len(candidate) <= 90
+            and not _GENERIC_TITLE_RE.search(candidate)
+            and re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", candidate)
+        ):
+            return candidate
+    return ""
+
+
 def _company_identity_hint(*, title: str, snippet: str, html: str) -> str:
     """Return only an identity explicitly present in acquired evidence."""
-    structured = _structured_subject_company(html)
-    if structured:
-        return structured
     visible = _text(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)) or ""
+    serp_text = f"{title} {snippet}".casefold()
+    leading = _title_company_leading(title)
+    if leading and leading.casefold() in serp_text:
+        return leading
     combined = f"{title} {snippet} {visible[:100_000]}"
     legal = _LEGAL_ENTITY_RE.search(combined)
-    if legal:
+    if legal and _company_core_tokens(legal.group(1)) & _company_core_tokens(f"{title} {snippet}"):
         return legal.group(1).strip()
-    leading = re.split(r"\s+[|–—-]\s+|:\s+", title or "", maxsplit=1)[0].strip()
-    if (
-        2 <= len(leading) <= 90
-        and not _GENERIC_TITLE_RE.search(leading)
-        and re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", leading)
-        and leading.casefold() in snippet.casefold()
-    ):
-        return leading
+    structured = _structured_subject_company(html)
+    if structured and _company_core_tokens(structured) & _company_core_tokens(f"{title} {snippet}"):
+        return structured
     return ""
 
 
@@ -686,10 +730,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                     page_host = _host(final_url)
                     if request.technical_filters.get("semantic_authority_required") is True:
                         identity_hint = _company_identity_hint(title=title, snippet=snippet, html=html)
-                        if (
-                            identity_hint
-                            and _canonical_token(identity_hint) not in _canonical_token(visible_text)
-                        ):
+                        if identity_hint and not company_hint_present_in_source(identity_hint, visible_text):
                             filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
                             _record_url_outcome(filters, {
                                 "url": url,

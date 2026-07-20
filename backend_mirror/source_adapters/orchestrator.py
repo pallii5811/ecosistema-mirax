@@ -552,12 +552,21 @@ async def semantic_authority_qualifier(
                 rejection_codes.append("SOURCE_TEXT_MISSING")
                 continue
             if len(source_text) > 12_000:
+                snippet = str(provenance.get("search_snippet") or "")
                 evidence_offset = source_text.find(evidence.excerpt)
+                if evidence_offset < 0 and snippet:
+                    evidence_offset = source_text.find(snippet[: min(len(snippet), 240)])
+                if evidence_offset < 0 and candidate.canonical_company_name:
+                    company = str(candidate.canonical_company_name)
+                    evidence_offset = source_text.casefold().find(company.casefold())
                 if evidence_offset >= 0:
                     window_start = max(0, evidence_offset - 4_000)
                     source_text = source_text[window_start:window_start + 12_000]
                 else:
-                    source_text = evidence.excerpt
+                    padded = " ".join(
+                        part for part in (evidence.excerpt, snippet, str(provenance.get("page_title") or "")) if part
+                    ).strip()
+                    source_text = padded if len(padded) >= 120 else source_text[:12_000]
             interpretation = await interpreter.interpret(
                 contract,
                 title=str(provenance.get("page_title") or ""),
