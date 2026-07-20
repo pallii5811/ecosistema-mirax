@@ -1471,6 +1471,16 @@ def _validate_record(
             )
             if not role_ok:
                 return False, role_code or "HIRING_ROLE_MISMATCH"
+        elif "hiring_technology" in specialized:
+            from .hiring_qualification import vacancy_role_matches_technology
+
+            role_ok, role_code = vacancy_role_matches_technology(
+                title=title,
+                description=_text(record.get("description") or record.get("evidence")),
+                structured_role=_text(record.get("occupational_category") or record.get("role_category")),
+            )
+            if not role_ok:
+                return False, role_code or "HIRING_ROLE_MISMATCH"
         else:
             role_matches = {
                 signal: (

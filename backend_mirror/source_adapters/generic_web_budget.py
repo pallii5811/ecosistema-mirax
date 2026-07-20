@@ -10,8 +10,8 @@ from typing import Any, Mapping, MutableMapping, Sequence, Tuple
 from .contracts import DiscoveryCursor
 
 QUERY_COST_EUR = 0.005
-DISCOVERY_SOFT_CAP_EUR = 0.015
-SEMANTIC_RESERVE_EUR = 0.015
+DISCOVERY_SOFT_CAP_EUR = 0.010
+SEMANTIC_RESERVE_EUR = 0.020
 IDENTITY_RESERVE_EUR = 0.005
 BUFFER_EUR = 0.005
 INITIAL_SERP_QUERIES = 1

@@ -8,7 +8,7 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
@@ -40,6 +40,7 @@ from .generic_web_provenance import (
     attach_generic_provenance,
     evidence_has_fetch_provenance,
     generic_record_has_fetch_provenance,
+    is_careers_only_host,
     page_fetch_id,
     semantic_call_id,
 )
@@ -337,6 +338,56 @@ def _hits_from_urls(urls: Sequence[str], *, query: str) -> List[Dict[str, str]]:
     return out
 
 
+def _record_url_outcome(filters: MutableMapping[str, Any], outcome: Mapping[str, Any]) -> None:
+    bucket = filters.get("generic_web_url_outcomes")
+    if not isinstance(bucket, list):
+        bucket = []
+        filters["generic_web_url_outcomes"] = bucket
+    bucket.append(dict(outcome))
+
+
+def _apply_free_identity(row: MutableMapping[str, Any], request: AdapterDiscoveryRequest) -> MutableMapping[str, Any]:
+    from backend_mirror.agents.entity_identity_resolver import (
+        COMMERCIAL_ENTITY_CLASSES,
+        EntityIdentityRequest,
+        resolve_entity_identity,
+    )
+
+    company = _text(row.get("company_name"))
+    source_url = _text(row.get("source_url"))
+    domain = _host(row.get("official_domain"))
+    if domain and is_careers_only_host(domain):
+        domain = ""
+    identity = resolve_entity_identity(
+        EntityIdentityRequest(
+            company_name=company,
+            evidence_url=source_url,
+            presented_domain=domain,
+            geography=_text(row.get("geography")) or "",
+            budget_eur=0.0,
+            allow_serp=False,
+            allowed_entity_classes=tuple(COMMERCIAL_ENTITY_CLASSES),
+            source_payload=dict(row),
+        )
+    )
+    if identity.official_domain and str(identity.identity_status or "").lower() == "verified":
+        if not is_careers_only_host(identity.official_domain):
+            row["official_domain"] = identity.official_domain
+            row["official_domain_verified"] = True
+            row["entity_class"] = identity.entity_class or "operating_company"
+            row["domain_verification"] = {
+                "status": "verified",
+                "confidence": float(identity.identity_confidence or 0.85),
+                "score": int(round(float(identity.identity_confidence or 0.85) * 100)),
+                "evidence": tuple(identity.identity_evidence or ("free_identity",)),
+                "resolution_source": identity.resolution_source or "free_identity",
+                "resolution_method": identity.resolution_method or "structured_or_owned_host",
+                "adapter_id": "generic_web_research_v1",
+                "url": f"https://{identity.official_domain}/",
+            }
+    return row
+
+
 _GENERIC_TITLE_RE = re.compile(
     r"\b(?:news|notizie|comunicato|stampa|evento|eventi|home|homepage|blog|"
     r"finanziamento|funding|round|nomina|partnership|tecnologia|marketing)\b",
@@ -604,6 +655,15 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                 else:
                     response = await client.get(url)
                     if response.status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
+                        filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
+                        _record_url_outcome(filters, {
+                            "url": url,
+                            "query": provider_query,
+                            "fetch_attempted": True,
+                            "status_code": int(response.status_code),
+                            "parse_status": "rejected_fetch",
+                            "rejection_code": "PAGE_FETCH_FAILED",
+                        })
                         state.wave_terminal_rejections += 1
                         state.processed_terminal_urls = (*state.processed_terminal_urls, url)
                         continue
@@ -675,6 +735,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 source_text=visible_text,
                                 cursor_version=request.cursor.value if request.cursor else "generic-web:v2",
                             )
+                            row = _apply_free_identity(row, request)
                             records.append(row)
                         continue
                     # Open-world pages often lack JSON-LD about/mentions. Keep the
@@ -762,16 +823,39 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             source_text=visible_text,
                             cursor_version=request.cursor.value if request.cursor else "generic-web:v2",
                         )
+                        row = _apply_free_identity(row, request)
                         records.append(row)
                 else:
                     records.extend(parse_primary_evidence_page(html, final_url, request))
-            except Exception:
+                filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
+                _record_url_outcome(filters, {
+                    "url": url,
+                    "query": provider_query,
+                    "fetch_attempted": True,
+                    "status_code": 200,
+                    "final_url": final_url,
+                    "source_text_chars": len(visible_text),
+                    "parse_status": "parsed",
+                })
+            except Exception as exc:
+                filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
+                _record_url_outcome(filters, {
+                    "url": url,
+                    "query": provider_query,
+                    "fetch_attempted": True,
+                    "parse_status": "rejected_fetch",
+                    "rejection_code": "PAGE_FETCH_FAILED",
+                    "error": type(exc).__name__,
+                })
+                provider_warnings.append(f"PAGE_FETCH_FAILED:{type(exc).__name__}")
                 state.wave_terminal_rejections += 1
                 state.processed_terminal_urls = (*state.processed_terminal_urls, url)
                 continue
-        for item in accepted_hits[len(wave):]:
+        terminal_end = {str(item).strip().lower().rstrip("/") for item in state.processed_terminal_urls}
+        for item in accepted_hits:
             url = item.url if hasattr(item, "url") else str(item.get("url") or "")
-            if url and url.lower().rstrip("/") not in terminal:
+            key = url.lower().rstrip("/")
+            if url and key not in terminal_end:
                 next_pending_urls.append(url)
         state.pending_urls = tuple(dict.fromkeys(next_pending_urls))
         state.url_meta = tuple(next_url_meta.values())
@@ -816,7 +900,10 @@ def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
         if not ok_prov:
             return False, prov_code
     if record.get("official_domain_verified") is not True:
-        return False, "OFFICIAL_DOMAIN_UNVERIFIED"
+        if not semantic_required:
+            return False, "OFFICIAL_DOMAIN_UNVERIFIED"
+        if not domain:
+            return False, "OFFICIAL_DOMAIN_UNRESOLVED"
     if (_text(record.get("entity_class")) or "") != "operating_company":
         return False, "NON_OPERATING_ENTITY"
     source_class = _text(record.get("source_class")) or ""
@@ -923,51 +1010,6 @@ class GenericWebResearchAdapter:
                 domain = _host(record.get("official_domain"))
                 company = _text(record.get("company_name")) or ""
                 source_url = _text(record.get("source_url")) or ""
-                if universal and company and domain and source_url:
-                    from backend_mirror.agents.entity_identity_resolver import (
-                        COMMERCIAL_ENTITY_CLASSES,
-                        EntityIdentityRequest,
-                        resolve_entity_identity,
-                    )
-                    # ponytail: identity SERP capped at one cheap query; upgrade =
-                    # governor residual after discovery. Without this, news pages
-                    # with company hints never reach SemanticCommercialEventInterpreter.
-                    identity_budget = IDENTITY_RESERVE_EUR if semantic_required else 0.0
-                    identity = resolve_entity_identity(
-                        EntityIdentityRequest(
-                            company_name=company,
-                            evidence_url=source_url,
-                            presented_domain=domain,
-                            geography=_text(record.get("geography")) or "",
-                            budget_eur=identity_budget,
-                            allow_serp=bool(semantic_required and identity_budget > 0),
-                            allowed_entity_classes=tuple(COMMERCIAL_ENTITY_CLASSES),
-                            source_payload=dict(record),
-                        )
-                    )
-                    verified = str(identity.identity_status or "").lower() == "verified" and bool(identity.official_domain)
-                    if identity.official_domain and verified:
-                        record = {
-                            **dict(record),
-                            "official_domain": identity.official_domain,
-                            "official_domain_verified": True,
-                            "entity_class": identity.entity_class or "operating_company",
-                            "domain_verification": {
-                                "status": "verified",
-                                "confidence": float(identity.identity_confidence or 0.8),
-                                "score": int(round(float(identity.identity_confidence or 0.8) * 100)),
-                                "evidence": tuple(identity.identity_evidence or ("universal_identity",)),
-                                "resolution_source": identity.resolution_source or "source_adapter",
-                                "resolution_method": identity.resolution_method or "verified_source_adapter",
-                                "adapter_id": self.capability.adapter_id,
-                                "url": f"https://{identity.official_domain}/",
-                            },
-                        }
-                        domain = identity.official_domain
-                    elif not record.get("official_domain_verified"):
-                        # Reject incomplete identity rather than emit partial leads.
-                        warnings.append(identity.rejection_code or "IDENTITY_UNRESOLVED")
-                        continue
                 valid, rejection = _valid_record(record, request, date.today())
                 if not valid:
                     warnings.append(rejection)
@@ -1030,7 +1072,10 @@ class GenericWebResearchAdapter:
                     warnings.append("NO_CANONICAL_EVIDENCE")
                     continue
                 # Hard reject incomplete universal candidates.
-                if universal and not all((company, domain, matched, published, excerpt, source_url, source_class, domain_verification)):
+                if universal and not semantic_required and not all((company, domain, matched, published, excerpt, source_url, source_class, domain_verification)):
+                    warnings.append("UNIVERSAL_CANDIDATE_INCOMPLETE")
+                    continue
+                if universal and semantic_required and not all((company, matched, published, excerpt, source_url, source_class)):
                     warnings.append("UNIVERSAL_CANDIDATE_INCOMPLETE")
                     continue
                 candidates.append(OpportunityCandidate(
@@ -1063,6 +1108,8 @@ class GenericWebResearchAdapter:
                     break
             if len(candidates) >= request.requested_count:
                 break
+        final_state = load_generic_web_state(request.cursor, request.technical_filters)
+        filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
         return AdapterExecutionResult(
             adapter_id=self.capability.adapter_id, adapter_version=self.capability.adapter_version,
             candidates=tuple(candidates),
@@ -1070,8 +1117,19 @@ class GenericWebResearchAdapter:
                 exhausted=False, scope="partition",
                 reason="requested_count_reached_partial_coverage" if len(candidates) >= request.requested_count else "sample_partition_complete_not_global_exhaustion",
                 authoritative=False,
-                next_cursor=encode_generic_web_cursor(load_generic_web_state(request.cursor, request.technical_filters)),
+                next_cursor=encode_generic_web_cursor(final_state),
             ),
             operations=sum(len(result.records) for result in results), cost_eur=spent,
             started_at=started, completed_at=observed, warnings=tuple(sorted(set(warnings))),
+            telemetry={
+                "pages_fetched": final_state.pages_fetched,
+                "provider_queries": final_state.provider_calls,
+                "query_telemetry": list(filters.get("generic_web_query_telemetry") or ()),
+                "url_outcomes": list(filters.get("generic_web_url_outcomes") or ()),
+                "acquisition": {
+                    "pages_fetched": final_state.pages_fetched,
+                    "provider_queries": final_state.provider_calls,
+                    "pending_urls": list(final_state.pending_urls),
+                },
+            },
         )

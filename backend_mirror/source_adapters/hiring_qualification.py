@@ -114,6 +114,21 @@ _NON_MARKETING_ROLE_RE = re.compile(
     r")\b",
     re.I,
 )
+_TECHNOLOGY_ROLE_RE = re.compile(
+    r"\b(?:software\s+(?:engineer|developer)|data\s+engineer|full[\s-]?stack|"
+    r"backend(?:\s+developer)?|frontend(?:\s+developer)?|programmat(?:ore|rice)|"
+    r"sviluppat(?:ore|rice)|sistemista|devops|sre|cyber(?:\s*security)?\s+engineer|"
+    r"ingegnere\s+(?:informatico|software)|it\s+engineer|cloud\s+engineer|"
+    r"machine\s+learning\s+engineer|ml\s+engineer|ai\s+engineer|platform\s+engineer|"
+    r"embedded\s+software\s+engineer|mobile\s+developer|database\s+engineer|network\s+engineer)\b",
+    re.I,
+)
+_NON_TECHNOLOGY_ROLE_RE = re.compile(
+    r"\b(?:business\s+developer|sales\s+engineer|recruiter|talent\s+acquisition|"
+    r"mechanical\s+engineer|civil\s+engineer|chemical\s+engineer|project\s+manager|"
+    r"application\s+engineer(?!\s+software))\b",
+    re.I,
+)
 _VACANCY_ID_RE = re.compile(r"[_-](r\d{5,}|jr\d{5,}|req[-_]?\d+|job/\d+)", re.I)
 _EMPLOYER_IDENTITY_HINTS: Tuple[Tuple[re.Pattern[str], str, str, str], ...] = (
     (re.compile(r"verisure", re.I), "verisure.com", "Verisure", "brand_name"),
@@ -337,6 +352,25 @@ def vacancy_role_matches_marketing(
     if _NON_MARKETING_ROLE_RE.search(haystack) and not _MARKETING_ROLE_RE.search(haystack):
         return False, "HIRING_ROLE_MISMATCH"
     if _MARKETING_ROLE_RE.search(haystack):
+        return True, ""
+    return False, "HIRING_ROLE_MISMATCH"
+
+
+def vacancy_role_matches_technology(
+    *,
+    title: str,
+    description: str = "",
+    structured_role: str = "",
+) -> Tuple[bool, str]:
+    title_text = _text(title)
+    structured = _text(structured_role)
+    desc = _text(description)
+    haystack = " ".join(filter(None, (title_text, structured, desc[:2000])))
+    if not haystack:
+        return False, "VACANCY_TITLE_MISSING"
+    if _NON_TECHNOLOGY_ROLE_RE.search(haystack) and not _TECHNOLOGY_ROLE_RE.search(haystack):
+        return False, "HIRING_ROLE_MISMATCH"
+    if _TECHNOLOGY_ROLE_RE.search(haystack):
         return True, ""
     return False, "HIRING_ROLE_MISMATCH"
 

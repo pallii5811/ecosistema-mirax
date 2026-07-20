@@ -20,6 +20,7 @@ from .contracts import (
 )
 from .opportunity_scoring import score_opportunity
 from .generic_web_provenance import evidence_has_fetch_provenance, semantic_call_id
+from .post_semantic_identity import resolve_post_semantic_identity
 
 
 _SEO_GROUP_SIGNALS = frozenset({"website_weakness", "seo_errors", "site_stale"})
@@ -704,17 +705,36 @@ async def semantic_authority_qualifier(
             semantic_grounding=semantic_payload,
         )
     except Exception as exc:
+        from backend_mirror.semantic_errors import classify_exception
+
         if "telemetry" in locals() and "telemetry_bucket" in locals() and isinstance(telemetry_bucket, dict):
             for key, value in telemetry.to_dict().items():
                 if isinstance(value, (int, float)) and value is not None:
                     telemetry_bucket[key] = telemetry_bucket.get(key, 0) + value
+        contract_hash = ""
+        source_text_size = 0
+        model_name = ""
+        try:
+            contract_hash = contract.contract_hash  # type: ignore[name-defined]
+            source_text_size = len(str(locals().get("source_text") or ""))
+            model_name = str(getattr(locals().get("model"), "tier1_model", "") or "")
+        except Exception:
+            pass
+        code, detail = classify_exception(
+            exc,
+            failing_function="semantic_authority_qualifier",
+            contract_hash=contract_hash,
+            source_text_size=source_text_size,
+            model=model_name,
+        )
         return QualificationDecision(
-            False, False, False, "SEMANTIC_INTERPRETATION_FAILED",
-            reasons=(type(exc).__name__, str(exc)[:240]),
+            False, False, False, code,
+            reasons=(detail.exception_class, detail.exception_message[:240]),
             semantic_grounding={
                 "accepted": False,
-                "error_type": type(exc).__name__,
-                "error_message": str(exc)[:500],
+                "error_type": detail.exception_class,
+                "error_message": detail.exception_message,
+                "failure_detail": detail.to_public_dict(),
             },
         )
 
@@ -1017,6 +1037,22 @@ class UniversalSourceOrchestrator:
                         decision = await semantic_authority_qualifier(merged, request)
                     else:
                         decision = await self.qualifier(merged)
+                    if decision.semantic_grounding and decision.semantic_grounding.get("accepted"):
+                        merged, identity_code = resolve_post_semantic_identity(
+                            merged,
+                            request,
+                            semantic_matched=True,
+                        )
+                        accumulated[key] = merged
+                        if identity_code:
+                            decision = QualificationDecision(
+                                False,
+                                decision.audited,
+                                decision.evidence_verified,
+                                identity_code,
+                                reasons=(identity_code,),
+                                semantic_grounding=decision.semantic_grounding,
+                            )
                     decisions[key] = decision
                     if not decision.qualified:
                         code = decision.rejection_code or "QUALIFICATION_FAILED"
