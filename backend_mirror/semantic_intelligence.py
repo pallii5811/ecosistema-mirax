@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -597,6 +598,35 @@ def _canonical_name(value: str) -> str:
     return "".join(char.casefold() for char in _clean(value) if char.isalnum())
 
 
+def _normalize_literal_surface(value: str) -> str:
+    import unicodedata
+
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    for ch in ("\u00a0", "\u200b", "\u200c", "\u200d", "\ufeff"):
+        text = text.replace(ch, " ")
+    return " ".join(text.split())
+
+
+def _recover_literal_excerpt(source_text: str, excerpt: str) -> tuple[int, int, str] | None:
+    """Recover a unique literal span when model offsets or whitespace diverge."""
+    excerpt = str(excerpt or "")
+    if not excerpt.strip():
+        return None
+    exact_start = source_text.find(excerpt)
+    if exact_start >= 0 and source_text.find(excerpt, exact_start + 1) < 0:
+        return exact_start, exact_start + len(excerpt), excerpt
+    parts = [re.escape(part) for part in _normalize_literal_surface(excerpt).split() if part]
+    if not parts:
+        return None
+    pattern = r"\s+".join(parts)
+    matches = list(re.finditer(pattern, source_text, flags=re.I))
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    found = source_text[match.start():match.end()]
+    return match.start(), match.end(), found
+
+
 def _parse_iso_date(value: Optional[str]) -> Optional[date]:
     if not value:
         return None
@@ -845,22 +875,23 @@ class SemanticEvidenceGroundingVerifier:
         maximum_age_days: Optional[int] = None,
         now: Optional[date] = None,
         structured_metadata: Optional[Mapping[str, Any]] = None,
+        identity_verification_deferred: bool = False,
     ) -> GroundingVerdict:
         excerpt = interpretation.evidence_excerpt
         start, end = interpretation.evidence_start, interpretation.evidence_end
         literal = bool(excerpt) and start >= 0 and end == start + len(excerpt) and source_text[start:end] == excerpt
         if excerpt and not literal:
-            # Models frequently count bytes/tokens rather than Python string
-            # offsets. Recover only when the claimed literal excerpt occurs
-            # exactly once; ambiguity remains fail-closed.
-            derived_start = source_text.find(excerpt)
-            if derived_start >= 0 and source_text.find(excerpt, derived_start + 1) < 0:
-                start, end = derived_start, derived_start + len(excerpt)
-                literal = True
+            recovered = _recover_literal_excerpt(source_text, excerpt)
+            if recovered is not None:
+                start, end, excerpt = recovered
+                literal = source_text[start:end] == excerpt
         target_name = _canonical_name(interpretation.target_company)
         candidate_name = _canonical_name(candidate_company or interpretation.target_company)
         target_identity = bool(target_name) and target_name == candidate_name
-        target_in_source = bool(target_name) and target_name in _canonical_name(source_text)
+        target_in_source = bool(target_name) and (
+            target_name in _canonical_name(source_text)
+            or target_name in _canonical_name(excerpt)
+        )
         relationships = set(interpretation.satisfied_relationships)
         required_relationships = set(contract.required_relationships)
         hiring_proxy = None
@@ -917,6 +948,8 @@ class SemanticEvidenceGroundingVerifier:
             interpretation.rumor,
         ))
         event_day = _parse_iso_date(interpretation.event_date)
+        if event_day is None and isinstance(structured_metadata, Mapping):
+            event_day = _parse_iso_date(structured_metadata.get("published_at"))
         temporal = event_day is not None
         if temporal and maximum_age_days is not None:
             age = ((now or datetime.now(timezone.utc).date()) - event_day).days
@@ -960,7 +993,11 @@ class SemanticEvidenceGroundingVerifier:
             "temporal_evidence_valid": temporal,
             "source_url_present": str(source_url).startswith(("http://", "https://")),
             "publisher_present": bool(_clean(source_publisher)),
-            "official_domain_verified": bool(official_domain_verified) and float(official_domain_confidence) >= 0.70,
+            "official_domain_verified": (
+                True
+                if identity_verification_deferred
+                else bool(official_domain_verified) and float(official_domain_confidence) >= 0.70
+            ),
             "operating_entity": entity_class == "operating_company",
             "confidence_sufficient": interpretation.confidence >= 0.70 and interpretation.certainty >= 0.70,
         }

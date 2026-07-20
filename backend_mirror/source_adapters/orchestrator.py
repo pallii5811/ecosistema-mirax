@@ -614,6 +614,14 @@ async def semantic_authority_qualifier(
                 candidate_company=candidate.canonical_company_name,
                 maximum_age_days=request.freshness_max_age_days,
                 structured_metadata=structured_metadata,
+                identity_verification_deferred=(
+                    not candidate.official_domain_verified
+                    and str(evidence.source_class) in {
+                        "recognized_news",
+                        "industry_publication",
+                        "corporate_newsroom",
+                    }
+                ),
             )
             if verdict.accepted:
                 call_id = semantic_call_id(contract_hash=contract.contract_hash, source_url=evidence.source_url)

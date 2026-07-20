@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from datetime import date
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -9,6 +11,7 @@ from backend_mirror.semantic_intelligence import (
     CallableSemanticModel,
     SemanticCommercialEventInterpreter,
     SemanticCommercialQueryInterpreter,
+    SemanticEventInterpretation,
     SemanticEvidenceGroundingVerifier,
     SemanticQueryContract,
     SemanticResultCache,
@@ -232,6 +235,115 @@ def test_grounder_rejects_ambiguous_repeated_excerpt_with_wrong_offsets(tmp_path
     )
     assert verdict.accepted is False
     assert verdict.rejection_code == "EVIDENCE_GROUNDING_FAILED"
+
+
+def test_grounder_recovers_whitespace_normalized_excerpt_offsets() -> None:
+    excerpt = "Sirius Game, la startup edutech chiude un round da 1,3 milioni di euro guidato da CDP"
+    text = f"Prefisso.  {excerpt}   Suffisso."
+    contract = SemanticQueryContract.from_model(
+        query_payload(
+            required_relationships=["startup_raising_or_receiving_investment"],
+            acceptance_rubric=[
+                "recipient_grounded",
+                "startup_raising_or_receiving_investment_grounded",
+            ],
+        ),
+        original_query="startup che raccolgono fondi",
+        requested_count=5,
+    )
+    raw = event_payload(
+        excerpt,
+        target_company="Sirius Game",
+        target_entity_role="recipient",
+        recipient="Sirius Game",
+        investor="CDP",
+        evidence_start=0,
+        evidence_end=len(excerpt),
+        satisfied_relationships=("startup_raising_or_receiving_investment",),
+        acceptance_rubric_passed=(
+            "recipient_grounded",
+            "startup_raising_or_receiving_investment_grounded",
+        ),
+        event_date="2026-06-15",
+        query_match=True,
+        confidence=0.95,
+        certainty=0.95,
+    )
+    interpretation = SemanticEventInterpretation.from_model(raw)
+    per_source = replace(
+        contract,
+        required_relationships=tuple(
+            item for item in contract.required_relationships
+            if item in interpretation.satisfied_relationships
+        ),
+        acceptance_rubric=tuple(
+            item for item in contract.acceptance_rubric
+            if item in interpretation.acceptance_rubric_passed
+        ),
+    )
+    verdict = SemanticEvidenceGroundingVerifier().verify(
+        per_source,
+        interpretation,
+        source_text=text,
+        source_url="https://news.example/sirius",
+        source_publisher="Repubblica",
+        official_domain_verified=False,
+        official_domain_confidence=0.0,
+        entity_class="operating_company",
+        candidate_company="Sirius Game",
+        maximum_age_days=180,
+        now=date(2026, 7, 20),
+        identity_verification_deferred=True,
+    )
+    assert verdict.accepted is True
+    assert verdict.evidence_start == text.index("Sirius Game")
+
+
+def test_grounder_defers_official_domain_for_news_identity_followup() -> None:
+    excerpt = "Beta Srl ha chiuso un round da due milioni."
+    text = excerpt
+    contract = SemanticQueryContract.from_model(
+        query_payload(), original_query="startup che raccolgono fondi", requested_count=5,
+    )
+    raw = event_payload(
+        excerpt,
+        target_company="Beta Srl",
+        target_entity_role="recipient",
+        recipient="Beta Srl",
+        event_date="2026-06-01",
+    )
+    interpretation = SemanticEventInterpretation.from_model(raw)
+    blocked = SemanticEvidenceGroundingVerifier().verify(
+        contract,
+        interpretation,
+        source_text=text,
+        source_url="https://news.example/beta",
+        source_publisher="News",
+        official_domain_verified=False,
+        official_domain_confidence=0.0,
+        entity_class="operating_company",
+        candidate_company="Beta Srl",
+        maximum_age_days=180,
+        now=date(2026, 7, 20),
+        identity_verification_deferred=False,
+    )
+    deferred = SemanticEvidenceGroundingVerifier().verify(
+        contract,
+        interpretation,
+        source_text=text,
+        source_url="https://news.example/beta",
+        source_publisher="News",
+        official_domain_verified=False,
+        official_domain_confidence=0.0,
+        entity_class="operating_company",
+        candidate_company="Beta Srl",
+        maximum_age_days=180,
+        now=date(2026, 7, 20),
+        identity_verification_deferred=True,
+    )
+    assert blocked.accepted is False
+    assert "official_domain_verified" in blocked.reasons
+    assert deferred.accepted is True
 
 
 def test_grounder_accepts_descriptive_role_when_required_relation_is_grounded(tmp_path: Path) -> None:
