@@ -239,6 +239,7 @@ def request_from_plan(
         "semantic_telemetry": {},
         "maximum_search_calls": budget_policy.get("maximum_search_calls"),
         "maximum_llm_evaluations": budget_policy.get("maximum_llm_evaluations"),
+        "hard_cost_eur": float(hard_budget) if hard_budget is not None else float(budget_eur),
     })
     signal_groups = _signal_groups_from_required_signals(signals)
     if signal_groups:

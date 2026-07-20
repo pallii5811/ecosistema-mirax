@@ -757,9 +757,17 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
 
     queries = diversified_queries(request)
     state = load_generic_web_state(request.cursor, request.technical_filters)
-    hard_cap = float(request.budget_eur)
-    remaining_for_query = max(0.0, hard_cap - float(state.discovery_spent_eur or 0.0))
-    max_queries = min(len(queries), math.floor((remaining_for_query + 1e-9) / QUERY_COST_EUR))
+    # Round budgets may already exclude a semantic reserve. Discovery soft/hard
+    # accounting must use the true search hard cap, otherwise reserved_floor
+    # zeros SERP and the wave returns empty (pages=0, cost=0).
+    try:
+        true_hard_cap = float(request.technical_filters.get("hard_cost_eur") or request.budget_eur)
+    except (TypeError, ValueError):
+        true_hard_cap = float(request.budget_eur)
+    hard_cap = true_hard_cap
+    batch_budget = float(request.budget_eur)
+    remaining_for_query = max(0.0, min(batch_budget, hard_cap) - float(state.discovery_spent_eur or 0.0))
+    max_queries = min(len(queries) + len(state.followup_queries), math.floor((remaining_for_query + 1e-9) / QUERY_COST_EUR))
     plan_search_cap = request.technical_filters.get("maximum_search_calls")
     try:
         if plan_search_cap is not None:
@@ -823,6 +831,8 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
     if not accepted_hits:
         for index, query in enumerate(pending_queries[:max_queries]):
             if queries_run > 0:
+                break
+            if spent + QUERY_COST_EUR > batch_budget + 1e-9:
                 break
             if spent + QUERY_COST_EUR > request.budget_eur + 1e-9:
                 break
