@@ -658,7 +658,7 @@ def _enqueue_content_shell_followup(
     company = (_text(identity_hint) or "").strip()
     if not company or not _looks_like_company_name(company):
         return
-    if len(state.followup_queries) >= 3:
+    if len(state.followup_queries) >= 2:
         return
     failed_host = _host(failed_url)
     exclude = f" -site:{failed_host}" if failed_host else ""
@@ -1183,6 +1183,18 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             search_provider=search_provider,
                             item=item,
                         ):
+                            # Page had a company hint but yielded no candidate —
+                            # queue at most one targeted recovery SERP for that company.
+                            if (
+                                company_hint
+                                and len(state.followup_queries) < 2
+                                and re.search(r"\b(chiude un round|ha raccolto|seed round|pre-seed|raccoglie)\b", f"{title} {snippet}", re.I)
+                            ):
+                                _enqueue_content_shell_followup(
+                                    state,
+                                    identity_hint=company_hint,
+                                    failed_url=final_url or url,
+                                )
                             state.wave_terminal_rejections += 1
                 else:
                     records.extend(parse_primary_evidence_page(html, final_url, request))
@@ -1218,21 +1230,6 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                 next_pending_urls.append(url)
         state.pending_urls = tuple(dict.fromkeys(next_pending_urls))
         state.url_meta = tuple(next_url_meta.values())
-        if universal and accepted_hits:
-            known = {
-                "".join(ch.casefold() for ch in str(row.get("company_name") or "") if ch.isalnum())
-                for row in records
-            }
-            for item in accepted_hits:
-                title = item.title if hasattr(item, "title") else str(item.get("title") or "")
-                snippet = item.snippet if hasattr(item, "snippet") else str(item.get("snippet") or "")
-                hint = _company_identity_hint(title=title, snippet=snippet, html="")
-                if not hint:
-                    continue
-                key = "".join(ch.casefold() for ch in hint if ch.isalnum())
-                if key and key not in known:
-                    _enqueue_content_shell_followup(state, identity_hint=hint, failed_url="")
-                    known.add(key)
         persist_generic_web_state(request.technical_filters, state)
     if universal:
         _record_prefilter(request, raw=0, accepted=0, rejected=0, codes={}, pages=pages_opened)
