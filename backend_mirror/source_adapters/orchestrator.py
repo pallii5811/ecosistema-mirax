@@ -577,7 +577,11 @@ async def semantic_authority_qualifier(
             if len(source_text.strip()) < 120:
                 rejection_codes.append("SOURCE_TEXT_MISSING")
                 continue
-            if len(source_text) > 12_000:
+            # Keep the interpretation window inside the €0.05 canary envelope.
+            # A 12k UTF-8 window reserved ~€0.032 and blocked the second lead
+            # after discovery spend; 8k still covers the evidence excerpt.
+            semantic_window = 8_000
+            if len(source_text) > semantic_window:
                 snippet = str(provenance.get("search_snippet") or "")
                 evidence_offset = source_text.find(evidence.excerpt)
                 if evidence_offset < 0 and snippet:
@@ -586,13 +590,13 @@ async def semantic_authority_qualifier(
                     company = str(candidate.canonical_company_name)
                     evidence_offset = source_text.casefold().find(company.casefold())
                 if evidence_offset >= 0:
-                    window_start = max(0, evidence_offset - 4_000)
-                    source_text = source_text[window_start:window_start + 12_000]
+                    window_start = max(0, evidence_offset - 2_500)
+                    source_text = source_text[window_start:window_start + semantic_window]
                 else:
                     padded = " ".join(
                         part for part in (evidence.excerpt, snippet, str(provenance.get("page_title") or "")) if part
                     ).strip()
-                    source_text = padded if len(padded) >= 120 else source_text[:12_000]
+                    source_text = padded if len(padded) >= 120 else source_text[:semantic_window]
             interpretation = await interpreter.interpret(
                 contract,
                 title=str(provenance.get("page_title") or ""),

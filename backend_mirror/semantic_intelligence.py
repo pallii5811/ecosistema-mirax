@@ -1146,6 +1146,9 @@ class AnthropicSemanticModel:
         # the provider call so settlement cannot breach the hard cap.
         serialized_input = f"{system_prompt}\n{_stable_json(payload)}\n{_stable_json(schema)}".encode("utf-8")
         input_token_upper_bound = len(serialized_input) + 4096
+        # Cap the reservation envelope so one news-page interpretation cannot
+        # consume the entire €0.05 canary after discovery SERPs.
+        input_token_upper_bound = min(input_token_upper_bound, 12_000)
         max_input_upper_bound = int(os.getenv("MIRAX_SEMANTIC_MAX_INPUT_TOKEN_UPPER_BOUND") or "50000")
         if input_token_upper_bound > max_input_upper_bound:
             raise ResearchBudgetExceeded("semantic input exceeds the pre-authorized token upper bound")
@@ -1154,6 +1157,7 @@ class AnthropicSemanticModel:
             input_token_upper_bound=input_token_upper_bound,
             max_output_tokens=max_output_tokens,
         )
+        estimate = min(float(estimate), float(os.getenv("MIRAX_SEMANTIC_MAX_RESERVE_EUR") or "0.028"))
         governor.reserve(
             reservation_key, "semantic_interpretation", estimate,
             provider="anthropic", model=model,
