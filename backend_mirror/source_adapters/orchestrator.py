@@ -217,6 +217,9 @@ def request_from_plan(
             freshness = min(int(value) for value in required_ages) if required_ages else None
     count = requested_count if requested_count is not None else int(plan.get("requested_count") or 1)
     technical = dict(plan.get("technical_filters") or {}) if isinstance(plan.get("technical_filters"), Mapping) else {}
+    industries = tuple(str(item).strip() for item in target.get("industries") or () if str(item).strip())
+    sector = str(plan.get("sector") or "").strip()
+    hard_budget = budget_policy.get("hard_cost_eur")
     technical.update({
         "query_origin": technical.get("query_origin") or "compiler_plan",
         "parent_query": technical.get("parent_query") or str(plan.get("original_query") or plan.get("raw_query") or ""),
@@ -246,7 +249,6 @@ def request_from_plan(
         technical["signal_groups"] = signal_groups
     industries = tuple(str(item).strip() for item in target.get("industries") or () if str(item).strip())
     sector = str(plan.get("sector") or "").strip()
-    hard_budget = budget_policy.get("hard_cost_eur")
     effective_budget = min(budget_eur, float(hard_budget)) if hard_budget is not None else budget_eur
     return AdapterDiscoveryRequest(
         intent=str(plan.get("search_strategy") or "commercial_search"),
