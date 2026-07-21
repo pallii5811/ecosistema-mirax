@@ -335,17 +335,19 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
             # Job-board noise dominates naive "selezione CRM" SERPs and burns the €0.05 envelope.
             "linkedin.com", "jobsora.com", "jooble.org", "careerjet.it", "pagepersonnel.it",
             "experis.it", "intervieweb.it", "recruit.net", "indeed.com", "infojobs.it",
+            # Vendor/directory SEO and roundups — not operating-company buyers.
+            "osservatoriocrm.it", "capterra.it", "teamleader.eu", "crmpartners.it",
+            "rfp.wiki", "starbridge.ai", "taxdome.com",
         )
-        crm_guide_exclude = '-guida -tutorial -"come scegliere" -"come si sceglie" -"miglior CRM" -"caso di successo"'
-        # Adoption announcements ("sceglie"/"adotta") are the technology_adoption
-        # lexicon evidence and the commercial trigger for a CRM seller. Pair with
-        # migration/tender SERPs; demote Consip-only hits (no PMI buyer identity).
+        crm_guide_exclude = '-guida -tutorial -"come scegliere" -"come si sceglie" -"miglior CRM" -"caso di successo" -osservatorio'
+        # Prefer named-company adoption headlines on trade press; keep the Phase-A
+        # ("adotta" OR "sceglie" OR "implementa") CRM substring for regression.
         crm_queries = (
-            f'Italia ("adotta" OR "sceglie" OR "implementa") CRM (progetto OR piattaforma OR software OR aziendale) {crm_guide_exclude}',
+            f'Italia ("adotta" OR "sceglie" OR "implementa") CRM (Spa OR Srl OR Group OR "comunicato stampa") {crm_guide_exclude}',
+            'site:engage.it OR site:key4biz.it OR site:corrierecomunicazioni.it OR site:logisticaefficiente.it ("sceglie" OR "adotta") CRM -guida',
+            f'"ha scelto" OR "ha adottato" OR "sceglie la piattaforma" CRM Italia (Spa OR Srl) {crm_guide_exclude}',
             f'"migrazione CRM" OR "sostituzione CRM" OR "progetto CRM" (avvio OR "in corso" OR kickoff OR annuncia) Italia azienda {crm_guide_exclude}',
-            f'site:.it ("comunicato stampa" OR newsroom) (("adotta" OR "sceglie") CRM OR "migrazione CRM" OR "nuovo CRM" OR "progetto CRM") {crm_guide_exclude}',
-            f'Italia CRM ("manifestazione di interesse" OR "richiesta di offerta" OR "bando di gara" OR "determina a contrarre") {crm_guide_exclude}',
-            '("CRM Project Manager" OR "responsabile CRM" OR "CRM Specialist") (assume OR cercasi OR "posizione aperta") (Spa OR Srl OR Group OR azienda) Italia -agenzia',
+            f'Italia CRM ("manifestazione di interesse" OR "richiesta di offerta" OR "bando di gara") {crm_guide_exclude}',
         )
         for idx, query in enumerate(crm_queries):
             strategies.insert(

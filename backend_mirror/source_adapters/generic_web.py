@@ -803,9 +803,26 @@ def _shell_recovery_query(company: str, *, failed_host: str, request: Any = None
         social_exclude = " -site:linkedin.com -site:facebook.com -site:instagram.com"
         return (
             f'"{company}" CRM ("selezione" OR "valutazione" OR "migrazione" OR '
-            f'"in cerca" OR gara OR RFP OR "progetto CRM"){exclude}{social_exclude}'
+            f'"in cerca" OR gara OR RFP OR "progetto CRM" OR sceglie OR adotta)'
+            f'{exclude}{social_exclude}'
         )
     return f'"{company}" (chiude un round OR ha raccolto OR funding round OR seed round){exclude}'
+
+
+def _crm_shell_company_ok(company: str) -> bool:
+    """Reject observatory/vendor shells that burn CRM recovery SERPs."""
+    text = (_text(company) or "").strip()
+    if not text or not _looks_like_company_name(text):
+        return False
+    low = text.casefold()
+    if re.search(r"\b(osservatorio|capterra|partner|agenzia|wiki|consulting)\b", low):
+        return False
+    if "crm" in low and not re.search(r"\b(spa|srl|s\.p\.a|s\.r\.l|group|societ)\b", low):
+        return False
+    # Prefer legal-form / multi-token operating names over dotted acronyms (A.E.C.I.).
+    if re.fullmatch(r"(?:[A-Za-z]\.){2,}[A-Za-z]\.?", text):
+        return False
+    return bool(re.search(r"\b(spa|srl|s\.p\.a|s\.r\.l|group|societ|[A-Z][a-z]{3,})\b", text))
 
 
 def _enqueue_content_shell_followup(
@@ -818,6 +835,19 @@ def _enqueue_content_shell_followup(
     """When a SERP hit is a content shell, queue a targeted recovery query."""
     company = (_text(identity_hint) or "").strip()
     if not company or not _looks_like_company_name(company):
+        return
+    signals = {
+        str(item).strip().casefold()
+        for item in (getattr(request, "signal_ids", None) or ())
+        if str(item).strip()
+    }
+    blob = " ".join(
+        (
+            str(getattr(request, "query", "") or ""),
+            " ".join(sorted(signals)),
+        )
+    ).casefold()
+    if ("crm" in blob or "technology_adoption" in signals) and not _crm_shell_company_ok(company):
         return
     if len(state.followup_queries) >= 2:
         return
