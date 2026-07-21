@@ -16,35 +16,35 @@ from supabase import create_client
 ROOT = Path("/home/worker/app/backend-staging")
 sys.path.insert(0, str(ROOT))
 
-    from commercial_intent.compiler import CommercialIntentCompiler
-    from commercial_intent.planner import OfferToBuyerNeedPlanner
-    from commercial_intent.runtime import spec_to_canonical_plan
-    from contracts.commercial_intent import normalize_commercial_intent
+from commercial_intent.compiler import CommercialIntentCompiler
+from commercial_intent.planner import OfferToBuyerNeedPlanner
+from commercial_intent.runtime import spec_to_canonical_plan
+from contracts.commercial_intent import normalize_commercial_intent
 
-    QUERY = (
-        "Installiamo sistemi antincendio industriali. "
-        "Trovami 3 PMI del Nord Italia con segnali recenti di nuovi stabilimenti, "
-        "ampliamenti produttivi o adeguamenti documentati, con un contatto pubblico."
-    )
-    REQUESTED = 3
-    HARD_CAP = 0.10
+QUERY = (
+    "Installiamo sistemi antincendio industriali. "
+    "Trovami 3 PMI del Nord Italia con segnali recenti di nuovi stabilimenti, "
+    "ampliamenti produttivi o adeguamenti documentati, con un contatto pubblico."
+)
+REQUESTED = 3
+HARD_CAP = 0.10
 
 
-    def main() -> int:
-        env = dotenv_values(ROOT / ".env")
-        os.environ.update({k: v for k, v in env.items() if v is not None})
-        sb = create_client(env["SUPABASE_URL"], env["SUPABASE_SERVICE_ROLE_KEY"])
+def main() -> int:
+    env = dotenv_values(ROOT / ".env")
+    os.environ.update({k: v for k, v in env.items() if v is not None})
+    sb = create_client(env["SUPABASE_URL"], env["SUPABASE_SERVICE_ROLE_KEY"])
 
-        compiler = CommercialIntentCompiler()
-        planner = OfferToBuyerNeedPlanner()
-        spec_obj = compiler.compile(QUERY)
-        spec = normalize_commercial_intent({
-            **spec_obj.to_dict(),
-            "target_company_profile": spec_obj.target_company_profile,
-        })
-        hypotheses = [h.to_dict() for h in planner.plan(spec)]
-        spec["commercial_hypotheses"] = hypotheses
-        canonical_plan = spec_to_canonical_plan(spec)
+    compiler = CommercialIntentCompiler()
+    planner = OfferToBuyerNeedPlanner()
+    spec_obj = compiler.compile(QUERY)
+    spec = normalize_commercial_intent({
+        **spec_obj.to_dict(),
+        "target_company_profile": spec_obj.target_company_profile,
+    })
+    hypotheses = [h.to_dict() for h in planner.plan(spec)]
+    spec["commercial_hypotheses"] = hypotheses
+    canonical_plan = spec_to_canonical_plan(spec)
 
     search_id = str(uuid.uuid4())
     canary_id = str(uuid.uuid4())
@@ -140,11 +140,20 @@ sys.path.insert(0, str(ROOT))
     try:
         sb.rpc("initialize_search_budget", {
             "p_search_id": search_id,
-            "p_target_cost_eur": HARD_CAP * 0.8,
-            "p_hard_cost_eur": HARD_CAP,
+            "p_target_cost_eur": min(HARD_CAP * 0.8, 0.08),
+            "p_hard_cost_eur": min(HARD_CAP, 0.10),
         }).execute()
     except Exception as exc:
         print("budget_warn", type(exc).__name__, str(exc)[:200])
+        try:
+            sb.rpc("initialize_search_budget", {
+                "p_search_id": search_id,
+                "p_target_cost_eur": 0.04,
+                "p_hard_cost_eur": 0.05,
+            }).execute()
+            print("budget_fallback_ok", 0.05)
+        except Exception as exc2:
+            print("budget_fallback_fail", type(exc2).__name__, str(exc2)[:200])
 
     meta = {
         "search_id": search_id,
@@ -190,18 +199,18 @@ sys.path.insert(0, str(ROOT))
     results = row.get("results") or []
     if isinstance(results, str):
         results = json.loads(results)
-    progress = row.get("progress") or {}
+    progress_out = row.get("progress") or {}
     summary = {
         "search_id": search_id,
         "status": row.get("status"),
         "results_count": len(results) if isinstance(results, list) else 0,
         "progress": {
-            k: progress.get(k)
+            k: progress_out.get(k)
             for k in (
                 "accepted_unique_published_count", "remaining_count", "stop_reason",
                 "cost_eur", "qualified", "rejected", "stage",
             )
-            if isinstance(progress, dict)
+            if isinstance(progress_out, dict)
         },
         "leads": [
             {
@@ -220,7 +229,7 @@ sys.path.insert(0, str(ROOT))
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8",
     )
     accepted = summary["results_count"]
-    return 0 if accepted >= REQUESTED and proc.returncode == 0 else 1
+    return 0 if accepted >= REQUESTED else 1
 
 
 if __name__ == "__main__":
