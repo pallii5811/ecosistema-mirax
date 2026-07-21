@@ -221,6 +221,33 @@ def test_9_association_and_union_rejected_for_company_query() -> None:
     assert union.rejection_code == "TRADE_UNION_AS_COMPANY"
 
 
+def test_9b_news_mention_of_association_does_not_classify_operating_company() -> None:
+    """Industrial news on confindustria hosts must not poison entity class."""
+    assert (
+        classify_entity(
+            "Pizzoli",
+            host="confindustriaemilia.it",
+            source_payload={
+                "source_publisher": "Confindustria Emilia",
+                "evidence_excerpt": (
+                    "Pizzoli ha inaugurato il nuovo stabilimento. "
+                    "Presenti i rappresentanti dell'associazione di categoria."
+                ),
+            },
+        )
+        == "operating_company"
+    )
+    assert (
+        classify_entity(
+            "Cembre",
+            source_payload={
+                "evidence_excerpt": "evento organizzato con l'associazione industriali locali",
+            },
+        )
+        == "operating_company"
+    )
+
+
 def test_10_group_domain_with_proof_passes_controlled() -> None:
     result = resolve_entity_identity(
         EntityIdentityRequest(

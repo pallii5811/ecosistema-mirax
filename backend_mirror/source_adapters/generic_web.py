@@ -18,6 +18,7 @@ from backend_mirror.agents.portal_blacklist import is_blacklisted_domain
 from .contracts import (
     AdapterDiscoveryRequest,
     AdapterExecutionResult,
+    ContactRecord,
     DiscoveryCursor,
     EvidenceRecord,
     OpportunityCandidate,
@@ -98,6 +99,94 @@ def _iso_date(value: Any) -> Optional[str]:
         except ValueError:
             continue
     return None
+
+
+_EMPLOYEE_COUNT_RE = re.compile(
+    r"\b(?:circa\s+|oltre\s+|pi[uù]\s+di\s+|approximately\s+)?"
+    r"(\d{1,3}(?:[.\s]\d{3})*|\d+)\s*(?:dipendenti|lavoratori|addetti|employees|headcount)\b",
+    re.I,
+)
+_LISTED_HINT_RE = re.compile(r"\b(?:quotat[oa]|borsa\s+italiana|euronext|nasdaq|nyse)\b", re.I)
+_FAKE_EMAIL_MARKERS = (
+    "example.com", "sentry.io", "wixpress", "schema.org", "yourdomain", "email.com", "domain.com",
+)
+
+
+def _parse_employee_count(text: str) -> Optional[int]:
+    match = _EMPLOYEE_COUNT_RE.search(str(text or ""))
+    if not match:
+        return None
+    raw = re.sub(r"[^\d]", "", match.group(1) or "")
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if 1 <= value <= 500_000 else None
+
+
+def _size_class_from_employees(employees: Optional[int]) -> str:
+    if employees is None:
+        return ""
+    if employees <= 9:
+        return "micro"
+    if employees <= 49:
+        return "small"
+    if employees <= 249:
+        return "medium"
+    return "enterprise"
+
+
+def _public_contacts_from_html(html: str, *, source_url: str = "") -> Tuple[ContactRecord, ...]:
+    """Deterministic public mailto/tel extraction — no invented contacts."""
+    out: List[ContactRecord] = []
+    seen: set[str] = set()
+    for match in re.finditer(
+        r"mailto:([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})",
+        html or "",
+        re.I,
+    ):
+        email = match.group(1).split("?", 1)[0].strip().casefold()
+        if not email or email in seen or any(marker in email for marker in _FAKE_EMAIL_MARKERS):
+            continue
+        seen.add(email)
+        out.append(ContactRecord(kind="email", value=email, source_url=source_url, verified=True))
+        if len(out) >= 2:
+            break
+    for match in re.finditer(r"tel:([+\d][\d\s./\-()]{6,})", html or "", re.I):
+        phone = re.sub(r"[^\d+]", "", match.group(1) or "")
+        if len(re.sub(r"\D", "", phone)) < 8 or phone in seen:
+            continue
+        seen.add(phone)
+        out.append(ContactRecord(kind="phone", value=phone, source_url=source_url, verified=True))
+        break
+    return tuple(out)
+
+
+def _enrich_record_from_page(row: MutableMapping[str, Any], *, html: str = "", text: str = "") -> MutableMapping[str, Any]:
+    blob = " ".join(str(item or "") for item in (text, row.get("source_text"), row.get("evidence_excerpt"), html[:50_000]))
+    if row.get("employee_count") is None:
+        employees = _parse_employee_count(blob)
+        if employees is not None:
+            row["employee_count"] = employees
+            row["company_size"] = _size_class_from_employees(employees)
+    if not row.get("company_size") and row.get("employee_count") is not None:
+        try:
+            row["company_size"] = _size_class_from_employees(int(row["employee_count"]))
+        except (TypeError, ValueError):
+            pass
+    if _LISTED_HINT_RE.search(blob):
+        row["is_listed"] = True
+    contacts = list(row.get("contacts") or [])
+    if not contacts and html:
+        contacts = [
+            {"kind": item.kind, "value": item.value, "source_url": item.source_url, "verified": item.verified}
+            for item in _public_contacts_from_html(html, source_url=str(row.get("source_url") or ""))
+        ]
+        if contacts:
+            row["contacts"] = contacts
+    return row
 
 
 def _iter_json(value: Any) -> Iterable[Mapping[str, Any]]:
@@ -987,6 +1076,7 @@ def _append_semantic_deferred_news_record(
         cursor_version=request.cursor.value if request.cursor else "generic-web:v2",
     )
     row = _apply_free_identity(row, request)
+    row = _enrich_record_from_page(row, html=html or "", text=visible_text)
     records.append(row)
     _remember_candidate_source_url(state, final_url)
     return True
@@ -1410,6 +1500,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                     cursor_version=request.cursor.value if request.cursor else "generic-web:v2",
                                 )
                                 row = _apply_free_identity(row, request)
+                                row = _enrich_record_from_page(row, html=html or "", text=visible_text)
                                 records.append(row)
                                 _remember_candidate_source_url(state, str(fetch_provenance.get("final_url") or final_url or url))
                             if len(records) > structured_before:
@@ -1518,6 +1609,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             cursor_version=request.cursor.value if request.cursor else "generic-web:v2",
                         )
                         row = _apply_free_identity(row, request)
+                        row = _enrich_record_from_page(row, html=html or "", text=visible_text)
                         records.append(row)
                         _remember_candidate_source_url(state, str(fetch_provenance.get("final_url") or final_url or url))
                     if (
@@ -1777,7 +1869,10 @@ class GenericWebResearchAdapter:
                 publisher = _text(record.get("source_publisher")) or ""
                 excerpt = _text(record.get("evidence_excerpt")) or ""
                 source_class = _text(record.get("source_class")) or "official_company_website"
-                why_now = _text(record.get("why_now"))
+                why_now = _text(record.get("why_now")) or ""
+                if len(why_now) < 20 and excerpt:
+                    prefix = why_now or "Evidenza primaria recente"
+                    why_now = f"{prefix}: {excerpt[:240]}".strip()
                 if semantic_required:
                     buyer_fit = None
                 else:
@@ -1829,6 +1924,8 @@ class GenericWebResearchAdapter:
                         "origin_page_fetch_id": record.get("origin_page_fetch_id"),
                         "origin_source_text_hash": record.get("origin_source_text_hash"),
                         "origin_cursor_version": record.get("origin_cursor_version"),
+                        "company_size": record.get("company_size"),
+                        "employee_count": record.get("employee_count"),
                     },
                 ) for signal in matched)
                 if not evidence:
@@ -1841,13 +1938,29 @@ class GenericWebResearchAdapter:
                 if universal and semantic_required and not all((company, matched, excerpt, source_url, source_class)):
                     warnings.append("UNIVERSAL_CANDIDATE_INCOMPLETE")
                     continue
+                raw_contacts = record.get("contacts") if isinstance(record.get("contacts"), list) else []
+                contacts = tuple(
+                    ContactRecord(
+                        kind=str(item.get("kind") or "email"),
+                        value=str(item.get("value") or "").strip(),
+                        source_url=str(item.get("source_url") or source_url),
+                        verified=item.get("verified") is True,
+                    )
+                    for item in raw_contacts
+                    if isinstance(item, Mapping) and str(item.get("value") or "").strip()
+                )
+                if not contacts:
+                    contacts = _public_contacts_from_html(
+                        str(record.get("source_html") or ""),
+                        source_url=source_url,
+                    )
                 candidates.append(OpportunityCandidate(
                     canonical_company_name=company,
                     company_identifiers={}, official_domain=domain, entity_class="operating_company",
                     geographies=(_text(record.get("geography")) or "",), buyer_fit=buyer_fit,
                     signal_id=matched[0], signal_date=published or date.today().isoformat(), evidence=evidence,
                     # ponytail: placeholder date when HTML lacks published_at; semantic must ground real event_date
-                    why_now=why_now, contacts=(), confidence=0.55 if semantic_required else 0.72,
+                    why_now=why_now, contacts=contacts, confidence=0.55 if semantic_required else 0.72,
                     contradiction_flags=("GENERIC_FALLBACK_PARTIAL",),
                     provenance={
                         "adapter_id": self.capability.adapter_id,
@@ -1857,6 +1970,9 @@ class GenericWebResearchAdapter:
                         "provider_query": record.get("provider_query"),
                         "limitations": "sampled web evidence; no global source exhaustion claim",
                         "domain_verification": domain_verification,
+                        "company_size": record.get("company_size"),
+                        "employee_count": record.get("employee_count"),
+                        "is_listed": bool(record.get("is_listed")),
                         "origin_adapter_id": record.get("origin_adapter_id"),
                         "origin_execution_round": record.get("origin_execution_round"),
                         "origin_provider_call_id": record.get("origin_provider_call_id"),

@@ -517,7 +517,10 @@ class UniversalSignalDiscoveryEngine:
             if result.status == "completed_requested_count" or len(qualified_by_key) >= spec.requested_count:
                 notes.append("requested_count_reached")
                 break
-            if result.status in {"partial_budget_exhausted", "partial_time_limit", "partial_sources_exhausted"}:
+            if result.status in {"partial_budget_exhausted", "partial_time_limit"}:
+                notes.append(result.status)
+                break
+            if result.status == "partial_sources_exhausted":
                 notes.append(result.status)
                 pages = int(telemetry_bucket.get("pages_opened_after_prefilter") or 0)
                 raw_hits = int(
@@ -531,11 +534,14 @@ class UniversalSignalDiscoveryEngine:
                     stats.aborted = True
                     notes.append(f"aborted_empty_serp:{strategy.strategy_id}")
                     continue
-                if result.status == "partial_sources_exhausted" and gained <= 0:
+                if gained <= 0:
                     stats.aborted = True
                     notes.append(f"aborted_exhausted:{strategy.strategy_id}")
                     continue
-                break
+                # Partial progress with remaining lead target: keep looping so the
+                # next SERP/strategy can fill requested_count (antincendio canary
+                # previously stopped at 1/3 after the first drained URL wave).
+                continue
 
         if last_result is None:
             empty_request = replace(

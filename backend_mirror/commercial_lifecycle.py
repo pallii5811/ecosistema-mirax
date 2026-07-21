@@ -970,6 +970,10 @@ def persist_and_publish_candidates(
         return []
     from lead_acceptance.publication import evaluate_and_publish
 
+    raw_query = str(canonical_plan.get("raw_query") or "")
+    require_contact = bool(
+        re.search(r"\b(?:contatto|contatti|email|telefono|phone)\b", raw_query, re.I)
+    )
     result = evaluate_and_publish(
         search_id,
         leads,
@@ -978,5 +982,6 @@ def persist_and_publish_candidates(
         supabase=supabase,
         user_id=user_id,
         shadow_mode=shadow_mode,
+        require_contact=require_contact,
     )
     return result.published_leads

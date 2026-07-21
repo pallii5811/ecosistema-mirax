@@ -595,6 +595,11 @@ def candidate_to_lifecycle_shadow_payload(
         },
         "telefono": contacts.get("phone"),
         "email": contacts.get("email"),
+        "contatti": {
+            "email": [contacts["email"]] if contacts.get("email") else [],
+            "telefoni": [contacts["phone"]] if contacts.get("phone") else [],
+        },
+        "is_listed": bool(candidate.provenance.get("is_listed")),
         "last_audited_at": now,
         "technical_report": {
             "audit_status": "complete",

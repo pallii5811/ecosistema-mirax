@@ -33,10 +33,12 @@ _FORM_OR_HUB_PATH_RE = re.compile(
 )
 _EVENT_HINT_RE = re.compile(
     r"\b(assum\w*|inaugur\w*|apertur\w*|nuova sede|nuovo stabilimento|nuova unit[aà] produttiva|"
-    r"ampliamento\s+(?:produttivo|dello\s+stabilimento|della\s+sede)|capacit[aà]\s+produttiva|"
-    r"nuovo\s+impianto|linea\s+di\s+produzione|espans\w*|aggiudic\w*|"
+    r"ampliamento\s+(?:produttivo|dello\s+stabilimento|della\s+sede)|ampliar\w*\s+la\s+produzione|"
+    r"capacit[aà]\s+produttiva|nuovo\s+impianto|linea\s+di\s+produzione|espans\w*|aggiudic\w*|"
     r"finanz\w*|investiment\w*|nomina\w*|CEO|direttore|certific\w*|adeguament\w*|"
-    r"campagna\w*|rebrand\w*|migrazion\w*|implementa\w*|raccolt\w*|CRM|ERP|Meta Ads|Google Ads|pubblicitaria)\b",
+    r"campagna\w*|rebrand\w*|migrazion\w*|implementa\w*|raccolt\w*|CRM|ERP|Meta Ads|Google Ads|pubblicitaria|"
+    r"round\b|seed\b|series\s+[a-c]|chiude\s+un\s+round|ha\s+raccolto|funding|"
+    r"destinat\w*\s+(?:nuove\s+)?risorse|nuove\s+risorse|operazion\w*\s+di\s+crescita)\b",
     re.I,
 )
 _STALE_YEAR_RE = re.compile(r"\b(20(?:0\d|1\d|2[0-2]))\b")

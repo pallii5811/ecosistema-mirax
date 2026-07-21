@@ -254,23 +254,21 @@ def classify_entity(
     source_payload: Mapping[str, Any] | None = None,
 ) -> str:
     payload = source_payload or {}
-    blob = " ".join(
-        str(item or "")
-        for item in (
-            company_name,
-            payload.get("source_publisher"),
-            payload.get("source_class"),
-            payload.get("evidence_excerpt"),
-            host,
-        )
-    )
+    # Classify from the entity's own name/host — never from news evidence_excerpt
+    # or third-party publisher names. Industrial articles often mention
+    # "associazione"/Confindustria and falsely rejected operating companies
+    # (open-world antincendio: Pizzoli on confindustriaemilia.it).
     if host and is_blacklisted_domain(host):
         return "directory"
-    if _PUBLIC_RE.search(blob) or _PUBLIC_RE.search(company_name):
+    if _PUBLIC_RE.search(company_name) or _PUBLIC_RE.search(host.replace("-", " ").replace(".", " ")):
         return "public_authority"
-    if _UNION_RE.search(company_name) or _UNION_RE.search(blob):
+    if _UNION_RE.search(company_name) or _UNION_RE.search(host.replace("-", " ").replace(".", " ")):
         return "trade_union"
-    if _ASSOCIATION_RE.search(company_name) or _ASSOCIATION_RE.search(blob):
+    # Association class must come from the target name/host only. Publisher hosts
+    # like confindustriaemilia.it often report on real PMI and must not poison class.
+    if _ASSOCIATION_RE.search(company_name) or _ASSOCIATION_RE.search(
+        host.replace("-", " ").replace(".", " ")
+    ):
         return "association"
     publisher_name = str(payload.get("source_publisher") or "")
     if _PUBLISHER_RE.search(company_name) or (
