@@ -1064,7 +1064,8 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                 title=str(meta.get("title") or ""),
                 snippet=str(meta.get("snippet") or ""),
                 url=str(meta.get("url") or url),
-            )            compact = re.sub(r"[^a-z0-9]", "", (hint or "").casefold())
+            )
+            compact = re.sub(r"[^a-z0-9]", "", (hint or "").casefold())
             if compact and any(compact in domain.replace(".", "") or domain.replace(".", "") in compact for domain in processed_domains):
                 continue
             seen.add(key)
