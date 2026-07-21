@@ -961,8 +961,20 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
         true_hard_cap = float(request.budget_eur)
     hard_cap = true_hard_cap
     batch_budget = float(request.budget_eur)
-    remaining_for_query = max(0.0, min(batch_budget, hard_cap) - float(state.discovery_spent_eur or 0.0))
+    # discovery_spent_eur is cumulative SERP spend for this search. Subtract it
+    # from the hard discovery pool — not from the residual batch envelope alone,
+    # or resume with followups strands when prior SERP already exceeds batch_budget.
+    discovery_left = float(state.discovery_remaining_eur(hard_cap))
+    remaining_for_query = max(0.0, min(batch_budget, discovery_left))
     max_queries = min(len(queries) + len(state.followup_queries), math.floor((remaining_for_query + 1e-9) / QUERY_COST_EUR))
+    # Follow-up recoveries only need SERP + governor room; don't drop them when
+    # soft-cap math is tight but batch_budget still covers one query.
+    if (
+        max_queries < 1
+        and state.followup_queries
+        and batch_budget + 1e-9 >= QUERY_COST_EUR
+    ):
+        max_queries = 1
     plan_search_cap = request.technical_filters.get("maximum_search_calls")
     try:
         if plan_search_cap is not None:

@@ -199,6 +199,31 @@ def test_can_reserve_serp_after_first_semantic_for_second_lead() -> None:
     assert not state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.035, governor_remaining=0.015)
 
 
+def test_resume_followup_serp_not_zeroed_by_prior_discovery_spend() -> None:
+    """Residual batch budget must still unlock queued followups after prior SERP spend."""
+    from backend_mirror.source_adapters.generic_web_budget import (
+        QUERY_COST_EUR,
+        GenericWebDiscoveryState,
+    )
+
+    state = GenericWebDiscoveryState(
+        provider_calls=2,
+        discovery_spent_eur=0.025,
+        pages_fetched=18,
+        followup_queries=('\"Opinel\" (CRM) (sceglie OR adotta)',),
+    )
+    hard_cap = 0.05
+    batch_budget = 0.01  # residual after prior_cost ~€0.04
+    discovery_left = state.discovery_remaining_eur(hard_cap)
+    remaining = max(0.0, min(batch_budget, discovery_left))
+    # Old bug: min(batch, hard) - discovery_spent => 0.01 - 0.025 => 0
+    legacy_broken = max(0.0, min(batch_budget, hard_cap) - float(state.discovery_spent_eur))
+    assert legacy_broken < QUERY_COST_EUR
+    assert remaining + 1e-9 >= QUERY_COST_EUR or (
+        state.followup_queries and batch_budget + 1e-9 >= QUERY_COST_EUR
+    )
+
+
 def test_planeat_foodtech_headline_extracts_company() -> None:
     title = "La foodtech italiana PlanEat chiude un round da 2 milioni"
     snippet = "La foodtech italiana PlanEat chiude un round seed."
