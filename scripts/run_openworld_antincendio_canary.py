@@ -28,8 +28,8 @@ QUERY = (
     "ampliamenti produttivi o adeguamenti documentati, con un contatto pubblico."
 )
 REQUESTED = 3
-HARD_CAP = 0.10  # certification hard cap; zone/requested_leads must allow product formula
-ZONE_LEADS = 10  # product cap = zone * 0.025 → €0.25 ceiling; acceptance still stops at 3
+HARD_CAP = 0.10  # certification hard cap; initialized via RPC (not zone formula)
+ZONE_LEADS = 3  # shadow acceptance/stop target = requested_count
 SIGNALS = ["production_expansion", "geographic_expansion", "new_location"]
 
 
@@ -215,8 +215,8 @@ def main() -> int:
         "original_query": QUERY,
         "search_mode": "agentic_only",
         "search_strategy": "organic_web_search",
-        "max_leads": ZONE_LEADS,
-        "requested_leads": ZONE_LEADS,
+        "max_leads": REQUESTED,
+        "requested_leads": REQUESTED,
         "lead_target": REQUESTED,
         "canonical_plan": plan,
         "uqe_plan": {
