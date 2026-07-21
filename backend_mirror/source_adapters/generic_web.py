@@ -836,6 +836,14 @@ def _enqueue_content_shell_followup(
     company = (_text(identity_hint) or "").strip()
     if not company or not _looks_like_company_name(company):
         return
+    # CRM seeking recovery queries burned the €0.05 envelope on agency-page
+    # shells (e.g. engage.it/agenzie/...): those pages mention CRM as a service
+    # but often do not ground "operating company adopts/chooses a CRM".
+    # Skip recovery to let the main SERP wave explore other hits.
+    failed_url_lc = (failed_url or "").casefold()
+    failed_host = _host(failed_url)
+    if failed_host and failed_host.endswith("engage.it") and "/agenzie/" in failed_url_lc:
+        return
     signals = {
         str(item).strip().casefold()
         for item in (getattr(request, "signal_ids", None) or ())
