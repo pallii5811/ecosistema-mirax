@@ -33,6 +33,8 @@ import {
 import { PersistentResearchCostGovernor } from '@/lib/research/persistent-cost-governor'
 import { clampSearchMaxLeads } from '@/lib/search-job-payload'
 import { buildMiraxQueryPlan } from '@/lib/uqe/mirax-query-planner'
+import { buildWorkerCommercialIntentBundle } from '@/lib/commercial-intent/attach-worker-intent'
+import { buildWorkerCommercialIntentBundle } from '@/lib/commercial-intent/attach-worker-intent'
 import type { SignalIntentSpec } from '@/lib/signal-intent/types'
 import { universeClientError } from '@/lib/universe/errors'
 
@@ -99,6 +101,11 @@ export async function POST(req: NextRequest) {
       }
       const effectiveCity = city || plan.location || 'Italia'
       const sector = plan.sector || 'Agentic AI'
+      const commercialBundle = buildWorkerCommercialIntentBundle(userQuery, plan.canonical_plan ?? null, {
+        parse_source: plan.parse_source,
+        confidence: plan.confidence,
+        intent_summary: plan.intent_summary,
+      })
 
       const job = await requestAgenticWorkerJob(authClient, {
         query: userQuery,
@@ -113,6 +120,14 @@ export async function POST(req: NextRequest) {
           required_signals: plan.required_signals,
           intent_summary: plan.intent_summary,
           uqe_plan: plan,
+          ...(commercialBundle
+            ? {
+                commercial_intent_spec: commercialBundle.commercial_intent_spec,
+                commercial_hypotheses: commercialBundle.commercial_hypotheses,
+                intent_compiler_telemetry: commercialBundle.intent_compiler_telemetry,
+                commercial_intent_required: true,
+              }
+            : {}),
         },
         plan: {
           original_query: userQuery,

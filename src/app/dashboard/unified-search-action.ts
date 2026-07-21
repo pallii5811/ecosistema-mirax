@@ -37,6 +37,7 @@ import {
   stage1UserMessage,
   type Stage1Capability,
 } from '@/lib/stage1-capabilities'
+import { buildWorkerCommercialIntentBundle } from '@/lib/commercial-intent/attach-worker-intent'
 
 const UNIFIED_SEARCH_TIMEOUT_MS = 50_000
 const SEARCH_DISABLED_MESSAGE =
@@ -216,7 +217,7 @@ function workerIntentPayload(intent: CommercialIntent, query: string, plan: Mira
       }
     }
   }
-  return {
+  const base = {
     query,
     original_query: query,
     user_service_description: intent.user_service_description,
@@ -235,6 +236,19 @@ function workerIntentPayload(intent: CommercialIntent, query: string, plan: Mira
     commercial_hypothesis: plan.commercial_hypothesis,
     ranking_policy: plan.ranking_policy,
     uqe_plan: plan,
+  }
+  const bundle = buildWorkerCommercialIntentBundle(query, plan.canonical_plan ?? null, {
+    parse_source: plan.parse_source,
+    confidence: plan.confidence,
+    intent_summary: plan.intent_summary,
+  })
+  if (!bundle) return base
+  return {
+    ...base,
+    commercial_intent_spec: bundle.commercial_intent_spec,
+    commercial_hypotheses: bundle.commercial_hypotheses,
+    intent_compiler_telemetry: bundle.intent_compiler_telemetry,
+    commercial_intent_required: true,
   }
 }
 

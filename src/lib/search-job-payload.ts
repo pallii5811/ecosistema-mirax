@@ -20,6 +20,7 @@ export type PendingSearchInsert = {
   user_id?: string
   zone?: string
   intent?: Record<string, unknown> | null
+  progress?: Record<string, unknown> | null
 }
 
 export function encodeMaxLeadsZone(maxLeads: unknown): string | undefined {
@@ -41,6 +42,7 @@ export function buildPendingSearchInsert(opts: {
   userId?: string | null
   maxLeads?: number | null
   intent?: Record<string, unknown> | null
+  progress?: Record<string, unknown> | null
 }): PendingSearchInsert {
   const row: PendingSearchInsert = {
     category: opts.category.trim(),
@@ -53,6 +55,7 @@ export function buildPendingSearchInsert(opts: {
   const zone = encodeMaxLeadsZone(opts.maxLeads)
   if (zone) row.zone = zone
   if (opts.intent) row.intent = opts.intent
+  if (opts.progress) row.progress = opts.progress
   return row
 }
 

@@ -475,12 +475,24 @@ export async function requestAgenticWorkerJob(
     ...(opts.plan && typeof opts.plan === 'object' ? { uqe_plan: opts.plan } : {}),
   }
 
+  const spec = intent.commercial_intent_spec
+  const progress =
+    spec && typeof spec === 'object'
+      ? {
+          stage: 'intent_compiled',
+          commercial_intent_spec: intent.commercial_intent_spec,
+          commercial_hypotheses: intent.commercial_hypotheses ?? [],
+          intent_compiler_telemetry: intent.intent_compiler_telemetry ?? {},
+        }
+      : undefined
+
   const pendingRow = buildPendingSearchInsert({
         userId: opts.userId,
         category: sector,
         location,
         maxLeads,
         intent,
+        progress,
       })
   const mutation = opts.existingSearchId
     ? supabase.from('searches').update(pendingRow).eq('id', opts.existingSearchId).eq('status', 'planning')

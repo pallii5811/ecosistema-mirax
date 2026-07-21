@@ -1478,6 +1478,14 @@ def _sync_neo4j_leads_safe(results: Any, search_id: Any = None) -> None:
     """Sidecar Neo4j — dopo Postgres; non blocca il worker se fallisce."""
     if not isinstance(results, list) or not results:
         return
+    accepted = [
+        item for item in results
+        if isinstance(item, dict)
+        and item.get("_lead_acceptance_authority") == "LeadAcceptanceService"
+        and (item.get("_lead_acceptance") or {}).get("accepted") is True
+    ]
+    if not accepted:
+        return
     try:
         from universe_neo4j_sync import (
             is_neo4j_enabled,
@@ -1487,9 +1495,9 @@ def _sync_neo4j_leads_safe(results: Any, search_id: Any = None) -> None:
 
         if not is_neo4j_enabled():
             return
-        stats = sync_leads_to_graph(results)
+        stats = sync_leads_to_graph(accepted)
         semantic_stats = sync_semantic_leads_to_graph(
-            results,
+            accepted,
             search_id=str(search_id).strip() if search_id else None,
         )
         if stats["synced"] or stats["errors"]:
@@ -2047,6 +2055,87 @@ def _canonical_plan_from_intent(intent: Any) -> Optional[Dict[str, Any]]:
     if isinstance(uqe_plan, dict) and isinstance(uqe_plan.get("canonical_plan"), dict):
         return uqe_plan["canonical_plan"]
     return intent.get("canonical_plan") if isinstance(intent.get("canonical_plan"), dict) else None
+
+
+def _hydrate_intent_from_job(job: Dict[str, Any], intent: Any) -> Dict[str, Any]:
+    """Merge persisted commercial intent from searches.progress into worker intent."""
+    merged: Dict[str, Any] = dict(intent) if isinstance(intent, dict) else {}
+    progress = job.get("progress") if isinstance(job.get("progress"), dict) else {}
+    if progress:
+        merged["progress"] = progress
+    for key in ("commercial_intent_spec", "commercial_hypotheses", "intent_compiler_telemetry"):
+        if isinstance(progress.get(key), (dict, list)) and key not in merged:
+            merged[key] = progress[key]
+    if merged.get("commercial_intent_spec"):
+        merged["commercial_intent_required"] = True
+    return merged
+
+
+def _commercial_intent_for_acceptance(intent: Any) -> Dict[str, Any]:
+    """Always return a plan-shaped commercial intent for LeadAcceptanceService."""
+    from commercial_intent.runtime import resolve_authoritative_intent
+
+    if isinstance(intent, dict):
+        authoritative = resolve_authoritative_intent(intent)
+        if authoritative:
+            return authoritative
+    plan = _canonical_plan_from_intent(intent)
+    if isinstance(plan, dict) and plan.get("raw_query"):
+        return plan
+    query = ""
+    if isinstance(intent, dict):
+        for key in ("original_query", "query", "user_query"):
+            value = str(intent.get(key) or "").strip()
+            if value:
+                query = value
+                break
+    return {
+        "schema_version": "1.0.0",
+        "raw_query": query or "commercial search",
+        "target": {
+            "entity_types": ["company"],
+            "industries": [],
+            "geographies": [str(intent.get("location") or "").strip()] if isinstance(intent, dict) and intent.get("location") else [],
+            "company_sizes": ["micro", "piccola", "media"],
+            "local_business_preference": True,
+            "required_attributes": [],
+            "excluded_attributes": [],
+            "excluded_entities": [],
+        },
+        "signal_policy": {
+            "required_signals": list(_required_signals_from_intent(intent if isinstance(intent, dict) else None)),
+            "optional_signals": [],
+            "negative_signals": [],
+            "maximum_age_days_by_signal": {},
+            "minimum_signal_confidence": 0.7,
+        },
+        "source_policy": {
+            "allowed_source_classes": [
+                "official_company_website",
+                "company_careers",
+                "recognized_local_news",
+                "industry_publication",
+                "technology_audit",
+            ],
+            "preferred_source_classes": ["official_company_website"],
+            "excluded_source_classes": ["search_snippet", "directory", "generic_blog"],
+            "minimum_independent_sources": 1,
+            "primary_source_required_for": [],
+        },
+        "evidence_policy": {
+            "require_official_domain": True,
+            "require_source_url": True,
+            "require_observed_at": True,
+            "minimum_evidence_confidence": 0.7,
+        },
+        "seller": {},
+        "commercial_hypotheses": [],
+        "semantic_query_contract": (
+            intent.get("semantic_query_contract")
+            if isinstance(intent, dict) and isinstance(intent.get("semantic_query_contract"), dict)
+            else None
+        ),
+    }
 
 
 def _agentic_stream_one_lead(
@@ -4915,6 +5004,7 @@ def main() -> None:
                     intent = json.loads(intent)
                 except Exception:
                     intent = None
+            intent = _hydrate_intent_from_job(job if isinstance(job, dict) else {}, intent)
             # Canonical-plan boundary: legacy jobs remain compatible, but once a
             # canonical contract is present the worker must validate it before
             # claiming the job or spending on any external operation.
@@ -5141,7 +5231,7 @@ def main() -> None:
                     return []
 
             def _publish_job_results_safe(new_results, status=None):
-                canonical_lifecycle_plan = _canonical_plan_from_intent(intent)
+                commercial_intent = _commercial_intent_for_acceptance(intent)
                 current: List[Dict[str, Any]] = []
                 try:
                     current = _load_current_job_results_safe()
@@ -5161,29 +5251,28 @@ def main() -> None:
                     prioritize_hot = _is_agentic_only_job(intent) or bool(uqe_ctx.get("commercial_hypothesis"))
                     candidate_pool = list(filtered)
                     merged = _cap_search_results(candidate_pool, job_max, prioritize_hot=prioritize_hot)
-                    if canonical_lifecycle_plan is not None:
-                        from commercial_lifecycle import persist_and_publish_candidates
+                    from commercial_lifecycle import persist_and_publish_candidates
 
-                        lifecycle_shadow_mode = bool(
-                            isinstance(intent, dict)
-                            and intent.get("customer_visible") is False
-                            and str(intent.get("lifecycle_stage") or "") == "v5_shadow"
-                        )
+                    lifecycle_shadow_mode = bool(
+                        isinstance(intent, dict)
+                        and intent.get("customer_visible") is False
+                        and str(intent.get("lifecycle_stage") or "") == "v5_shadow"
+                    )
 
-                        lifecycle_published = persist_and_publish_candidates(
-                            supabase,
-                            search_id=str(job_id),
-                            user_id=str(job.get("user_id") or "").strip() or None,
-                            leads=candidate_pool if lifecycle_shadow_mode else merged,
-                            canonical_plan=canonical_lifecycle_plan,
-                            shadow_mode=lifecycle_shadow_mode,
-                        )
-                        # Preserve previously published rows, never intermediate candidates.
-                        merged = _cap_search_results(
-                            _merge_formatted_results(current, lifecycle_published),
-                            job_max,
-                            prioritize_hot=prioritize_hot,
-                        )
+                    lifecycle_published = persist_and_publish_candidates(
+                        supabase,
+                        search_id=str(job_id),
+                        user_id=str(job.get("user_id") or "").strip() or None,
+                        leads=candidate_pool if lifecycle_shadow_mode else merged,
+                        canonical_plan=commercial_intent,
+                        shadow_mode=lifecycle_shadow_mode,
+                    )
+                    # Preserve previously published rows, never intermediate candidates.
+                    merged = _cap_search_results(
+                        _merge_formatted_results(current, lifecycle_published),
+                        job_max,
+                        prioritize_hot=prioritize_hot,
+                    )
                     with _rt_lock:
                         _rt_results.clear()
                         _rt_results.extend(merged)
@@ -5240,9 +5329,7 @@ def main() -> None:
                     return merged
                 except Exception as e:
                     print(f"[worker_supabase] Safe publish skipped: {e}", flush=True)
-                    if canonical_lifecycle_plan is not None:
-                        return current
-                    return new_results if isinstance(new_results, list) else []
+                    return current if current else []
 
             def _publish_progressive_organic():
                 def _site_key(item):
