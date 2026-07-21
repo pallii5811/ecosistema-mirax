@@ -5488,6 +5488,7 @@ def main() -> None:
                 )
                 from source_adapters.hiring_qualification import collect_processed_employer_keys, count_unique_employer_keys, employer_key_from_payload
 
+                selected_adapter_ids: List[str] = []
                 shadow_decision = source_adapter_shadow_decision(intent)
                 prior_shadow_resume = _shadow_resume_state_from_progress(job.get("progress"))
                 loaded_prior_payloads = _load_prior_shadow_qualified_payloads(job, supabase=supabase)
