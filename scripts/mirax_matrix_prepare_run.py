@@ -49,8 +49,14 @@ SPECS = {
         "hypotheses": [
             {
                 "id": "crm-rfp-migration",
-                "buyer_problem": "Serve un nuovo CRM o una migrazione dichiarata",
-                "triggering_events": ["gara CRM", "RFP CRM", "migrazione CRM", "bando software CRM"],
+                "buyer_problem": (
+                    "L'azienda cerca, seleziona, adotta o implementa un CRM "
+                    "(progetto, gara, migrazione o annuncio di adozione)"
+                ),
+                "triggering_events": [
+                    "gara CRM", "RFP CRM", "migrazione CRM", "adotta CRM", "sceglie CRM",
+                    "progetto CRM", "bando software CRM",
+                ],
                 "signals": ["technology_adoption", "technology_migration"],
                 "implied_need": "Selezione, implementazione o migrazione CRM",
                 "relevance_to_offer": "Il bisogno CRM esplicito e attuale rende il lead acquistabile",
@@ -85,11 +91,11 @@ SPECS = {
             "announced CRM project", "vacancy owning CRM implementation",
             "CRM partner/consultant request",
             "explicit CRM selection or evaluation in progress",
+            "operating company adopts or chooses a CRM platform",
         ],
         "negative": [
             "mere CRM absence", "generic CRM article", "CRM vendor as target",
-            "old completed case study", "supplier SEO page",
-            "competitor already-won CRM adoption story",
+            "old completed case study", "supplier SEO page", "how-to CRM guide",
         ],
     },
     "q4": {

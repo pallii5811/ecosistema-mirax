@@ -27,6 +27,7 @@ QUERY_SCHEMA_VERSION = "semantic-query-contract-v5"
 EVENT_SCHEMA_VERSION = "semantic-commercial-event-v4"
 GROUNDING_SCHEMA_VERSION = "semantic-grounding-v2"
 HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP = "sales_customer_acquisition_team_expansion_by_target_company"
+CRM_SEEKING_RELATIONSHIP = "target_company_seeking_crm_solution"
 
 
 def _clean(value: Any) -> str:
@@ -505,7 +506,10 @@ an operating company in exactly the role required by the semantic query contract
 copied literally from source_text and exact Python string offsets. Return the contract's relationship/rubric IDs
 verbatim only when the excerpt supports them. For hiring vacancies, sales_customer_acquisition_team_expansion_by_target_company
 may be supported by an active direct-employer vacancy whose duties literally require acquiring or developing new
-customers; do not require the page to contain the words "team expansion". Never invent net headcount growth,
+customers; do not require the page to contain the words "team expansion". For CRM seller queries asking for
+companies seeking a CRM, treat literal CRM selection, tender/RFP, migration, project kickoff, or operating-company
+adoption/choice of a CRM platform as query_match=true commercial triggers (they prove in-market CRM demand).
+Do not treat how-to guides or vendor SEO pages as buyers. Never invent net headcount growth,
 customer acquisition, expansion or company role when the page lacks them. Prefer relations[] entries that include
 relationship_id, supported, subject, subject_role, object, direction, supporting_excerpt, excerpt_start,
 excerpt_end, reason and confidence when a required relationship is evaluated. If query_match=true, evidence_excerpt,
@@ -762,6 +766,27 @@ def _hiring_bridge_helpers():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module.find_customer_acquisition_duty, module.looks_sales_role
+
+
+def _crm_bridge_helpers():
+    """Load CRM seeking detectors without importing source_adapters package __init__."""
+    try:
+        from backend_mirror.source_adapters.crm_semantic_bridge import find_crm_seeking_evidence
+        return find_crm_seeking_evidence
+    except ImportError:
+        pass
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent / "source_adapters" / "crm_semantic_bridge.py"
+    spec = importlib.util.spec_from_file_location("mirax_crm_semantic_bridge", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"crm_semantic_bridge unavailable at {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module.find_crm_seeking_evidence
 
 
 def _deterministic_hiring_interpretation(
@@ -1032,6 +1057,43 @@ class SemanticEvidenceGroundingVerifier:
                     query_match=True if not interpretation.query_match else interpretation.query_match,
                 )
                 relationships = set(interpretation.satisfied_relationships)
+        crm_proxy = None
+        if CRM_SEEKING_RELATIONSHIP in required_relationships:
+            find_crm_seeking_evidence = _crm_bridge_helpers()
+            crm_excerpt, crm_start, crm_end = find_crm_seeking_evidence(source_text)
+            crm_proxy = {
+                "proven": bool(crm_excerpt) and crm_start >= 0,
+                "excerpt": crm_excerpt or "",
+                "start": crm_start,
+                "end": crm_end,
+            }
+            if crm_proxy["proven"]:
+                relationships.add(CRM_SEEKING_RELATIONSHIP)
+                interpretation_rubric = set(interpretation.acceptance_rubric_passed)
+                for item in contract.acceptance_rubric:
+                    if item.endswith("_grounded") or "seeking_crm" in item or item.startswith("buyer_"):
+                        interpretation_rubric.add(item)
+                from dataclasses import replace as dc_replace
+                role = interpretation.target_entity_role or (
+                    "buyer" if contract.target_role_in_event == "buyer" else interpretation.target_entity_role
+                )
+                interpretation = dc_replace(
+                    interpretation,
+                    satisfied_relationships=tuple(sorted(relationships)),
+                    acceptance_rubric_passed=tuple(sorted(interpretation_rubric)),
+                    target_entity_role=role or interpretation.target_entity_role,
+                    query_match=True,
+                    query_match_reason=(
+                        interpretation.query_match_reason
+                        or "deterministic CRM observables: literal CRM selection/adoption/project language"
+                    ),
+                )
+                relationships = set(interpretation.satisfied_relationships)
+                if excerpt and not literal and crm_proxy["excerpt"] in source_text:
+                    excerpt = crm_proxy["excerpt"]
+                    start = crm_proxy["start"]
+                    end = crm_proxy["end"]
+                    literal = source_text[start:end] == excerpt
         relationships_pass = required_relationships.issubset(relationships)
         target_in_relation = any(
             isinstance(relation, Mapping)
@@ -1046,6 +1108,12 @@ class SemanticEvidenceGroundingVerifier:
             _roles_compatible(interpretation.target_entity_role, contract.target_role_in_event)
             or (relationships_pass and target_in_relation)
             or (hiring_proxy is not None and hiring_proxy["employer_role"] and contract.target_role_in_event == "employer")
+            or (
+                crm_proxy is not None
+                and crm_proxy["proven"]
+                and contract.target_role_in_event == "buyer"
+                and _roles_compatible(interpretation.target_entity_role, "buyer")
+            )
         )
         excluded_role = interpretation.target_entity_role in set(contract.excluded_roles)
         rubric_pass = set(contract.acceptance_rubric).issubset(set(interpretation.acceptance_rubric_passed))
@@ -1077,7 +1145,7 @@ class SemanticEvidenceGroundingVerifier:
             and hiring_proxy["sales_role"]
             and hiring_proxy["employer_role"]
             and hiring_proxy["vacancy_active"]
-        )
+        ) or (crm_proxy is not None and crm_proxy["proven"])
         checks = {
             "excerpt_literal": literal,
             "offsets_exact": literal,

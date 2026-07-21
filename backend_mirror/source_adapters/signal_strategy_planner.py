@@ -337,15 +337,15 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
             "experis.it", "intervieweb.it", "recruit.net", "indeed.com", "infojobs.it",
         )
         crm_guide_exclude = '-guida -tutorial -"come scegliere" -"come si sceglie" -"miglior CRM" -"caso di successo"'
-        # Prefer tenders / in-progress projects. Completed "X sceglie Vendor" case studies
-        # fail seeking_crm relationships and match the negative "old completed case study".
+        # Adoption announcements ("sceglie"/"adotta") are the technology_adoption
+        # lexicon evidence and the commercial trigger for a CRM seller. Pair with
+        # migration/tender SERPs; demote Consip-only hits (no PMI buyer identity).
         crm_queries = (
-            'Consip OR "bando di gara" OR "accordo quadro" ("Public Cloud SaaS" CRM OR "gara" CRM) Italia',
-            '"Gara Public Cloud SaaS - CRM" OR "bando" CRM (Consip OR PA OR "pubblica amministrazione")',
+            f'Italia ("adotta" OR "sceglie" OR "implementa") CRM (progetto OR piattaforma OR software OR aziendale) {crm_guide_exclude}',
             f'"migrazione CRM" OR "sostituzione CRM" OR "progetto CRM" (avvio OR "in corso" OR kickoff OR annuncia) Italia azienda {crm_guide_exclude}',
-            f'site:.it ("comunicato stampa" OR newsroom) ("migrazione CRM" OR "nuovo CRM" OR "progetto CRM" OR "selezione CRM") {crm_guide_exclude}',
+            f'site:.it ("comunicato stampa" OR newsroom) (("adotta" OR "sceglie") CRM OR "migrazione CRM" OR "nuovo CRM" OR "progetto CRM") {crm_guide_exclude}',
+            f'Italia CRM ("manifestazione di interesse" OR "richiesta di offerta" OR "bando di gara" OR "determina a contrarre") {crm_guide_exclude}',
             '("CRM Project Manager" OR "responsabile CRM" OR "CRM Specialist") (assume OR cercasi OR "posizione aperta") (Spa OR Srl OR Group OR azienda) Italia -agenzia',
-            f'Italia CRM ("manifestazione di interesse" OR "richiesta di offerta" OR "determina a contrarre") {crm_guide_exclude}',
         )
         for idx, query in enumerate(crm_queries):
             strategies.insert(
