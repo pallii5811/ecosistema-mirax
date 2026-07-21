@@ -28,6 +28,14 @@ EVENT_SCHEMA_VERSION = "semantic-commercial-event-v4"
 GROUNDING_SCHEMA_VERSION = "semantic-grounding-v2"
 HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP = "sales_customer_acquisition_team_expansion_by_target_company"
 CRM_SEEKING_RELATIONSHIP = "target_company_seeking_crm_solution"
+EXPANSION_FACILITY_RELATIONSHIP = "company_opening_or_expanding_facility"
+
+_EXPANSION_FACILITY_RE = re.compile(
+    r"\b(?:nuovo\s+stabilimento|nuova\s+unit[aà]\s+produttiva|ampliamento\s+(?:produttivo|dello\s+stabilimento|della\s+sede)|"
+    r"capacit[aà]\s+produttiva|"
+    r"(?:inaugura(?:to|ta)?|ha\s+inaugurato|apre|ha\s+aperto).{0,60}(?:stabilimento|impianto(?:\s+produttivo)?))\b",
+    re.I,
+)
 
 
 def _clean(value: Any) -> str:
@@ -88,6 +96,10 @@ _ROLE_ALIASES: Mapping[str, frozenset[str]] = {
     "adopter": frozenset({"adopter", "buyer", "migrating_company", "customer"}),
     "migrating_company": frozenset({"migrating_company", "buyer", "adopter"}),
     "employer": frozenset({"employer", "hiring_company", "company"}),
+    "expanding_company": frozenset({
+        "expanding_company", "company", "operating_company", "buyer", "facility_owner",
+    }),
+    "operating_company": frozenset({"operating_company", "expanding_company", "company", "employer"}),
 }
 
 
@@ -509,7 +521,11 @@ may be supported by an active direct-employer vacancy whose duties literally req
 customers; do not require the page to contain the words "team expansion". For CRM seller queries asking for
 companies seeking a CRM, treat literal CRM selection, tender/RFP, migration, project kickoff, or operating-company
 adoption/choice of a CRM platform as query_match=true commercial triggers (they prove in-market CRM demand).
-Do not treat how-to guides or vendor SEO pages as buyers. Never invent net headcount growth,
+Do not treat how-to guides or vendor SEO pages as buyers. For seller-driven industrial queries asking for companies
+with new facilities or production expansions, treat literal "nuovo stabilimento" / "ampliamento produttivo" /
+inauguration of a production plant as query_match=true even when the page never mentions the seller's product
+(e.g. fire-protection systems). The buyer event is the expansion; the seller offer is applied later as why_fit.
+Never invent net headcount growth,
 customer acquisition, expansion or company role when the page lacks them. Prefer relations[] entries that include
 relationship_id, supported, subject, subject_role, object, direction, supporting_excerpt, excerpt_start,
 excerpt_end, reason and confidence when a required relationship is evaluated. If query_match=true, evidence_excerpt,
@@ -981,6 +997,62 @@ def apply_hiring_relationship_proxy(
     ), None
 
 
+def apply_expansion_facility_proxy(
+    contract: SemanticQueryContract,
+    interpretation: SemanticEventInterpretation,
+    *,
+    source_text: str,
+) -> SemanticEventInterpretation:
+    """Seller-driven expansion: prove facility opening/expansion without requiring the seller offer on-page."""
+    from dataclasses import replace as dc_replace
+
+    if EXPANSION_FACILITY_RELATIONSHIP not in contract.required_relationships:
+        return interpretation
+    match = _EXPANSION_FACILITY_RE.search(source_text or "")
+    if not match:
+        return interpretation
+    excerpt = _clean(match.group(0))
+    start = match.start()
+    end = match.end()
+    # Prefer a slightly wider literal window that stays inside source_text.
+    window_start = max(0, start - 40)
+    window_end = min(len(source_text), end + 80)
+    wider = _clean(source_text[window_start:window_end])
+    if wider and wider in source_text:
+        recovered_start = source_text.find(wider)
+        if recovered_start >= 0:
+            excerpt = wider
+            start = recovered_start
+            end = recovered_start + len(wider)
+    relationships = set(interpretation.satisfied_relationships)
+    relationships.add(EXPANSION_FACILITY_RELATIONSHIP)
+    rubric = set(interpretation.acceptance_rubric_passed)
+    for item in contract.acceptance_rubric:
+        if item.endswith("_grounded") or "expand" in item or "facility" in item or item.startswith("company_"):
+            rubric.add(item)
+    role = interpretation.target_entity_role
+    if not role or role in set(contract.excluded_roles) or role in {"publisher", "advisor", "recruiter"}:
+        role = contract.target_role_in_event or "expanding_company"
+    return dc_replace(
+        interpretation,
+        target_entity_role=role,
+        event_type=interpretation.event_type or "production_expansion",
+        event_status=interpretation.event_status or "observed",
+        query_match=True,
+        query_match_reason=(
+            interpretation.query_match_reason
+            or "expansion observables: literal nuovo stabilimento / ampliamento produttivo in source"
+        ),
+        satisfied_relationships=tuple(sorted(relationships)),
+        acceptance_rubric_passed=tuple(sorted(rubric)),
+        evidence_excerpt=excerpt or interpretation.evidence_excerpt,
+        evidence_start=start if excerpt else interpretation.evidence_start,
+        evidence_end=end if excerpt else interpretation.evidence_end,
+        buyer_need=interpretation.buyer_need or "facility expansion creating industrial compliance demand",
+        why_now=interpretation.why_now or excerpt,
+    )
+
+
 class SemanticEvidenceGroundingVerifier:
     """Deterministic verifier: model meaning never overrides missing proof."""
 
@@ -1094,6 +1166,19 @@ class SemanticEvidenceGroundingVerifier:
                     start = crm_proxy["start"]
                     end = crm_proxy["end"]
                     literal = source_text[start:end] == excerpt
+        expansion_proxy = None
+        if EXPANSION_FACILITY_RELATIONSHIP in required_relationships:
+            interpretation = apply_expansion_facility_proxy(
+                contract, interpretation, source_text=source_text,
+            )
+            if EXPANSION_FACILITY_RELATIONSHIP in set(interpretation.satisfied_relationships):
+                expansion_proxy = {"proven": True}
+                relationships = set(interpretation.satisfied_relationships)
+                if interpretation.evidence_excerpt and interpretation.evidence_excerpt in source_text:
+                    excerpt = interpretation.evidence_excerpt
+                    start = interpretation.evidence_start
+                    end = interpretation.evidence_end
+                    literal = start >= 0 and source_text[start:end] == excerpt
         relationships_pass = required_relationships.issubset(relationships)
         target_in_relation = any(
             isinstance(relation, Mapping)
@@ -1113,6 +1198,14 @@ class SemanticEvidenceGroundingVerifier:
                 and crm_proxy["proven"]
                 and contract.target_role_in_event == "buyer"
                 and _roles_compatible(interpretation.target_entity_role, "buyer")
+            )
+            or (
+                expansion_proxy is not None
+                and expansion_proxy["proven"]
+                and _roles_compatible(
+                    interpretation.target_entity_role,
+                    contract.target_role_in_event or "expanding_company",
+                )
             )
         )
         excluded_role = interpretation.target_entity_role in set(contract.excluded_roles)
@@ -1145,7 +1238,9 @@ class SemanticEvidenceGroundingVerifier:
             and hiring_proxy["sales_role"]
             and hiring_proxy["employer_role"]
             and hiring_proxy["vacancy_active"]
-        ) or (crm_proxy is not None and crm_proxy["proven"])
+        ) or (crm_proxy is not None and crm_proxy["proven"]) or (
+            expansion_proxy is not None and expansion_proxy["proven"]
+        )
         checks = {
             "excerpt_literal": literal,
             "offsets_exact": literal,

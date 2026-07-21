@@ -528,6 +528,7 @@ async def semantic_authority_qualifier(
             SemanticResultCache,
             SemanticTelemetry,
             apply_hiring_relationship_proxy,
+            apply_expansion_facility_proxy,
         )
 
         contract = SemanticQueryContract.from_model(
@@ -643,6 +644,11 @@ async def semantic_authority_qualifier(
             if hiring_early_reject:
                 rejection_codes.append(hiring_early_reject)
                 continue
+            interpretation = apply_expansion_facility_proxy(
+                contract,
+                interpretation,
+                source_text=source_text,
+            )
             if interpretation.target_entity_role in set(contract.excluded_roles):
                 rejection_codes.append("ACTOR_ROLE_EXCLUDED")
                 continue

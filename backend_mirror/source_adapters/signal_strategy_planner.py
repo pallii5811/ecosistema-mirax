@@ -399,16 +399,17 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
         expansion_exclude = (
             '-antincendio -sprinkler -"impianti antincendio" -extinguisher -vigilanza '
             '-site:bebeez.it -site:italianostra.org -site:paginegialle.it '
-            '-"richiedi informazioni" -associazione -onlus -fondazione'
+            '-site:instagram.com -site:linkedin.com -site:bandi.regione.lombardia.it '
+            '-site:finlombarda.it -site:reteagevolazioni.it -site:bandosubito.it '
+            '-"richiedi informazioni" -associazione -onlus -fondazione -bando -agevolazione'
         )
         expansion_queries = (
             f'("inaugura" OR "ha inaugurato" OR "inaugurato") ("nuovo stabilimento" OR "nuovo impianto") '
-            f'(Lombardia OR Veneto OR Piemonte OR Emilia OR Bergamo OR Brescia OR Vicenza OR Modena) '
+            f'(Lombardia OR Veneto OR Emilia OR Bergamo OR Brescia OR Vicenza OR Modena OR Padova) '
             f'(2025 OR 2026) (Spa OR Srl) {expansion_exclude}',
-            f'("ampliamento produttivo" OR "ampliamento dello stabilimento" OR "nuova unità produttiva") '
-            f'(Lombardia OR Veneto OR Emilia) (2025 OR 2026) (Spa OR Srl OR "gruppo industriale") '
-            f'{expansion_exclude}',
-            f'"comunicato stampa" ("nuovo stabilimento" OR "capacità produttiva") '
+            f'("nuovo stabilimento" OR "nuova unità produttiva") (Bergamo OR Brescia OR Vicenza OR Padova OR Modena OR Parma OR Thiene) '
+            f'(2025 OR 2026) (Spa OR Srl) (inaugura OR inaugurato OR apre) {expansion_exclude}',
+            f'"comunicato stampa" ("nuovo stabilimento" OR "ampliamento dello stabilimento") '
             f'(Lombardia OR Veneto OR Emilia-Romagna) (2025 OR 2026) (Spa OR Srl) {expansion_exclude}',
         )
         signal_set = set(signals)

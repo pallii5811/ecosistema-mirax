@@ -26,7 +26,9 @@ _ADMIN_ASSOC_RE = re.compile(
 )
 _FORM_OR_HUB_PATH_RE = re.compile(
     r"(richiedi[-_/]?informazioni|/contatti?/|/contact|/form|/newsletter|"
-    r"italia-che-fa-impresa|/category/|/tag/|/topics?/)",
+    r"italia-che-fa-impresa|/category/|/tag/|/topics?/|"
+    r"bandi\.regione|/prodotti-e-servizi/|/fondo-perduto|"
+    r"instagram\.com|linkedin\.com)",
     re.I,
 )
 _EVENT_HINT_RE = re.compile(
