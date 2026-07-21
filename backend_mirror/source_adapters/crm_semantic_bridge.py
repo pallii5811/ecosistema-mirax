@@ -40,8 +40,9 @@ _CRM_SEEKING_RE = re.compile(
     r"|\bcrm\b.{0,40}(?:selezione|gara|bando|rfp|migrazione|sostituzione|implementazione|"
     r"progetto|introduzione|adozione|kickoff)"
     r"|(?:scegli\w*|adott\w*|scelt\w*|implement\w*)\s+(?:la\s+)?(?:piattaforma\s+)?"
-    r"(?:crm|salesforce|dynamics|hubspot|veeva)"
-    r"|(?:scegli\w*|adott\w*)\s+.{0,30}\bcrm\b"
+    r"(?:crm|salesforce|dynamics|hubspot|veeva|vtecrm|sugarcrm|\w*crm)\b"
+    r"|(?:scegli\w*|adott\w*)\s+.{0,50}\bcrm\b"
+    r"|(?:scegli\w*|adott\w*)\s+.{0,50}\b(?:sistema|soluzione|piattaforma)\s+crm\b"
     r"|\bcrm\b.{0,20}(?:project\s+manager|specialist|owner|responsabile)"
     r")",
     re.I | re.S,

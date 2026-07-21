@@ -343,11 +343,12 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
         # Prefer named-company adoption headlines on trade press; keep the Phase-A
         # ("adotta" OR "sceglie" OR "implementa") CRM substring for regression.
         crm_queries = (
-            f'Italia ("adotta" OR "sceglie" OR "implementa") CRM (Spa OR Srl OR Group OR "comunicato stampa") {crm_guide_exclude}',
-            'site:engage.it OR site:key4biz.it OR site:corrierecomunicazioni.it OR site:logisticaefficiente.it ("sceglie" OR "adotta") CRM -guida',
+            # Trade-press headlines name both buyer and CRM event — highest yield.
+            'site:engage.it OR site:key4biz.it OR site:corrierecomunicazioni.it OR site:logisticaefficiente.it OR site:bitmat.it ("sceglie" OR "adotta") CRM -guida',
             f'"ha scelto" OR "ha adottato" OR "sceglie la piattaforma" CRM Italia (Spa OR Srl) {crm_guide_exclude}',
+            # Broader open-web: keep ("adotta" OR "sceglie" OR "implementa") CRM for Phase-A.
+            f'Italia ("adotta" OR "sceglie" OR "implementa") CRM (Spa OR Srl OR Group OR "comunicato stampa") {crm_guide_exclude}',
             f'"migrazione CRM" OR "sostituzione CRM" OR "progetto CRM" (avvio OR "in corso" OR kickoff OR annuncia) Italia azienda {crm_guide_exclude}',
-            f'Italia CRM ("manifestazione di interesse" OR "richiesta di offerta" OR "bando di gara") {crm_guide_exclude}',
         )
         for idx, query in enumerate(crm_queries):
             strategies.insert(
