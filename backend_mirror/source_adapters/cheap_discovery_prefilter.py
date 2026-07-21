@@ -20,7 +20,13 @@ _PUBLISHER_AS_COMPANY_RE = re.compile(
 )
 _ADMIN_ASSOC_RE = re.compile(
     r"\b(comune di|regione |provincia di|ministero|camera di commercio|"
-    r"associazione|confartigianato|confcommercio|sindacato|fondazione)\b",
+    r"associazione|confartigianato|confcommercio|sindacato|fondazione|"
+    r"italia\s+nostra|onlus|ong\b)\b",
+    re.I,
+)
+_FORM_OR_HUB_PATH_RE = re.compile(
+    r"(richiedi[-_/]?informazioni|/contatti?/|/contact|/form|/newsletter|"
+    r"italia-che-fa-impresa|/category/|/tag/|/topics?/)",
     re.I,
 )
 _EVENT_HINT_RE = re.compile(
@@ -104,6 +110,8 @@ def prefilter_discovery_hit(
         return PrefilterDecision(False, "publisher_as_company", 0.05, False)
     if not allow_admin_assoc and _ADMIN_ASSOC_RE.search(blob):
         return PrefilterDecision(False, "admin_or_association", 0.1, False)
+    if _FORM_OR_HUB_PATH_RE.search(hit.url) or _FORM_OR_HUB_PATH_RE.search(blob):
+        return PrefilterDecision(False, "form_or_hub_page", 0.1, False)
     if require_event_hint and not _EVENT_HINT_RE.search(blob):
         return PrefilterDecision(False, "no_event_hint", 0.15, False)
     # Stale year without recent year nearby.

@@ -455,7 +455,7 @@ async def _default_growth_provider(request: AdapterDiscoveryRequest, offset: int
             decision = prefilter_discovery_hit(
                 DiscoveryHit(title="", url=url, snippet=f"{path} {active_query}"),
                 require_event_hint=not semantic_open_world,
-                allow_admin_assoc=semantic_open_world,
+                allow_admin_assoc=False,
             )
             if decision.accepted:
                 gated.append(url)

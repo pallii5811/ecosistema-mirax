@@ -168,12 +168,18 @@ def test_cheap_prefilter_rejects_directory_and_stale():
         DiscoveryHit("Comune di Milano", "https://www.comune.milano.it/x", "avviso pubblico"),
         DiscoveryHit("Acme Spa apre nuova sede a Bergamo", "https://www.acme-industrie.it/news/sede", "Acme Spa inaugura nuova sede 2026"),
         DiscoveryHit("Old Co apertura 2018", "https://news.example/old", "apertura sede nel 2018"),
+        DiscoveryHit("Italia che fa impresa", "https://bebeez.it/italia-che-fa-impresa/", "hub imprese"),
+        DiscoveryHit("RICHIEDI INFORMAZIONI", "https://bevertech.it/espositori/richiedi-informazioni", "form"),
+        DiscoveryHit("Italia Nostra Onlus", "https://www.italianostra.org/sezioni-e-consigli-regionali/sardegna/", "associazione"),
     ]
     ranked = cheap_rank_hits(hits)
     accepted_urls = {hit.url for hit, _ in ranked}
     assert "https://www.acme-industrie.it/news/sede" in accepted_urls
     assert all("paginegialle" not in url for url in accepted_urls)
     assert all("comune.milano" not in url for url in accepted_urls)
+    assert all("bebeez.it" not in url for url in accepted_urls)
+    assert all("richiedi-informazioni" not in url for url in accepted_urls)
+    assert all("italianostra" not in url for url in accepted_urls)
     rejected = prefilter_discovery_hit(hits[0])
     assert rejected.accepted is False
 

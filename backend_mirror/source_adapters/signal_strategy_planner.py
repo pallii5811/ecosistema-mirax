@@ -396,14 +396,20 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
     if set(signals).intersection({"production_expansion", "new_location", "geographic_expansion", "expansion"}):
         # Buyer expansion headlines — keep seller-offer terms out of the SERP so
         # fire-protection vendors are not mistaken for expanding industrial buyers.
-        expansion_exclude = '-antincendio -sprinkler -"impianti antincendio" -extinguisher -vigilanza'
+        expansion_exclude = (
+            '-antincendio -sprinkler -"impianti antincendio" -extinguisher -vigilanza '
+            '-site:bebeez.it -site:italianostra.org -site:paginegialle.it '
+            '-"richiedi informazioni" -associazione -onlus -fondazione'
+        )
         expansion_queries = (
-            f'("nuovo stabilimento" OR "ampliamento produttivo" OR "ampliamento dello stabilimento" '
-            f'OR "nuova unità produttiva") {geo} (2024 OR 2025 OR 2026) (Spa OR Srl OR impresa) {expansion_exclude}',
-            f'{geo} ("inaugura" OR "ha inaugurato" OR "ha aperto") ("nuovo stabilimento" OR "nuovo impianto" '
-            f'OR "nuova sede produttiva") (2024 OR 2025 OR 2026) {expansion_exclude}',
-            f'site:.it "comunicato stampa" ("nuovo stabilimento" OR "ampliamento produttivo" OR '
-            f'"capacità produttiva") {geo} (2025 OR 2026) {expansion_exclude}',
+            f'("inaugura" OR "ha inaugurato" OR "inaugurato") ("nuovo stabilimento" OR "nuovo impianto") '
+            f'(Lombardia OR Veneto OR Piemonte OR Emilia OR Bergamo OR Brescia OR Vicenza OR Modena) '
+            f'(2025 OR 2026) (Spa OR Srl) {expansion_exclude}',
+            f'("ampliamento produttivo" OR "ampliamento dello stabilimento" OR "nuova unità produttiva") '
+            f'(Lombardia OR Veneto OR Emilia) (2025 OR 2026) (Spa OR Srl OR "gruppo industriale") '
+            f'{expansion_exclude}',
+            f'"comunicato stampa" ("nuovo stabilimento" OR "capacità produttiva") '
+            f'(Lombardia OR Veneto OR Emilia-Romagna) (2025 OR 2026) (Spa OR Srl) {expansion_exclude}',
         )
         signal_set = set(signals)
         primary_signal = next(

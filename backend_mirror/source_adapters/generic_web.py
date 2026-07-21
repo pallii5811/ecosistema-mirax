@@ -313,8 +313,10 @@ def _gate_serp_hits(
         )
         decision = prefilter_discovery_hit(
             hit,
-            require_event_hint=not semantic_open_world,
-            allow_admin_assoc=semantic_open_world,
+            # Keep event-hint gating even on semantic open-world — without it
+            # hub/association SERPs burn interpretation budget (antincendio canary).
+            require_event_hint=True,
+            allow_admin_assoc=False,
         )
         if decision.accepted:
             accepted.append(hit)
