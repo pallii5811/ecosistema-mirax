@@ -12,10 +12,11 @@ except ImportError:  # pragma: no cover
     jsonschema = None  # type: ignore
 
 ROOT = Path(__file__).resolve().parents[2]
+_MODULE_DIR = Path(__file__).resolve().parent
 _SCHEMA_CANDIDATES = (
+    _MODULE_DIR / "commercial_intent.schema.json",
+    _MODULE_DIR.parent / "contracts" / "commercial_intent.schema.json",
     ROOT / "contracts" / "commercial_intent.schema.json",
-    Path(__file__).resolve().parents[1] / "commercial_intent.schema.json",
-    Path(__file__).resolve().parents[1].parent / "contracts" / "commercial_intent.schema.json",
 )
 SCHEMA_PATH = next((path for path in _SCHEMA_CANDIDATES if path.exists()), _SCHEMA_CANDIDATES[0])
 
