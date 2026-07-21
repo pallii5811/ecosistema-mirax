@@ -207,6 +207,11 @@ def _build_hiring_discovery_queries(request: AdapterDiscoveryRequest) -> List[Tu
             f'(site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)',
         )
         _add(
+            "serp:ats_alt",
+            f'(sviluppatore OR "software engineer" OR devops OR "data engineer") {city_or} '
+            f'(site:jobs.lever.co OR site:boards.greenhouse.io OR site:myworkdayjobs.com)',
+        )
+        _add(
             "serp:careers",
             f'("{primary_role}" OR sviluppatore OR "ingegnere informatico") '
             f'"lavora con noi" {city_or}',

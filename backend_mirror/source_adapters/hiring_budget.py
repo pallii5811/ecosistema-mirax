@@ -18,7 +18,7 @@ DOMAIN_CAP_EUR = 0.025
 QUERY_COST_EUR = 0.005
 # Progressive discovery: never burn the Serper budget before the first fetch.
 QUERIES_PER_BATCH = 2
-INITIAL_SERP_QUERIES = 2
+INITIAL_SERP_QUERIES = 3
 DISCOVERY_SOFT_CAP_EUR = 0.015
 URLS_PER_BATCH = 24
 URL_ONLY_FETCH_CAP = 6

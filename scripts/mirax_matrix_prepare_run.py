@@ -207,9 +207,9 @@ def load_seed_bundle(seed_search_id: str) -> dict | None:
     if not payloads:
         return None
     cache_keys = (
-        "resume_cursors", "url_meta", "seen_urls", "processed_terminal_urls",
+        "url_meta", "seen_urls", "processed_terminal_urls",
         "executed_query_keys", "query_stats", "processed_employer_keys",
-        "processed_domains", "acquisition",
+        "processed_domains",
     )
     seeded_shadow = {
         key: shadow[key]
@@ -487,7 +487,7 @@ def prepare_and_run(spec_id: str, *, seed_from: str | None = None) -> dict:
         "MIRAX_SOURCE_ADAPTER_SHADOW_ENABLED": "1",
         "MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR": "0.05",
         "MIRAX_ORCHESTRATOR_MAX_SECONDS": "600" if spec_id == "q4" else "300",
-        "MIRAX_ORCHESTRATOR_MAX_ROUNDS": "40" if spec_id == "q4" else "20",
+        "MIRAX_ORCHESTRATOR_MAX_ROUNDS": "120" if spec_id == "q4" else "20",
         "PYTHONUNBUFFERED": "1",
         "PYTHONPATH": str(ROOT),
     })
