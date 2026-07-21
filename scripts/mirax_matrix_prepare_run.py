@@ -75,6 +75,8 @@ SPECS = {
         "role": "buyer",
         "relationships": [
             "target_company_seeking_crm_solution",
+        ],
+        "optional_relationships": [
             "target_company_migrating_crm_platform",
             "target_company_issuing_crm_rfp",
         ],
@@ -82,10 +84,12 @@ SPECS = {
             "CRM RFP or public tender", "declared CRM migration/replacement",
             "announced CRM project", "vacancy owning CRM implementation",
             "CRM partner/consultant request",
+            "explicit CRM selection or evaluation in progress",
         ],
         "negative": [
             "mere CRM absence", "generic CRM article", "CRM vendor as target",
             "old completed case study", "supplier SEO page",
+            "competitor already-won CRM adoption story",
         ],
     },
     "q4": {
@@ -244,7 +248,7 @@ def build_plan(spec_id: str, hard: float = 0.05) -> tuple[dict, dict]:
         "event_or_state_description": spec["hypotheses"][0]["buyer_problem"],
         "target_role_in_event": spec["role"],
         "required_relationships": spec["relationships"],
-        "optional_relationships": [],
+        "optional_relationships": list(spec.get("optional_relationships") or []),
         "excluded_roles": excluded_roles,
         "excluded_entities": spec["target"]["excluded_entities"],
         "geography": spec["target"]["geographies"],
@@ -258,7 +262,7 @@ def build_plan(spec_id: str, hard: float = 0.05) -> tuple[dict, dict]:
         "data_requirements": ["official_domain", "source_url", "event_date", "excerpt"],
         "ranking_objective": "freshest grounded target",
         "acceptance_rubric": [f"{spec['role']}_grounded"] + [
-            f"{rel}_grounded" for rel in spec["relationships"][:2]
+            f"{rel}_grounded" for rel in spec["relationships"][:1]
         ],
         "discovery_hypotheses": [
             {

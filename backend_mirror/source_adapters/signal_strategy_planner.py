@@ -333,15 +333,18 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
         crm_vendor_exclude = _DEFAULT_EXCLUDED + (
             "salesforce.com", "hubspot.com", "microsoft.com", "zoho.com", "pipedrive.com",
         )
-        crm_guide_exclude = '-guida -tutorial -"come scegliere" -"come si sceglie" -"miglior CRM"'
+        crm_guide_exclude = '-guida -tutorial -"come scegliere" -"come si sceglie" -"miglior CRM" -"caso di successo"'
+        # Q2 asks for companies SEEKING a CRM. Completed "X sceglie Vendor" case
+        # studies are competitor wins / historical adoptions and fail semantic
+        # relationships (seeking/migrating/RFP). Prefer selection, tender, and
+        # in-progress migration language first.
         crm_queries = (
-            # Exact "ricerca nuovo CRM" is a Serper zero-hit; prefer adoption verbs.
-            f'azienda Italia ("adotta" OR "sceglie" OR "implementa") CRM -Salesforce -HubSpot {crm_guide_exclude}',
-            f'"sceglie" CRM OR "adotta" CRM (Group OR Spa OR Srl OR azienda) Italia -Salesforce -HubSpot {crm_guide_exclude}',
-            'site:.it ("comunicato stampa" OR newsroom) CRM (adotta OR sceglie OR implementa OR migrazione)',
-            f'"migrazione CRM" OR "implementazione CRM" (annuncia OR sceglie OR adotta) Italia azienda {crm_guide_exclude}',
-            f'"nuovo CRM" (sceglie OR adotta OR implementa) Italia (spa OR srl OR group) -Salesforce -HubSpot {crm_guide_exclude}',
-            '"gara CRM" OR "bando" CRM OR "RFP CRM" Italia azienda -Salesforce -HubSpot',
+            '"gara CRM" OR "bando CRM" OR "RFP CRM" OR "appalto CRM" Italia azienda -Salesforce -HubSpot',
+            f'Italia (CRM) ("selezione" OR "valutazione" OR "in cerca di" OR "alla ricerca di" OR "stiamo scegliendo") (azienda OR spa OR srl) {crm_guide_exclude}',
+            f'"migrazione CRM" OR "sostituzione CRM" OR "cambio CRM" (progetto OR "in corso" OR avvia OR kick-off OR kickoff) Italia {crm_guide_exclude}',
+            f'"implementazione CRM" OR "progetto CRM" (avvio OR avvia OR "in corso" OR annuncia) Italia azienda {crm_guide_exclude}',
+            '("CRM Manager" OR "CRM Specialist" OR "CRM Owner" OR "implementazione CRM") (assume OR cercasi OR "posizione aperta" OR vacancy) Italia',
+            'site:.it ("comunicato stampa" OR newsroom) CRM (migrazione OR selezione OR gara OR "nuovo CRM" OR "in corso")',
         )
         for idx, query in enumerate(crm_queries):
             strategies.insert(

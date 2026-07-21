@@ -63,6 +63,7 @@ def test_crm_shell_followup_uses_crm_recovery_not_funding() -> None:
     assert state.followup_queries
     assert "Valsir" in state.followup_queries[0]
     assert "CRM" in state.followup_queries[0]
+    assert "selezione" in state.followup_queries[0].casefold() or "migrazione" in state.followup_queries[0].casefold()
     assert "chiude un round" not in state.followup_queries[0].casefold()
 
 

@@ -796,8 +796,8 @@ def _shell_recovery_query(company: str, *, failed_host: str, request: Any = None
     ):
         social_exclude = " -site:linkedin.com -site:facebook.com -site:instagram.com"
         return (
-            f'"{company}" (CRM OR "customer relationship") '
-            f"(sceglie OR adotta OR implementa OR migrazione){exclude}{social_exclude}"
+            f'"{company}" CRM ("selezione" OR "valutazione" OR "migrazione" OR '
+            f'"in cerca" OR gara OR RFP OR "progetto CRM"){exclude}{social_exclude}'
         )
     return f'"{company}" (chiude un round OR ha raccolto OR funding round OR seed round){exclude}'
 
