@@ -270,7 +270,7 @@ def main() -> int:
         "location": "Nord Italia",
         "status": "pending",
         "results": [],
-        "zone": str(REQUESTED),
+        "zone": str(ZONE_LEADS),
         "intent": intent,
         "progress": progress,
         "created_at": now,
