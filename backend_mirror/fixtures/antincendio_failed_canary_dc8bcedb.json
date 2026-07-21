@@ -1,0 +1,34 @@
+{
+  "search_id": "dc8bcedb-07e2-45f7-83f0-1c9ccf77d553",
+  "canary_id": "2f966578-1f2f-4f36-b269-4c8581bb3294",
+  "requested_count": 3,
+  "lifecycle_published": 0,
+  "actual_ledger_cost_eur": 0.084978,
+  "termination": "quarantined_canary_failed",
+  "rejection_histogram": {
+    "EVENT_GROUNDING_FAILED": 5
+  },
+  "internal_candidates": [
+    {
+      "company_name": "ECOSYSTEM SpA",
+      "official_domain": "ecosystem.ai",
+      "source_url": "https://assoambiente.org/entry_p/News/news/16707/P250",
+      "evidence_excerpt": "Assoambiente | News | Inaugurato il nuovo impianto ECOSYSTEM SpA | Pomezia, 20 giugno. Associazione Imprese Servizi Ambientali ed",
+      "reported_location": "Lombardia",
+      "actual_source_location": "Pomezia",
+      "expected_verdict": "SHOULD_REJECT",
+      "expected_rejection": "GEOGRAPHY_MISMATCH"
+    },
+    {
+      "company_name": "Alpacom Workshop Tour IMOLA",
+      "official_domain": "alpacom.it",
+      "source_url": "https://www.alpacom.it/cms14/alpacom-workshop-tour-imola-2/",
+      "evidence_excerpt": "post Next post Ultime notizie: Alpacom apre il suo nuovo stabilimento! 20 Luglio 2026 Alpacom: il futuro dell'isolamento! 15 Luglio 2026 Alpacom cont",
+      "reported_location": "Lombardia",
+      "actual_source_location": "Imola",
+      "expected_verdict": "SHOULD_REJECT",
+      "expected_rejection": "EVENT_GROUNDING_FAILED",
+      "reason": "The expansion phrase came from a related/latest-news navigation block, not the article event."
+    }
+  ]
+}

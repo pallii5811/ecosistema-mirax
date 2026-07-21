@@ -94,7 +94,7 @@ _ITALY_LOCALITY_TO_REGION: Dict[str, str] = {
     )},
     **{name: "Emilia-Romagna" for name in (
         "emilia romagna", "bologna", "ferrara", "forli", "cesena", "modena", "parma",
-        "piacenza", "ravenna", "reggio emilia", "rimini",
+        "piacenza", "ravenna", "reggio emilia", "rimini", "imola",
     )},
     **{name: "Toscana" for name in (
         "toscana", "arezzo", "firenze", "florence", "grosseto", "livorno", "lucca",
@@ -167,6 +167,29 @@ def _host(value: Any) -> str:
     text = _text(value) or ""
     parsed = urlparse(text if "://" in text else f"https://{text}")
     return (parsed.hostname or "").lower().removeprefix("www.")
+
+
+def _primary_page_text(html: str) -> str:
+    """Return candidate-bearing page content without navigation/related-item noise."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    for node in soup.select("script,style,noscript,nav,header,footer,aside"):
+        node.decompose()
+    noisy = re.compile(
+        r"(?:^|[-_\s])(related|recommended|latest|recent|sidebar|widget|navigation|menu|breadcrumb|footer|header)(?:$|[-_\s])",
+        re.I,
+    )
+    for node in list(soup.find_all(True)):
+        marker = " ".join(
+            [str(node.get("id") or ""), *[str(item) for item in (node.get("class") or ())]]
+        )
+        if marker and noisy.search(marker):
+            node.decompose()
+    for selector in ("article", "main", "[role='main']"):
+        node = soup.select_one(selector)
+        text = _text(node.get_text(" ", strip=True) if node else None) or ""
+        if len(text) >= 120:
+            return text
+    return _text(soup.get_text(" ", strip=True)) or ""
 
 
 def _normalized_geography_text(value: Any) -> str:
@@ -1343,7 +1366,9 @@ def _append_semantic_deferred_news_record(
     if not excerpt:
         return False
     publisher = str(item.get("publisher") or title or page_host) if isinstance(item, Mapping) else (title or page_host)
-    source_geography = _explicit_requested_geography(request, title, snippet, visible_text)
+    # News pages contain unrelated navigation and recommended-article locations.
+    # Bind geography to the candidate-bearing title/snippet/excerpt only.
+    source_geography = _explicit_requested_geography(request, title, snippet, excerpt)
     row: Dict[str, Any] = {
         "company_name": company_hint,
         "official_domain": _candidate_official_domain(
@@ -1688,10 +1713,11 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                 state.pages_fetched += 1
                 state.processed_terminal_urls = (*state.processed_terminal_urls, url)
                 visible_text = _text(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)) or ""
+                semantic_text = _primary_page_text(html or "") or visible_text
                 fetch_provenance = {
                     "scope": scope,
                     "final_url": final_url,
-                    "source_text": visible_text,
+                    "source_text": semantic_text,
                 }
                 if universal:
                     page_host = _host(final_url)
@@ -1708,7 +1734,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             html=html,
                         )
                         missing_company = bool(identity_hint) and not company_hint_present_in_source(
-                            identity_hint, visible_text
+                            identity_hint, semantic_text
                         )
                         if identity_hint and (missing_company or shell_host or challenge_page):
                             filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
@@ -1772,7 +1798,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                     continue
                                 domain = str(identity.get("domain") or "")
                                 excerpt = title.strip() if title.strip() and title.strip() in visible_text else visible_text[:1200]
-                                source_geography = _explicit_requested_geography(request, title, snippet, visible_text)
+                                source_geography = _explicit_requested_geography(request, title, snippet, excerpt)
                                 row = {
                                     "company_name": company,
                                     "official_domain": domain,
@@ -1831,7 +1857,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                     page_published = _structured_page_date(html)
                     page_records_before = len(records)
                     events = extract_evidence_from_text(
-                        text=visible_text,
+                        text=semantic_text,
                         source_url=final_url,
                         source_class="recognized_news",
                         publisher=title or _host(final_url),
@@ -1887,7 +1913,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                         if not matched_ids:
                             continue
                         source_geography = _explicit_requested_geography(
-                            request, title, snippet, visible_text, event.evidence_excerpt
+                            request, title, snippet, event.evidence_excerpt
                         )
                         row = {
                             "company_name": event.company_name,
@@ -1902,7 +1928,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             "source_class": event.source_class,
                             "evidence_excerpt": event.evidence_excerpt,
                             "extraction_method": "universal_evidence",
-                            "source_text": visible_text[:250_000],
+                            "source_text": semantic_text[:250_000],
                             "why_now": event.evidence_excerpt[:260],
                             "buyer_fit": 0.75,
                             "query_origin": request.technical_filters.get("query_origin") or request.query,
@@ -1922,7 +1948,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 url=str(fetch_provenance["final_url"]),
                                 wave_index=state.pages_fetched,
                             ),
-                            source_text=visible_text,
+                            source_text=semantic_text,
                             cursor_version=request.cursor.value if request.cursor else "generic-web:v2",
                         )
                         row = _apply_free_identity(row, request)
@@ -1939,7 +1965,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             records=records,
                             request=request,
                             company_hint=company_hint,
-                            visible_text=visible_text,
+                            visible_text=semantic_text,
                             title=title,
                             snippet=snippet,
                             html=html,

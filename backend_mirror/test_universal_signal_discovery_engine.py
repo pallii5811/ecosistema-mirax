@@ -271,6 +271,33 @@ def test_engine_does_not_force_digital_audit_for_non_seo_query():
     assert result.qualified_count >= 1
 
 
+def test_small_target_caps_zero_yield_strategy_batches_before_hard_budget_is_burned():
+    empty = _StubAdapter("official_growth_signals_v1", ("production_expansion",), [[]])
+    registry = SourceCapabilityRegistry([empty])
+    engine = UniversalSignalDiscoveryEngine(
+        registry,
+        orchestrator=UniversalSourceOrchestrator(registry, max_rounds=2, max_seconds=20),
+        max_strategy_batches=12,
+    )
+    plan = {
+        **canary_plan_from_seed(
+            {
+                "id": "expansion-cost-guard",
+                "query": "PMI del Nord Italia con nuovi stabilimenti",
+                "required_signals": ["production_expansion"],
+                "geographies": ["Nord Italia"],
+                "industries": ["manifattura"],
+            },
+            requested_count=3,
+        ),
+    }
+    plan["budget_policy"]["maximum_search_calls"] = 40
+    request = request_from_plan(plan, requested_count=3, budget_eur=0.125)
+    result = asyncio.run(engine.run(request, plan=plan))
+    assert empty.calls <= 6
+    assert "strategy_batch_cost_guard_reached:6" in result.notes
+
+
 def test_legacy_cursor_with_followups_binds_to_unrelated_strategy_query() -> None:
     """Queued recoveries must not be stranded when resume rotates to a virgin strategy."""
     from backend_mirror.source_adapters.contracts import DiscoveryCursor

@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 import json
 from pathlib import Path
 
 from backend_mirror.source_adapters import AdapterDiscoveryRequest
 from backend_mirror.source_adapters.generic_web import (
+    _append_semantic_deferred_news_record,
     _enrich_record_from_page,
     _explicit_requested_geography,
     _parse_employee_count,
+    _primary_page_text,
     _public_contacts_from_html,
     _size_class_from_employees,
     _valid_record,
 )
+from backend_mirror.source_adapters.generic_web_budget import GenericWebDiscoveryState
 
 
 def test_missing_published_date_is_never_replaced_with_today() -> None:
@@ -94,6 +98,72 @@ def test_geography_mapping_is_generic_across_italian_macro_areas() -> None:
     assert result["geography_match"] is True
     assert result["geography"] == "Calabria"
     assert result["geography_match_evidence"] == "calabrese"
+
+
+def test_event_geography_does_not_consume_unrelated_page_navigation() -> None:
+    request = _northern_expansion_request()
+    event_text = "ECOSYSTEM inaugura il nuovo impianto a Pomezia."
+    unrelated_navigation = "Altre notizie: nuove imprese in Lombardia e Veneto."
+
+    assert _explicit_requested_geography(request, event_text)["geography_match"] is False
+    # This assertion documents why news callers must pass only the event-bound
+    # title/snippet/excerpt and never the whole page navigation blob.
+    assert _explicit_requested_geography(request, event_text, unrelated_navigation)["geography_match"] is True
+
+    imola = _explicit_requested_geography(
+        request,
+        "Alpacom apre il suo nuovo stabilimento a Imola.",
+    )
+    assert imola["geography_match"] is True
+    assert imola["geography"] == "Emilia-Romagna"
+
+
+def test_deferred_news_record_binds_geography_to_event_excerpt() -> None:
+    request = replace(
+        _northern_expansion_request(),
+        technical_filters={"semantic_authority_required": True},
+    )
+    title = "ECOSYSTEM inaugura il nuovo impianto a Pomezia"
+    visible = f"{title}. " + ("Dettagli della nuova linea produttiva. " * 5) + "Altre notizie dalla Lombardia."
+    rows: list[dict] = []
+    appended = _append_semantic_deferred_news_record(
+        records=rows,
+        request=request,
+        company_hint="ECOSYSTEM SpA",
+        visible_text=visible,
+        title=title,
+        snippet=title,
+        html=f"<html><body>{visible}</body></html>",
+        final_url="https://assoambiente.example/news/ecosystem",
+        page_host="assoambiente.example",
+        fetch_provenance={"final_url": "https://assoambiente.example/news/ecosystem"},
+        scope="fixture",
+        state=GenericWebDiscoveryState(),
+        provider_query="fixture query",
+        search_provider="fixture",
+        item={"publisher": "Assoambiente"},
+    )
+    assert appended is True
+    assert rows[0]["geography_match"] is False
+    assert rows[0]["geography"] == ""
+
+
+def test_primary_page_text_excludes_related_and_navigation_signals() -> None:
+    html = """
+    <html><body>
+      <header>Imprese in Lombardia</header>
+      <article><h1>Alpacom Workshop Tour Imola</h1>
+        <p>Una giornata formativa dedicata ai professionisti del settore.</p>
+        <p>Il programma include dimostrazioni tecniche e incontri con gli esperti.</p>
+      </article>
+      <aside class="latest-news">Alpacom apre il suo nuovo stabilimento!</aside>
+      <nav>Nuovo stabilimento in Veneto</nav>
+    </body></html>
+    """
+    text = _primary_page_text(html)
+    assert "Workshop Tour Imola" in text
+    assert "nuovo stabilimento" not in text.casefold()
+    assert "Lombardia" not in text
 
 
 def test_specific_geography_missing_is_rejected_before_semantic_cost() -> None:

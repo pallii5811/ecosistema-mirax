@@ -384,11 +384,25 @@ class UniversalSignalDiscoveryEngine:
         remaining = max(1, spec.requested_count)
         hard_budget = float(request.budget_eur)
         batches_run = 0
+        budget_policy = plan_map.get("budget_policy") if isinstance(plan_map.get("budget_policy"), Mapping) else {}
+        try:
+            configured_search_calls = max(1, int(budget_policy.get("maximum_search_calls") or 40))
+        except (TypeError, ValueError):
+            configured_search_calls = 40
+        # Each strategy batch may execute a paid discovery query. For small
+        # requested counts, spending the entire hard cap on low-yield SERPs
+        # leaves no room for evidence/identity validation. Scale the discovery
+        # frontier with the requested qualified count while honoring the plan.
+        effective_strategy_batches = min(
+            self.max_strategy_batches,
+            configured_search_calls,
+            max(3, int(spec.requested_count) * 2),
+        )
         accumulated_rejections: Dict[str, int] = {}
         accumulated_raw = 0
         strategy_validation_failures = 0
 
-        while batches_run < self.max_strategy_batches:
+        while batches_run < effective_strategy_batches:
             if remaining <= 0:
                 break
             if spent + 1e-9 >= hard_budget:
@@ -580,6 +594,9 @@ class UniversalSignalDiscoveryEngine:
                 # next SERP/strategy can fill requested_count (antincendio canary
                 # previously stopped at 1/3 after the first drained URL wave).
                 continue
+
+        if batches_run >= effective_strategy_batches and remaining > 0:
+            notes.append(f"strategy_batch_cost_guard_reached:{effective_strategy_batches}")
 
         if last_result is None and strategy_validation_failures:
             now = datetime.now(timezone.utc).isoformat()

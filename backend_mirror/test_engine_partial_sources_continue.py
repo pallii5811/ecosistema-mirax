@@ -198,6 +198,9 @@ def test_engine_continues_after_partial_sources_with_progress(monkeypatch) -> No
             priority=1,
             fallback_level=0,
             adapter_affinity=("generic_web_research_v1",),
+            hypothesis_id="canonical-signal:production_expansion",
+            event_type="production_expansion",
+            semantic_justification="production expansion supports industrial safety need",
         ),
         DiscoveryStrategy(
             strategy_id="production_expansion:wave_b",
@@ -212,6 +215,9 @@ def test_engine_continues_after_partial_sources_with_progress(monkeypatch) -> No
             priority=2,
             fallback_level=0,
             adapter_affinity=("generic_web_research_v1",),
+            hypothesis_id="canonical-signal:production_expansion",
+            event_type="production_expansion",
+            semantic_justification="production expansion supports industrial safety need",
         ),
     )
     monkeypatch.setattr(engine, "compile_spec", lambda *a, **k: _fixture_spec())
