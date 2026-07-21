@@ -260,7 +260,9 @@ def build_plan(spec_id: str, hard: float = 0.05) -> tuple[dict, dict]:
         "geography": spec["target"]["geographies"],
         "industry": spec["target"]["industries"],
         "size_constraints": {},
-        "temporal_constraints": {"maximum_age_days": 180},
+        # Q2 CRM seeking evidence often appears in older trade press / case-study
+        # pages even when the CRM project is still active. Relax only for q2.
+        "temporal_constraints": {"maximum_age_days": 365 if spec_id == "q2" else 180},
         "positive_conditions": spec["positive"],
         "negative_conditions": spec["negative"],
         "must_have_facts": ["official_domain", "source_url", "literal_excerpt", "event_date"],
