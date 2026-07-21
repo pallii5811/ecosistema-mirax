@@ -29,7 +29,7 @@ QUERY = (
 )
 REQUESTED = 3
 HARD_CAP = 0.05  # product hard cap on staging; certification records actual spend
-SIGNALS = ["geographic_expansion", "facility_upgrade", "regulatory_compliance"]
+SIGNALS = ["production_expansion", "geographic_expansion", "new_location"]
 
 
 def build_schema_valid_plan(spec: dict, hypotheses: list[dict]) -> dict:
@@ -52,11 +52,12 @@ def build_schema_valid_plan(spec: dict, hypotheses: list[dict]) -> dict:
         "preferred_buyer_roles": ["titolare", "responsabile operations", "RSPP"],
     }
     plan["target"] = {
+        **plan["target"],
         "entity_types": ["company"],
         "industries": ["manifatturiero", "logistica", "produzione industriale"],
         "company_sizes": ["micro", "small", "medium"],
-        "employee_range": {"min": 2, "max": 249},
-        "revenue_range": {"max": 50000000, "currency": "EUR"},
+        "employee_range": None,
+        "revenue_range": None,
         "geographies": ["Nord Italia", "Lombardia", "Veneto", "Piemonte", "Emilia-Romagna"],
         "local_business_preference": True,
         "required_attributes": ["PMI operativa", "stabilimento o sede produttiva"],
@@ -97,15 +98,15 @@ def build_schema_valid_plan(spec: dict, hypotheses: list[dict]) -> dict:
     }
     plan["source_policy"] = {
         "preferred_source_classes": [
-            "official_company_website", "recognized_local_news", "public_registry",
+            "official_company_website", "recognized_local_news", "municipal_register",
         ],
         "allowed_source_classes": [
             "official_company_website", "recognized_local_news", "industry_publication",
-            "public_registry", "public_procurement_portal",
+            "municipal_register", "public_procurement_portal",
         ],
         "excluded_source_classes": ["search_snippet", "generic_blog", "directory"],
         "minimum_independent_sources": 1,
-        "primary_source_required_for": SIGNALS[:1],
+        "primary_source_required_for": [],
     }
     plan["budget_policy"] = {
         "target_cost_eur": round(HARD_CAP * 0.8, 4),
@@ -114,25 +115,63 @@ def build_schema_valid_plan(spec: dict, hypotheses: list[dict]) -> dict:
         "maximum_pages_opened": 120,
         "maximum_llm_evaluations": 20,
     }
+    plan["ranking_policy"] = {
+        "weight_buyer_fit": 0.25,
+        "weight_signal_strength": 0.25,
+        "weight_freshness": 0.15,
+        "weight_evidence_confidence": 0.2,
+        "weight_contactability": 0.1,
+        "weight_need_gap": 0.05,
+    }
+    plan["ambiguity"] = {"score": 0.1, "assumptions": [], "unresolved_fields": []}
     plan["planner_metadata"] = {
         "planner": "llm",
         "prompt_version": "commercial-intent-v1.4.2",
         "model": "commercial-intent-compiler+planner",
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
-    sqc = plan.get("semantic_query_contract") or {}
-    sqc.update({
+    plan["semantic_query_contract"] = {
         "original_query": QUERY,
         "query_goal": spec.get("buyer_need") or QUERY,
+        "seller": {"description": "sistemi antincendio industriali"},
+        "offer": {"description": "sistemi antincendio industriali"},
+        "target_entity_types": ["operating_company"],
+        "target_company_description": "PMI industriali del Nord Italia con stabilimenti o ampliamenti",
+        "event_or_state_description": mapped[0]["buyer_problem"],
         "target_role_in_event": "expanding_company",
         "required_relationships": ["company_opening_or_expanding_facility"],
+        "optional_relationships": [],
+        "excluded_roles": ["publisher", "advisor", "recruiter"],
+        "excluded_entities": [],
         "geography": ["Nord Italia", "Italia"],
         "industry": ["manifatturiero", "produzione industriale"],
-        "canonical_signal_hints": SIGNALS,
-        "confidence": float(spec.get("confidence") or 0.85),
+        "size_constraints": {},
+        "temporal_constraints": {"maximum_age_days": 180},
+        "positive_conditions": [
+            "nuovo stabilimento o ampliamento produttivo documentato",
+            "contatto pubblico disponibile",
+        ],
+        "negative_conditions": ["multinazionale", "brand famoso", "publisher as target"],
+        "must_have_facts": ["official_domain", "source_url", "literal_excerpt", "event_date"],
+        "forbidden_inferences": ["generic growth implies need", "vendor page as buyer evidence"],
+        "data_requirements": ["official_domain", "source_url", "event_date", "excerpt"],
+        "ranking_objective": "freshest grounded expansion evidence",
+        "acceptance_rubric": ["expanding_company_grounded", "company_opening_or_expanding_facility_grounded"],
+        "discovery_hypotheses": [
+            {
+                "id": h["id"],
+                "query": QUERY,
+                "source_classes": list(plan["source_policy"]["preferred_source_classes"]),
+                "signals": list(h.get("signals") or SIGNALS),
+                "buyer_problem": h.get("buyer_problem"),
+                "implied_need": h.get("implied_need"),
+            }
+            for h in mapped
+        ],
         "clarification_required": False,
-    })
-    plan["semantic_query_contract"] = sqc
+        "confidence": float(spec.get("confidence") or 0.85),
+        "canonical_signal_hints": SIGNALS,
+    }
     return validate_commercial_search_plan(plan).model_dump(mode="json")
 
 
