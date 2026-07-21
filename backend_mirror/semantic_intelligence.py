@@ -997,6 +997,13 @@ def apply_hiring_relationship_proxy(
     ), None
 
 
+def find_expansion_facility_evidence(text: str) -> Tuple[Optional[str], int, int]:
+    match = _EXPANSION_FACILITY_RE.search(text or "")
+    if not match:
+        return None, -1, -1
+    return match.group(0), match.start(), match.end()
+
+
 def apply_expansion_facility_proxy(
     contract: SemanticQueryContract,
     interpretation: SemanticEventInterpretation,

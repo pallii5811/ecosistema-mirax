@@ -529,6 +529,9 @@ async def semantic_authority_qualifier(
             SemanticTelemetry,
             apply_hiring_relationship_proxy,
             apply_expansion_facility_proxy,
+            find_expansion_facility_evidence,
+            EXPANSION_FACILITY_RELATIONSHIP,
+            SemanticEventInterpretation,
         )
 
         contract = SemanticQueryContract.from_model(
@@ -600,6 +603,9 @@ async def semantic_authority_qualifier(
                             evidence_offset = -1
                     except Exception:
                         evidence_offset = -1
+                elif EXPANSION_FACILITY_RELATIONSHIP in set(contract.required_relationships):
+                    _exp_excerpt, exp_start, _exp_end = find_expansion_facility_evidence(source_text)
+                    evidence_offset = exp_start if exp_start >= 0 else -1
                 else:
                     evidence_offset = source_text.find(evidence.excerpt)
                 snippet = str(provenance.get("search_snippet") or "")
@@ -616,20 +622,77 @@ async def semantic_authority_qualifier(
                         part for part in (evidence.excerpt, snippet, str(provenance.get("page_title") or "")) if part
                     ).strip()
                     source_text = padded if len(padded) >= 120 else source_text[:semantic_window]
-            interpretation = await interpreter.interpret(
-                contract,
-                title=str(provenance.get("page_title") or ""),
-                snippet=str(provenance.get("search_snippet") or evidence.excerpt),
-                source_text=source_text,
-                source_url=evidence.source_url,
-                publisher=evidence.source_publisher,
-                structured_metadata=(
-                    provenance.get("structured_metadata")
-                    if isinstance(provenance.get("structured_metadata"), Mapping)
-                    else {}
-                ),
-                entity_hints=(candidate.canonical_company_name, candidate.official_domain or ""),
-            )
+            interpretation = None
+            # Seller-driven facility expansion: when the page literally proves
+            # nuovo stabilimento / ampliamento produttivo, skip the paid LLM
+            # and ground deterministically (antincendio canary budget).
+            if EXPANSION_FACILITY_RELATIONSHIP in set(contract.required_relationships):
+                exp_excerpt, exp_start, exp_end = find_expansion_facility_evidence(source_text)
+                if exp_excerpt and exp_start >= 0:
+                    company = str(candidate.canonical_company_name or "").strip()
+                    interpretation = SemanticEventInterpretation.from_model(
+                        {
+                            "entities": [{"name": company, "role": "expanding_company"}] if company else [],
+                            "events": [{"type": "production_expansion", "date": evidence.published_at}],
+                            "relations": [],
+                            "target_company": company,
+                            "target_entity_role": "expanding_company",
+                            "event_type": "production_expansion",
+                            "open_predicate": "facility_expansion",
+                            "actor": company or None,
+                            "recipient": None,
+                            "provider": None,
+                            "beneficiary": None,
+                            "investor": None,
+                            "employer": None,
+                            "recruiter": None,
+                            "publisher": evidence.source_publisher,
+                            "authority": None,
+                            "predicate": "opens_or_expands_facility",
+                            "direction": "company->facility",
+                            "event_status": "observed",
+                            "event_date": evidence.published_at,
+                            "amount": None,
+                            "location": next(iter(candidate.geographies), None),
+                            "technology": None,
+                            "role": None,
+                            "negated": False,
+                            "hypothetical": False,
+                            "conditional": False,
+                            "rumor": False,
+                            "historical": False,
+                            "certainty": 0.9,
+                            "query_match": True,
+                            "query_match_reason": "deterministic expansion observables before LLM",
+                            "satisfied_relationships": [EXPANSION_FACILITY_RELATIONSHIP],
+                            "acceptance_rubric_passed": list(contract.acceptance_rubric),
+                            "buyer_need": "facility expansion creating industrial compliance demand",
+                            "why_now": exp_excerpt,
+                            "evidence_excerpt": exp_excerpt,
+                            "evidence_start": exp_start,
+                            "evidence_end": exp_end,
+                            "confidence": 0.9,
+                            "rejection_reason": "",
+                        }
+                    )
+                    interpretation = apply_expansion_facility_proxy(
+                        contract, interpretation, source_text=source_text,
+                    )
+            if interpretation is None:
+                interpretation = await interpreter.interpret(
+                    contract,
+                    title=str(provenance.get("page_title") or ""),
+                    snippet=str(provenance.get("search_snippet") or evidence.excerpt),
+                    source_text=source_text,
+                    source_url=evidence.source_url,
+                    publisher=evidence.source_publisher,
+                    structured_metadata=(
+                        provenance.get("structured_metadata")
+                        if isinstance(provenance.get("structured_metadata"), Mapping)
+                        else {}
+                    ),
+                    entity_hints=(candidate.canonical_company_name, candidate.official_domain or ""),
+                )
             structured_metadata = (
                 provenance.get("structured_metadata")
                 if isinstance(provenance.get("structured_metadata"), Mapping)
