@@ -390,13 +390,19 @@ def _serp_fetch_priority(hit: Any) -> Tuple[int, int, int, str]:
         headline,
         re.I,
     ) else 0
+    job_board_penalty = 1 if re.search(
+        r"(linkedin\.com|jobsora\.|jooble\.|careerjet\.|indeed\.|infojobs\.|pagepersonnel\.|experis\.|intervieweb\.)",
+        url,
+        re.I,
+    ) else 0
     event_boost = 0 if re.search(
         r"\b(chiude un round|ha raccolto|seed round|pre-seed|raccoglie|funding round|"
-        r"sceglie|adotta|implementa|migrazione\s+crm|nuovo\s+crm|adotta-veeva|sceglie-.*crm)\b",
+        r"sceglie|adotta|implementa|migrazione\s+crm|nuovo\s+crm|adotta-veeva|sceglie-.*crm|"
+        r"bando\s+di\s+gara|consip|accordo\s+quadro|gara\s+public\s+cloud)\b",
         headline,
         re.I,
     ) else 1
-    return (tier, guide_penalty, event_boost, url.casefold())
+    return (tier, guide_penalty + job_board_penalty, event_boost, url.casefold())
 
 
 def _hits_from_urls(urls: Sequence[str], *, query: str) -> List[Dict[str, str]]:

@@ -332,19 +332,20 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
         # first €0.05/time-boxed wave never reaches buyer-relevant queries.
         crm_vendor_exclude = _DEFAULT_EXCLUDED + (
             "salesforce.com", "hubspot.com", "microsoft.com", "zoho.com", "pipedrive.com",
+            # Job-board noise dominates naive "selezione CRM" SERPs and burns the €0.05 envelope.
+            "linkedin.com", "jobsora.com", "jooble.org", "careerjet.it", "pagepersonnel.it",
+            "experis.it", "intervieweb.it", "recruit.net", "indeed.com", "infojobs.it",
         )
         crm_guide_exclude = '-guida -tutorial -"come scegliere" -"come si sceglie" -"miglior CRM" -"caso di successo"'
-        # Q2 asks for companies SEEKING a CRM. Completed "X sceglie Vendor" case
-        # studies are competitor wins / historical adoptions and fail semantic
-        # relationships (seeking/migrating/RFP). Prefer selection, tender, and
-        # in-progress migration language first.
+        # Prefer tenders / in-progress projects. Completed "X sceglie Vendor" case studies
+        # fail seeking_crm relationships and match the negative "old completed case study".
         crm_queries = (
-            '"gara CRM" OR "bando CRM" OR "RFP CRM" OR "appalto CRM" Italia azienda -Salesforce -HubSpot',
-            f'Italia (CRM) ("selezione" OR "valutazione" OR "in cerca di" OR "alla ricerca di" OR "stiamo scegliendo") (azienda OR spa OR srl) {crm_guide_exclude}',
-            f'"migrazione CRM" OR "sostituzione CRM" OR "cambio CRM" (progetto OR "in corso" OR avvia OR kick-off OR kickoff) Italia {crm_guide_exclude}',
-            f'"implementazione CRM" OR "progetto CRM" (avvio OR avvia OR "in corso" OR annuncia) Italia azienda {crm_guide_exclude}',
-            '("CRM Manager" OR "CRM Specialist" OR "CRM Owner" OR "implementazione CRM") (assume OR cercasi OR "posizione aperta" OR vacancy) Italia',
-            'site:.it ("comunicato stampa" OR newsroom) CRM (migrazione OR selezione OR gara OR "nuovo CRM" OR "in corso")',
+            'Consip OR "bando di gara" OR "accordo quadro" ("Public Cloud SaaS" CRM OR "gara" CRM) Italia',
+            '"Gara Public Cloud SaaS - CRM" OR "bando" CRM (Consip OR PA OR "pubblica amministrazione")',
+            f'"migrazione CRM" OR "sostituzione CRM" OR "progetto CRM" (avvio OR "in corso" OR kickoff OR annuncia) Italia azienda {crm_guide_exclude}',
+            f'site:.it ("comunicato stampa" OR newsroom) ("migrazione CRM" OR "nuovo CRM" OR "progetto CRM" OR "selezione CRM") {crm_guide_exclude}',
+            '("CRM Project Manager" OR "responsabile CRM" OR "CRM Specialist") (assume OR cercasi OR "posizione aperta") (Spa OR Srl OR Group OR azienda) Italia -agenzia',
+            f'Italia CRM ("manifestazione di interesse" OR "richiesta di offerta" OR "determina a contrarre") {crm_guide_exclude}',
         )
         for idx, query in enumerate(crm_queries):
             strategies.insert(
