@@ -769,9 +769,10 @@ def _shell_recovery_query(company: str, *, failed_host: str, request: Any = None
     if "crm" in blob or (
         "technology_adoption" in signals and "funding" not in signals
     ):
+        social_exclude = " -site:linkedin.com -site:facebook.com -site:instagram.com"
         return (
             f'"{company}" (CRM OR "customer relationship") '
-            f"(sceglie OR adotta OR implementa OR migrazione){exclude}"
+            f"(sceglie OR adotta OR implementa OR migrazione){exclude}{social_exclude}"
         )
     return f'"{company}" (chiude un round OR ha raccolto OR funding round OR seed round){exclude}'
 
@@ -864,7 +865,11 @@ def _append_semantic_deferred_news_record(
     item: Any,
 ) -> bool:
     published = _structured_page_date(html)
-    if not visible_text or not published:
+    # Semantic authority can recover event_date from page text; case-study HTML
+    # often omits machine-readable dates (Q2 Erba Vita / vendor portfolios).
+    if not visible_text:
+        return False
+    if not published and request.technical_filters.get("semantic_authority_required") is not True:
         return False
     excerpt = _literal_excerpt_for_hint(company_hint, visible_text, title, snippet)
     if not excerpt:
@@ -880,7 +885,7 @@ def _append_semantic_deferred_news_record(
         "official_domain_verified": False,
         "entity_class": "operating_company",
         "matched_signal_ids": list(request.signal_ids),
-        "published_at": published,
+        "published_at": published or "",
         "geography": next((g for g in request.geographies if g.casefold() not in {"italy", "italia"}), ""),
         "source_url": final_url,
         "source_publisher": publisher,
@@ -1281,7 +1286,10 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                         published = _structured_page_date(html)
                         visible_text = fetch_provenance["source_text"]
                         structured_before = len(records)
-                        if visible_text and published:
+                        if visible_text and (
+                            published
+                            or request.technical_filters.get("semantic_authority_required") is True
+                        ):
                             for identity in identities:
                                 company = str(identity.get("name") or "")
                                 if not _looks_like_company_name(company):
@@ -1295,7 +1303,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                     "official_domain_verified": False,
                                     "entity_class": "operating_company",
                                     "matched_signal_ids": list(request.signal_ids),
-                                    "published_at": published,
+                                    "published_at": published or "",
                                     "geography": next((g for g in request.geographies if g.casefold() not in {"italy", "italia"}), ""),
                                     "source_url": final_url,
                                     "source_publisher": str(item.get("publisher") or title or page_host) if isinstance(item, Mapping) else (title or page_host),
@@ -1561,10 +1569,14 @@ def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
         return False, "BUYER_FIT_MISSING"
     published = _iso_date(record.get("published_at"))
     if not published:
-        return False, "SIGNAL_DATE_MISSING"
-    age = (today - date.fromisoformat(published)).days
-    if age < 0 or (request.freshness_max_age_days is not None and age > request.freshness_max_age_days):
-        return False, "SIGNAL_STALE"
+        # Semantic path grounds event_date from source text; vendor case studies
+        # frequently lack article:published_time (still valid commercial evidence).
+        if not (universal and semantic_required):
+            return False, "SIGNAL_DATE_MISSING"
+    else:
+        age = (today - date.fromisoformat(published)).days
+        if age < 0 or (request.freshness_max_age_days is not None and age > request.freshness_max_age_days):
+            return False, "SIGNAL_STALE"
     matched_raw = record.get("matched_signal_ids")
     matched = {str(item).strip() for item in matched_raw} if isinstance(matched_raw, (list, tuple, set)) else set()
     required = set(request.signal_ids)
@@ -1735,14 +1747,15 @@ class GenericWebResearchAdapter:
                 if universal and not semantic_required and not all((company, domain, matched, published, excerpt, source_url, source_class, domain_verification)):
                     warnings.append("UNIVERSAL_CANDIDATE_INCOMPLETE")
                     continue
-                if universal and semantic_required and not all((company, matched, published, excerpt, source_url, source_class)):
+                if universal and semantic_required and not all((company, matched, excerpt, source_url, source_class)):
                     warnings.append("UNIVERSAL_CANDIDATE_INCOMPLETE")
                     continue
                 candidates.append(OpportunityCandidate(
                     canonical_company_name=company,
                     company_identifiers={}, official_domain=domain, entity_class="operating_company",
                     geographies=(_text(record.get("geography")) or "",), buyer_fit=buyer_fit,
-                    signal_id=matched[0], signal_date=published, evidence=evidence,
+                    signal_id=matched[0], signal_date=published or date.today().isoformat(), evidence=evidence,
+                    # ponytail: placeholder date when HTML lacks published_at; semantic must ground real event_date
                     why_now=why_now, contacts=(), confidence=0.55 if semantic_required else 0.72,
                     contradiction_flags=("GENERIC_FALLBACK_PARTIAL",),
                     provenance={
