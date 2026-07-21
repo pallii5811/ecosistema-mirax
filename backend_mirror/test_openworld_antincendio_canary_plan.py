@@ -18,6 +18,8 @@ def test_canary_plan_preserves_only_hypothesis_bound_expansion_signals(monkeypat
     plan = canary.build_schema_valid_plan(intent, hypotheses)
 
     assert plan["signal_policy"]["required_signals"] == ["production_expansion"]
+    assert canary.execution_required_signals(plan) == ["production_expansion"]
+    assert canary.execution_required_signals(plan) != canary.SIGNALS
     assert plan["signal_policy"]["optional_signals"] == []
     assert plan["semantic_query_contract"]["canonical_signal_hints"] == ["production_expansion"]
     assert plan["commercial_hypotheses"]
@@ -43,3 +45,12 @@ def test_canary_plan_fails_closed_without_expansion_hypothesis(monkeypatch) -> N
         assert "no expansion-bound hypothesis" in str(exc)
     else:  # pragma: no cover - explicit fail-closed assertion
         raise AssertionError("unrelated hypothesis must not be silently replaced")
+
+
+def test_canary_execution_signals_fail_closed_when_plan_has_none() -> None:
+    try:
+        canary.execution_required_signals({"signal_policy": {"required_signals": []}})
+    except ValueError as exc:
+        assert "no canonical required signals" in str(exc)
+    else:  # pragma: no cover - explicit fail-closed assertion
+        raise AssertionError("execution cannot restore broad aliases after validation")

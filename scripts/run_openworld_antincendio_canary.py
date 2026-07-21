@@ -33,6 +33,19 @@ ZONE_LEADS = 10  # product formula headroom; acceptance stops via lead_target=3
 SIGNALS = ["production_expansion", "geographic_expansion", "new_location"]
 
 
+def execution_required_signals(plan: dict) -> list[str]:
+    """Return only the canonical signals retained by the validated plan."""
+    values = [
+        str(item).strip()
+        for item in (plan.get("signal_policy") or {}).get("required_signals") or ()
+        if str(item).strip()
+    ]
+    values = list(dict.fromkeys(values))
+    if not values:
+        raise ValueError("immutable canary plan has no canonical required signals")
+    return values
+
+
 def build_schema_valid_plan(spec: dict, hypotheses: list[dict]) -> dict:
     fixture = json.loads(
         (ROOT / "contracts/fixtures/commercial-search-plan.valid.json").read_text(encoding="utf-8")
@@ -175,7 +188,7 @@ def build_schema_valid_plan(spec: dict, hypotheses: list[dict]) -> dict:
                 "id": h["id"],
                 "query": QUERY,
                 "source_classes": list(plan["source_policy"]["preferred_source_classes"]),
-                "signals": list(h.get("signals") or SIGNALS),
+                "signals": list(h.get("signals") or plan_signals),
                 "buyer_problem": h.get("buyer_problem"),
                 "implied_need": h.get("implied_need"),
                 "evidence_claim_type": "OBSERVED_EVENT",
@@ -206,6 +219,7 @@ def main() -> int:
     hypotheses = [h.to_dict() for h in planner.plan(spec)]
     spec["commercial_hypotheses"] = hypotheses
     plan = build_schema_valid_plan(spec, hypotheses)
+    required_signals = execution_required_signals(plan)
 
     search_id = str(uuid.uuid4())
     canary_id = str(uuid.uuid4())
@@ -222,7 +236,7 @@ def main() -> int:
             "inaugura nuovo stabilimento Lombardia OR Veneto OR Emilia 2025 OR 2026",
             "ampliamento dello stabilimento OR nuova unita produttiva PMI Nord Italia",
         ],
-        "expected_evidence": SIGNALS,
+        "expected_evidence": required_signals,
         "execution_mode": "search",
     }]
     intent = {
@@ -236,7 +250,7 @@ def main() -> int:
         "canonical_plan": plan,
         "uqe_plan": {
             "canonical_plan": plan,
-            "required_signals": SIGNALS,
+            "required_signals": required_signals,
             "source_plan": source_plan,
             "search_strategy": "organic_web_search",
             "original_query": QUERY,
@@ -247,7 +261,7 @@ def main() -> int:
         "commercial_intent_spec": spec,
         "commercial_hypotheses": hypotheses,
         "commercial_intent_required": True,
-        "required_signals": SIGNALS,
+        "required_signals": required_signals,
         "source_plan": source_plan,
         "intent_compiler_telemetry": {
             "compiler_tier": 1,
@@ -343,7 +357,7 @@ def main() -> int:
         "buyer_need": spec.get("buyer_need"),
         "hypotheses_count": len(hypotheses),
         "market_scope": (spec.get("target_company_profile") or {}).get("market_scope_policy"),
-        "required_signals": SIGNALS,
+        "required_signals": required_signals,
     }
     print(json.dumps({"prepared": meta}, ensure_ascii=False, indent=2))
     Path("/tmp/mirax_openworld_canary.json").write_text(json.dumps(meta), encoding="utf-8")
