@@ -1,9 +1,25 @@
 import { createHash } from 'node:crypto'
 
-import { createServiceRoleClient } from '@/utils/supabase/server'
+import { createClient as createJsClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { CommercialSearchPlan } from '@/lib/contracts/commercial-search-plan'
 
 const TTL_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
+ * Capture fetch at module load so unit tests can mock globalThis.fetch for the
+ * Anthropic compiler without turning research_cache I/O into fake "model calls".
+ */
+const nativeFetch: typeof fetch = globalThis.fetch.bind(globalThis)
+
+function cacheClient(): SupabaseClient | null {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!supabaseUrl || !serviceKey) return null
+  return createJsClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: nativeFetch },
+  })
+}
 
 export function semanticQueryCacheKey(input: {
   query: string
@@ -24,7 +40,8 @@ export function semanticQueryCacheKey(input: {
 
 export async function getSemanticQueryCache(cacheKey: string): Promise<CommercialSearchPlan | null> {
   try {
-    const supabase = createServiceRoleClient()
+    const supabase = cacheClient()
+    if (!supabase) return null
     const { data, error } = await supabase
       .from('research_cache')
       .select('payload, expires_at')
@@ -39,7 +56,8 @@ export async function getSemanticQueryCache(cacheKey: string): Promise<Commercia
 
 export async function setSemanticQueryCache(cacheKey: string, plan: CommercialSearchPlan): Promise<void> {
   try {
-    const supabase = createServiceRoleClient()
+    const supabase = cacheClient()
+    if (!supabase) return
     await supabase.from('research_cache').upsert({
       cache_key: cacheKey,
       lead_website: 'semantic-query-contract',

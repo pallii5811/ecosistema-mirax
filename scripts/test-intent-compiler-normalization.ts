@@ -68,14 +68,29 @@ assert.ok(digitalAuditIntent.required_signals.includes('no_gtm'))
 process.env.ANTHROPIC_API_KEY = 'test-only'
 process.env.UQE_ANTHROPIC_MODEL = 'claude-sonnet-5\\r\\n'
 
+/** Count Anthropic model calls only — never research_cache / Supabase I/O. */
 let fetchCalls = 0
-globalThis.fetch = async () => {
-  fetchCalls += 1
+function isAnthropicModelUrl(input: RequestInfo | URL): boolean {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : String(input.url || '')
+  return /api\.anthropic\.com/i.test(url)
+}
+function mockAnthropicPlan(input: unknown): Response {
   return new Response(JSON.stringify({
     usage: { input_tokens: 100, output_tokens: 50 },
-    content: [{ type: 'tool_use', name: 'submit_commercial_search_plan', input: fixture }],
+    content: [{ type: 'tool_use', name: 'submit_commercial_search_plan', input }],
   }), { status: 200, headers: { 'content-type': 'application/json' } })
 }
+function installAnthropicMock(factory: () => unknown): void {
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    if (!isAnthropicModelUrl(input)) {
+      throw new Error(`unexpected non-Anthropic fetch in compiler test: ${String(input)}`)
+    }
+    fetchCalls += 1
+    return mockAnthropicPlan(factory())
+  }
+}
+
+installAnthropicMock(() => fixture)
 
 const settled: Array<{ key: string; actual: number }> = []
 const reservedEstimates: number[] = []
@@ -106,8 +121,7 @@ try {
     {
       searchId: '00000000-0000-0000-0000-000000000001',
       requestedLeadCount: 5,
-      costMeter: meter,
-    },
+      costMeter: meter, bypassSemanticCache: true,    },
   )
   assert.ok(plan, 'canonical plan must survive safe deterministic normalization')
   assert.equal(fetchCalls, 1, 'normalizable payload must not spend a repair call')
@@ -120,61 +134,43 @@ try {
   assert.equal('untrusted_extra' in (plan as unknown as Record<string, unknown>), false)
   assert.equal(settled.length, 1)
 
-  globalThis.fetch = async () => {
-    fetchCalls += 1
-    return new Response(JSON.stringify({
-      usage: { input_tokens: 80, output_tokens: 40 },
-      content: [{
-        type: 'tool_use', name: 'submit_commercial_search_plan', input: {
-          target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
-          signal_policy: { required_signals: [], optional_signals: [], negative_signals: [] },
-          source_policy: { allowed_source_classes: ['company_careers', 'job_board'] },
-          commercial_hypotheses: [],
-        },
-      }],
-    }), { status: 200, headers: { 'content-type': 'application/json' } })
-  }
+  installAnthropicMock(() => ({
+    target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
+    signal_policy: { required_signals: [], optional_signals: [], negative_signals: [] },
+    source_policy: { allowed_source_classes: ['company_careers', 'job_board'] },
+    commercial_hypotheses: [],
+  }))
   const sparse = await compileCommercialSearchPlan(
     'Trova PMI italiane che stanno assumendo un responsabile commerciale B2B, escludi grandi gruppi e brand famosi',
     {
       searchId: '00000000-0000-0000-0000-000000000002',
       requestedLeadCount: 5,
-      costMeter: meter,
-      allowRepair: false,
+      costMeter: meter, bypassSemanticCache: true, allowRepair: false,
     },
   )
   assert.equal(sparse, null, 'sparse payload without buyer problem/triggering event must fail closed')
   assert.equal(fetchCalls, 2, 'sparse payload must not spend a repair call')
 
-  globalThis.fetch = async () => {
-    fetchCalls += 1
-    return new Response(JSON.stringify({
-      usage: { input_tokens: 90, output_tokens: 45 },
-      content: [{
-        type: 'tool_use', name: 'submit_commercial_search_plan', input: {
-          semantic_query_contract: semanticContract,
-          seller: {
-            offer_category: 'insurance_brokerage',
-            offer_description: 'Consulenza e coperture assicurative per PMI',
-            products_or_services: ['polizze aziendali'],
-            problems_solved: ['rischi operativi non coperti'],
-            preferred_buyer_roles: ['titolare', 'CFO'],
-          },
-          target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
-          signal_policy: { required_signals: ['contract_awarded'], optional_signals: [], negative_signals: [] },
-          source_policy: { allowed_source_classes: ['public_procurement_portal', 'official_company_website'] },
-          commercial_hypotheses: [],
-        },
-      }],
-    }), { status: 200, headers: { 'content-type': 'application/json' } })
-  }
+  installAnthropicMock(() => ({
+    semantic_query_contract: semanticContract,
+    seller: {
+      offer_category: 'insurance_brokerage',
+      offer_description: 'Consulenza e coperture assicurative per PMI',
+      products_or_services: ['polizze aziendali'],
+      problems_solved: ['rischi operativi non coperti'],
+      preferred_buyer_roles: ['titolare', 'CFO'],
+    },
+    target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
+    signal_policy: { required_signals: ['contract_awarded'], optional_signals: [], negative_signals: [] },
+    source_policy: { allowed_source_classes: ['public_procurement_portal', 'official_company_website'] },
+    commercial_hypotheses: [],
+  }))
   const insurance = await compileCommercialSearchPlan(
     'Sono un broker assicurativo: trovami PMI italiane con nuovi appalti o flotta in espansione',
     {
       searchId: '00000000-0000-0000-0000-000000000003',
       requestedLeadCount: 5,
-      costMeter: meter,
-      allowRepair: false,
+      costMeter: meter, bypassSemanticCache: true, allowRepair: false,
     },
   )
   assert.ok(insurance, 'ontology must complete planning hypotheses without inventing evidence or companies')
@@ -183,25 +179,19 @@ try {
   assert.ok(insurance.commercial_hypotheses.every((item) => item.relevance_to_offer.length >= 12))
   assert.ok(insurance.commercial_hypotheses.some((item) => item.signals.includes('contract_awarded')))
 
-  globalThis.fetch = async () => {
-    fetchCalls += 1
-    return new Response(JSON.stringify({
-      usage: { input_tokens: 70, output_tokens: 35 },
-      content: [{ type: 'tool_use', name: 'submit_commercial_search_plan', input: {
-        semantic_query_contract: semanticContract,
-        target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
-        signal_policy: { required_signals: [], optional_signals: [], negative_signals: [] },
-        source_policy: { allowed_source_classes: [] },
-        commercial_hypotheses: [],
-      } }],
-    }), { status: 200, headers: { 'content-type': 'application/json' } })
-  }
+  installAnthropicMock(() => ({
+    semantic_query_contract: semanticContract,
+    target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
+    signal_policy: { required_signals: [], optional_signals: [], negative_signals: [] },
+    source_policy: { allowed_source_classes: [] },
+    commercial_hypotheses: [],
+  }))
   const webAgencyDiagnostics: unknown[] = []
   const webAgency = await compileCommercialSearchPlan(
     "Sono un'agenzia web locale: trovami PMI italiane non famose con sito debole",
     {
       searchId: '00000000-0000-0000-0000-000000000004', requestedLeadCount: 5,
-      costMeter: meter, allowRepair: false,
+      costMeter: meter, bypassSemanticCache: true, allowRepair: false,
       onDiagnostic: (diagnostic) => webAgencyDiagnostics.push(diagnostic),
     },
   )
@@ -216,25 +206,19 @@ try {
   assert.ok(webAgency.signal_policy.required_signals.includes('website_weakness'))
   assert.equal(fetchCalls, 4)
 
-  globalThis.fetch = async () => {
-    fetchCalls += 1
-    return new Response(JSON.stringify({
-      usage: { input_tokens: 70, output_tokens: 35 },
-      content: [{ type: 'tool_use', name: 'submit_commercial_search_plan', input: {
-        semantic_query_contract: semanticContract,
-        target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
-        signal_policy: { required_signals: [], optional_signals: [], negative_signals: [] },
-        source_policy: { allowed_source_classes: [] },
-        commercial_hypotheses: [],
-      } }],
-    }), { status: 200, headers: { 'content-type': 'application/json' } })
-  }
+  installAnthropicMock(() => ({
+    semantic_query_contract: semanticContract,
+    target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
+    signal_policy: { required_signals: [], optional_signals: [], negative_signals: [] },
+    source_policy: { allowed_source_classes: [] },
+    commercial_hypotheses: [],
+  }))
   const cyberDiagnostics: unknown[] = []
   const cybersecurity = await compileCommercialSearchPlan(
     'Vendo cybersecurity: trovami PMI italiane digitalizzate con esposizione web, ecommerce, posta o compliance e segnali tecnici verificabili',
     {
       searchId: '00000000-0000-0000-0000-000000000005', requestedLeadCount: 5,
-      costMeter: meter, allowRepair: false,
+      costMeter: meter, bypassSemanticCache: true, allowRepair: false,
       onDiagnostic: (diagnostic) => cyberDiagnostics.push(diagnostic),
     },
   )
@@ -247,24 +231,18 @@ try {
   assert.ok(cybersecurity.commercial_hypotheses.some((item) => item.signals.includes('cybersecurity_exposure')))
   assert.equal(fetchCalls, 5)
 
-  globalThis.fetch = async () => {
-    fetchCalls += 1
-    return new Response(JSON.stringify({
-      usage: { input_tokens: 70, output_tokens: 35 },
-      content: [{ type: 'tool_use', name: 'submit_commercial_search_plan', input: {
-        semantic_query_contract: semanticContract,
-        target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
-        signal_policy: { required_signals: [], optional_signals: [], negative_signals: [] },
-        source_policy: { allowed_source_classes: [] },
-        commercial_hypotheses: [],
-      } }],
-    }), { status: 200, headers: { 'content-type': 'application/json' } })
-  }
+  installAnthropicMock(() => ({
+    semantic_query_contract: semanticContract,
+    target: { company_sizes: ['micro', 'small', 'medium'], local_business_preference: true },
+    signal_policy: { required_signals: [], optional_signals: [], negative_signals: [] },
+    source_policy: { allowed_source_classes: [] },
+    commercial_hypotheses: [],
+  }))
   const erp = await compileCommercialSearchPlan(
     'Vendo ERP e CRM: trovami PMI italiane con nuove sedi, assunzioni o migrazione gestionale verificabile',
     {
       searchId: '00000000-0000-0000-0000-000000000006', requestedLeadCount: 5,
-      costMeter: meter, allowRepair: false,
+      costMeter: meter, bypassSemanticCache: true, allowRepair: false,
     },
   )
   assert.ok(erp, 'explicit composite Vendo offer must survive sparse payload')
@@ -291,19 +269,12 @@ try {
     discovery_hypotheses: [{ source_classes: ['official_careers', 'ats_job_posting'] }],
     canonical_signal_hints: ['hiring_sales'],
   }
-  globalThis.fetch = async () => {
-    fetchCalls += 1
-    return new Response(JSON.stringify({
-      stop_reason: 'tool_use',
-      usage: { input_tokens: 70, output_tokens: 35 },
-      content: [{ type: 'tool_use', name: 'submit_commercial_search_plan', input: semanticOnlyContract }],
-    }), { status: 200, headers: { 'content-type': 'application/json' } })
-  }
+  installAnthropicMock(() => semanticOnlyContract)
   const semanticOnly = await compileCommercialSearchPlan(
     'aziende lombarde che stanno ampliando la squadra commerciale',
     {
       searchId: '00000000-0000-0000-0000-000000000008', requestedLeadCount: 2,
-      costMeter: meter, allowRepair: false,
+      costMeter: meter, bypassSemanticCache: true, allowRepair: false,
     },
   )
   assert.ok(semanticOnly, 'a semantic-contract-only tool response must become an executable canonical plan')
@@ -345,17 +316,11 @@ try {
   digitalFixture.source_policy.preferred_source_classes = ['official_company_website']
   digitalFixture.commercial_hypotheses = []
   digitalFixture.audit_policy.detect_technologies = false
-  globalThis.fetch = async () => {
-    fetchCalls += 1
-    return new Response(JSON.stringify({
-      usage: { input_tokens: 70, output_tokens: 35 },
-      content: [{ type: 'tool_use', name: 'submit_commercial_search_plan', input: digitalFixture }],
-    }), { status: 200, headers: { 'content-type': 'application/json' } })
-  }
+  installAnthropicMock(() => digitalFixture)
   const digitalDiagnostics: unknown[] = []
   const digital = await compileCommercialSearchPlan(exactDigitalQuery, {
     searchId: '00000000-0000-0000-0000-000000000007', requestedLeadCount: 5,
-    costMeter: meter, allowRepair: false,
+    costMeter: meter, bypassSemanticCache: true, allowRepair: false,
     onDiagnostic: (diagnostic) => digitalDiagnostics.push(diagnostic),
   })
   assert.ok(digital, `exact digital audit query must compile: ${JSON.stringify(digitalDiagnostics)}`)

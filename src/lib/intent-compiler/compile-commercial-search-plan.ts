@@ -48,6 +48,8 @@ export type CommercialIntentCompilerOptions = {
   language?: string
   allowRepair?: boolean
   allowTier2?: boolean
+  /** Skip research_cache read/write so model-call assertions stay exact. */
+  bypassSemanticCache?: boolean
   onTelemetry?: (telemetry: QueryCompilerTelemetry) => void
   onDiagnostic?: (event: {
     stage: 'initial' | 'repair'
@@ -681,6 +683,79 @@ function isCausalHypothesis(value: Record<string, unknown>, query: string): bool
       !field.toLowerCase().includes(query.trim().toLowerCase()))
 }
 
+function synthesizeSemanticContractFromPlan(
+  query: string,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const seller = recordValue(payload.seller)
+  const target = recordValue(payload.target)
+  const signalPolicy = recordValue(payload.signal_policy)
+  const signals = canonicalSignals(signalPolicy.required_signals)
+  const definitions = signals
+    .map((signal) => getSignalDefinition(signal))
+    .filter((item): item is NonNullable<ReturnType<typeof getSignalDefinition>> => Boolean(item))
+  const event = definitions[0]?.relatedEvents[0]
+    || definitions[0]?.description
+    || 'The explicit commercial condition holds for the target company'
+  const role = definitions.some((item) => item.family === 'workforce')
+    ? 'employer'
+    : definitions.some((item) => /funding|finance/i.test(item.family))
+      ? 'recipient'
+      : 'subject_company'
+  const relationships = signals.length
+    ? signals.map((signal) => `${signal}_holds_for_target_company`)
+    : ['query_condition_holds_for_target']
+  const entityTypes = uniqueStrings(target.entity_types)
+  return {
+    original_query: query.trim(),
+    query_goal: query.trim().slice(0, 500) || 'Find operating target companies satisfying the explicit commercial condition',
+    seller: {
+      offer_category: seller.offer_category || null,
+      offer_description: seller.offer_description || null,
+    },
+    offer: {
+      description: seller.offer_description || null,
+      sales_motion: seller.sales_motion || null,
+    },
+    target_entity_types: entityTypes.length
+      ? entityTypes.map((item) => (/company/i.test(item) ? 'operating_company' : item))
+      : ['operating_company'],
+    target_company_description: uniqueStrings(target.industries).join(', ')
+      || 'The operating company requested by the user',
+    event_or_state_description: event,
+    target_role_in_event: role,
+    required_relationships: relationships.slice(0, 4),
+    optional_relationships: [],
+    excluded_roles: ['publisher', 'advisor', 'directory'],
+    excluded_entities: uniqueStrings(target.excluded_entities),
+    geography: uniqueStrings(target.geographies).length ? uniqueStrings(target.geographies) : ['Italia'],
+    industry: uniqueStrings(target.industries),
+    size_constraints: recordValue(target.employee_range),
+    temporal_constraints: { maximum_age_days: 365 },
+    positive_conditions: [
+      ...definitions.flatMap((item) => item.applicableProblems).slice(0, 4),
+      ...(signals.length ? [`signal ${signals[0]} is evidenced`] : ['explicit condition is evidenced']),
+    ].slice(0, 6),
+    negative_conditions: uniqueStrings(target.excluded_attributes).concat(['publisher is target']),
+    must_have_facts: ['target identity', 'source evidence', 'official_domain'],
+    forbidden_inferences: ['publisher_is_target_company', 'source_domain_is_event_recipient'],
+    data_requirements: ['official_domain', 'source_url', 'observed_at'],
+    ranking_objective: 'strongest recent grounded evidence first',
+    acceptance_rubric: [
+      'target_identity_verified',
+      'query_condition_grounded',
+      ...relationships.slice(0, 2).map((rel) => `${rel}_grounded`),
+    ],
+    discovery_hypotheses: [{
+      source_classes: uniqueStrings(recordValue(payload.source_policy).allowed_source_classes).slice(0, 3)
+        .concat(['official_company_website']),
+    }],
+    clarification_required: false,
+    confidence: 0.86,
+    canonical_signal_hints: signals,
+  }
+}
+
 function normalizePayload(
   input: unknown,
   query: string,
@@ -706,6 +781,9 @@ function normalizePayload(
     prompt_version: COMMERCIAL_INTENT_PROMPT_VERSION,
     model,
     generated_at: new Date().toISOString(),
+  }
+  if (!payload.semantic_query_contract || typeof payload.semantic_query_contract !== 'object') {
+    payload.semantic_query_contract = synthesizeSemanticContractFromPlan(query, payload)
   }
 
   const stringArray = (value: unknown): string[] => Array.isArray(value)
@@ -1433,7 +1511,7 @@ export async function compileCommercialSearchPlan(
     modelVersion,
     interpreterSchemaVersion: COMMERCIAL_INTENT_PROMPT_VERSION,
   })
-  const cached = await getSemanticQueryCache(cacheKey)
+  const cached = options.bypassSemanticCache ? null : await getSemanticQueryCache(cacheKey)
   if (cached) {
     const parsed = safeParseCommercialSearchPlan(cached)
     if (parsed.success && validateCommercialPlanSemantics(parsed.data).length === 0) {
@@ -1448,101 +1526,144 @@ export async function compileCommercialSearchPlan(
   }
 
   try {
+    // Exact compile sequence:
+    // 1) Tier-1 model call
+    // 2) deterministic normalize (normalizePayload / ontology completion)
+    // 3) single schema+semantic validation
+    // 4) if valid → return immediately (repair/tier2 calls = 0, model calls = 1)
+    // 5) Tier-2 only for real semantic contradictions / low confidence / truncation
     const tier1 = await callCompilerStage({ query, model: tier1Model, apiKey, options, stage: 'tier1' })
     telemetry.query_tier1_calls = 1
     telemetry.query_input_tokens += tier1.inputTokens
     telemetry.query_output_tokens += tier1.outputTokens
     telemetry.query_compilation_cost += tier1.costEur
+
     let semanticInput: unknown = tier1.input
-    let contract = completeSemanticContract(query, semanticInput)
-    let issues = semanticContractIssues(query, contract)
+    let planner: 'llm' | 'repaired_llm' = 'llm'
+    let finalModel = tier1Model
+
+    const tryAccept = (raw: unknown): CommercialSearchPlan | null => {
+      const envelope = semanticPlanEnvelope(query, raw)
+      const parsed = safeParseCommercialSearchPlan(
+        normalizePayload(envelope, query, finalModel, options, planner),
+      )
+      if (!parsed.success) return null
+      if (validateCommercialPlanSemantics(parsed.data).length > 0) return null
+      return parsed.data
+    }
+
+    // Hard provider failures still need Tier-2; normalizable plan/contract noise must not.
+    const hardIssues: PlanValidationIssue[] = []
     if (tier1.status === 'truncated') {
-      issues.unshift({
+      hardIssues.push({
         code: 'SEMANTIC_QUERY_OUTPUT_TRUNCATED', path: 'semantic_query_contract',
         message: 'Tier-1 output was truncated; compact adjudication is required.',
       })
     } else if (tier1.status === 'provider_error') {
-      issues.unshift({
+      hardIssues.push({
         code: 'SEMANTIC_QUERY_TIER1_FAILED', path: 'semantic_query_contract',
         message: 'Tier-1 provider did not return a semantic contract.',
       })
     }
 
-    const needsTier2 = issues.length > 0
-    let planner: 'llm' | 'repaired_llm' = 'llm'
-    let finalModel = tier1Model
-    if (needsTier2) {
-      options.onDiagnostic?.({ stage: 'initial', issues })
-      telemetry.tier2_escalation_reason = [...new Set(issues.map((issue) => issue.code))].join(',')
-      const tier2Allowed = options.allowTier2 ?? options.allowRepair !== false
-      if (!tier2Allowed) {
+    if (hardIssues.length === 0) {
+      const accepted = tryAccept(semanticInput)
+      if (accepted) {
+        const contract = accepted.semantic_query_contract
+          || completeSemanticContract(query, semanticInput)
+        telemetry.contract_hash = contract ? semanticContractHash(contract) : null
+        telemetry.query_compilation_status = 'tier1_accepted'
+        if (!options.bypassSemanticCache) {
+          await setSemanticQueryCache(cacheKey, accepted)
+        }
         emitTelemetry()
-        return null
+        return accepted
       }
-      const tier2 = await callCompilerStage({
-        query, model: tier2Model, apiKey, options, stage: 'tier2',
-        tier1Contract: semanticInput, issues,
-      })
-      telemetry.query_tier2_calls = 1
-      telemetry.query_input_tokens += tier2.inputTokens
-      telemetry.query_output_tokens += tier2.outputTokens
-      telemetry.query_compilation_cost += tier2.costEur
-      if (tier2.status !== 'completed') {
-        telemetry.query_compilation_status = 'failed'
-        emitTelemetry()
-        throw new Error('SEMANTIC_QUERY_COMPILATION_FAILED')
-      }
-      const adjudication = recordValue(tier2.input)
-      const decision = String(adjudication.decision || '').trim()
-      if (decision === 'clarification') {
-        telemetry.query_compilation_status = 'clarification'
-        emitTelemetry()
-        return null
-      }
-      if (decision === 'patch') semanticInput = applySemanticPatch(semanticInput, adjudication.patch, issues)
-      else if (decision !== 'accept') {
-        telemetry.query_compilation_status = 'failed'
-        emitTelemetry()
-        return null
-      }
-      contract = completeSemanticContract(query, semanticInput)
-      issues = semanticContractIssues(query, contract)
-      if (issues.length > 0) {
-        options.onDiagnostic?.({ stage: 'repair', issues })
-        telemetry.query_compilation_status = 'failed'
-        emitTelemetry()
-        return null
-      }
-      planner = 'repaired_llm'
-      finalModel = `${tier1Model}+${tier2Model}`
     }
 
-    if (!contract) {
+    let contract = completeSemanticContract(query, semanticInput)
+    let issues = [...hardIssues, ...semanticContractIssues(query, contract)]
+    // Structural/plan-only failures after normalize are fail-closed without a second model call.
+    const needsTier2 = issues.length > 0
+    if (!needsTier2) {
+      options.onDiagnostic?.({
+        stage: 'initial',
+        issues: [{
+          code: 'DETERMINISTIC_NORMALIZE_FAILED',
+          path: 'commercial_search_plan',
+          message: 'Tier-1 output remained invalid after deterministic normalization.',
+        }],
+      })
       emitTelemetry()
       return null
     }
-    const parsed = safeParseCommercialSearchPlan(
-      normalizePayload(semanticPlanEnvelope(query, contract), query, finalModel, options, planner),
-    )
-    if (!parsed.success) {
-      const planIssues = parsed.error.issues.map((issue) => ({
-        code: 'CONTRACT_VALIDATION_ERROR', path: issue.path.join('.'), message: issue.message,
-      }))
-      options.onDiagnostic?.({ stage: planner === 'llm' ? 'initial' : 'repair', issues: planIssues })
+
+    options.onDiagnostic?.({ stage: 'initial', issues })
+    telemetry.tier2_escalation_reason = [...new Set(issues.map((issue) => issue.code))].join(',')
+    const tier2Allowed = options.allowTier2 ?? options.allowRepair !== false
+    if (!tier2Allowed) {
       emitTelemetry()
       return null
     }
-    const planIssues = validateCommercialPlanSemantics(parsed.data)
-    if (planIssues.length > 0) {
-      options.onDiagnostic?.({ stage: planner === 'llm' ? 'initial' : 'repair', issues: planIssues })
+    const tier2 = await callCompilerStage({
+      query, model: tier2Model, apiKey, options, stage: 'tier2',
+      tier1Contract: semanticInput, issues,
+    })
+    telemetry.query_tier2_calls = 1
+    telemetry.query_input_tokens += tier2.inputTokens
+    telemetry.query_output_tokens += tier2.outputTokens
+    telemetry.query_compilation_cost += tier2.costEur
+    if (tier2.status !== 'completed') {
+      telemetry.query_compilation_status = 'failed'
+      emitTelemetry()
+      throw new Error('SEMANTIC_QUERY_COMPILATION_FAILED')
+    }
+    const adjudication = recordValue(tier2.input)
+    const decision = String(adjudication.decision || '').trim()
+    if (decision === 'clarification') {
+      telemetry.query_compilation_status = 'clarification'
       emitTelemetry()
       return null
     }
-    telemetry.contract_hash = semanticContractHash(contract)
-    telemetry.query_compilation_status = planner === 'llm' ? 'tier1_accepted' : 'tier2_patched'
-    await setSemanticQueryCache(cacheKey, parsed.data)
+    if (decision === 'patch') semanticInput = applySemanticPatch(semanticInput, adjudication.patch, issues)
+    else if (decision !== 'accept') {
+      telemetry.query_compilation_status = 'failed'
+      emitTelemetry()
+      return null
+    }
+    contract = completeSemanticContract(query, semanticInput)
+    issues = semanticContractIssues(query, contract)
+    if (issues.length > 0) {
+      options.onDiagnostic?.({ stage: 'repair', issues })
+      telemetry.query_compilation_status = 'failed'
+      emitTelemetry()
+      return null
+    }
+    planner = 'repaired_llm'
+    finalModel = `${tier1Model}+${tier2Model}`
+
+    const repaired = tryAccept(contract || semanticInput)
+    if (!repaired) {
+      options.onDiagnostic?.({
+        stage: 'repair',
+        issues: [{
+          code: 'DETERMINISTIC_NORMALIZE_FAILED',
+          path: 'commercial_search_plan',
+          message: 'Tier-2 output remained invalid after deterministic normalization.',
+        }],
+      })
+      emitTelemetry()
+      return null
+    }
+    telemetry.contract_hash = repaired.semantic_query_contract
+      ? semanticContractHash(repaired.semantic_query_contract)
+      : (contract ? semanticContractHash(contract) : null)
+    telemetry.query_compilation_status = 'tier2_patched'
+    if (!options.bypassSemanticCache) {
+      await setSemanticQueryCache(cacheKey, repaired)
+    }
     emitTelemetry()
-    return parsed.data
+    return repaired
   } catch (error) {
     telemetry.query_compilation_status = 'failed'
     emitTelemetry()
