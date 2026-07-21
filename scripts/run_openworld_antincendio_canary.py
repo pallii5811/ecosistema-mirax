@@ -28,8 +28,8 @@ QUERY = (
     "ampliamenti produttivi o adeguamenti documentati, con un contatto pubblico."
 )
 REQUESTED = 3
-HARD_CAP = 0.10  # certification hard cap; initialized via RPC (not zone formula)
-ZONE_LEADS = 3  # shadow acceptance/stop target = requested_count
+HARD_CAP = 0.10  # certification hard cap; zone must allow product formula (≥4 → €0.10)
+ZONE_LEADS = 10  # product formula headroom; acceptance stops via lead_target=3
 SIGNALS = ["production_expansion", "geographic_expansion", "new_location"]
 
 
