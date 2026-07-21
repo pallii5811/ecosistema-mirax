@@ -1,0 +1,28 @@
+{
+  "search_id": "b367f0f6-3a7e-4023-8014-7488a5b8b653",
+  "query": "Installiamo sistemi antincendio industriali. Trovami 3 PMI del Nord Italia con segnali recenti di nuovi stabilimenti, ampliamenti produttivi o adeguamenti documentati, con un contatto pubblico.",
+  "expected_outcome": "zero_lifecycle_published",
+  "records": [
+    {
+      "company_name": "ECOSYSTEM SpA",
+      "source_url": "https://assoambiente.org/entry_p/News/news/16707/P250",
+      "source_publisher": "Assoambiente",
+      "source_class": "recognized_news",
+      "evidence_excerpt": "Inaugurato il nuovo impianto ECOSYSTEM SpA | Pomezia, 20 giugno. Il 20 giugno Assoambiente ha preso parte all'inaugurazione della nuova linea di trattamento.",
+      "published_at": "2026-03-19",
+      "expected_geography_match": false,
+      "expected_rejection": "GEOGRAPHY_EVIDENCE_MISSING"
+    },
+    {
+      "company_name": "TBK Srl",
+      "source_url": "https://www.adnkronos.com/immediapress/tbk-srl-celebra-trentanni-guardando-al-futuro-nuovo-stabilimento-innovazione-e-crescita_2qGjnwZfe2qg1HysEmtl1J",
+      "source_publisher": "Adnkronos",
+      "source_class": "recognized_news",
+      "evidence_excerpt": "celebra trent'anni guardando al futuro: nuovo stabilimento, innovazione e crescita Cerca nel sito 0 ultim'ora Temi caldi Speciali Sezioni",
+      "published_at": null,
+      "expected_geography_match": false,
+      "expected_signal_date": null,
+      "expected_rejection": "GEOGRAPHY_EVIDENCE_MISSING"
+    }
+  ]
+}

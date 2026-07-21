@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
@@ -70,6 +71,82 @@ _SIGNAL_ALIASES: Dict[str, Tuple[str, ...]] = {
     "expansion": ("espansione", "ampliamento", "nuovo stabilimento", "nuova sede"),
 }
 
+_ITALY_COUNTRY_GEOGRAPHIES = frozenset({"italia", "italy", "it"})
+_ITALY_LOCALITY_TO_REGION: Dict[str, str] = {
+    **{name: "Valle d'Aosta" for name in ("valle d aosta", "aosta")},
+    **{name: "Piemonte" for name in (
+        "piemonte", "torino", "turin", "alessandria", "asti", "biella", "cuneo",
+        "novara", "verbania", "vercelli",
+    )},
+    **{name: "Liguria" for name in ("liguria", "genova", "genoa", "imperia", "la spezia", "savona")},
+    **{name: "Lombardia" for name in (
+        "lombardia", "lombardy", "milano", "milan", "bergamo", "brescia", "monza",
+        "brianza", "varese", "como", "lecco", "pavia", "cremona", "mantova", "lodi", "sondrio",
+    )},
+    **{name: "Trentino-Alto Adige" for name in (
+        "trentino alto adige", "trentino", "alto adige", "trento", "bolzano",
+    )},
+    **{name: "Veneto" for name in (
+        "veneto", "belluno", "padova", "rovigo", "treviso", "venezia", "venice", "verona", "vicenza",
+    )},
+    **{name: "Friuli-Venezia Giulia" for name in (
+        "friuli venezia giulia", "friuli", "gorizia", "pordenone", "trieste", "udine",
+    )},
+    **{name: "Emilia-Romagna" for name in (
+        "emilia romagna", "bologna", "ferrara", "forli", "cesena", "modena", "parma",
+        "piacenza", "ravenna", "reggio emilia", "rimini",
+    )},
+    **{name: "Toscana" for name in (
+        "toscana", "arezzo", "firenze", "florence", "grosseto", "livorno", "lucca",
+        "massa", "carrara", "pisa", "pistoia", "prato", "siena",
+    )},
+    **{name: "Umbria" for name in ("umbria", "perugia", "terni")},
+    **{name: "Marche" for name in (
+        "marche", "ancona", "ascoli piceno", "fermo", "macerata", "pesaro", "urbino",
+    )},
+    **{name: "Lazio" for name in (
+        "lazio", "roma", "rome", "frosinone", "latina", "rieti", "viterbo", "pomezia",
+    )},
+    **{name: "Abruzzo" for name in (
+        "abruzzo", "l aquila", "chieti", "pescara", "teramo",
+    )},
+    **{name: "Molise" for name in ("molise", "campobasso", "isernia")},
+    **{name: "Campania" for name in (
+        "campania", "napoli", "naples", "avellino", "benevento", "caserta", "salerno",
+    )},
+    **{name: "Puglia" for name in (
+        "puglia", "apulia", "bari", "barletta", "andria", "trani", "brindisi", "foggia",
+        "lecce", "taranto",
+    )},
+    **{name: "Basilicata" for name in ("basilicata", "lucania", "matera", "potenza")},
+    **{name: "Calabria" for name in (
+        "calabria", "calabrese", "catanzaro", "cosenza", "crotone", "reggio calabria", "vibo valentia",
+    )},
+    **{name: "Sicilia" for name in (
+        "sicilia", "sicily", "agrigento", "caltanissetta", "catania", "enna", "messina",
+        "palermo", "ragusa", "siracusa", "trapani",
+    )},
+    **{name: "Sardegna" for name in (
+        "sardegna", "sardinia", "cagliari", "nuoro", "oristano", "sassari", "sud sardegna",
+    )},
+}
+_ITALY_REGION_TO_MACRO: Dict[str, str] = {
+    **{region: "north" for region in (
+        "Valle d'Aosta", "Piemonte", "Liguria", "Lombardia", "Trentino-Alto Adige", "Veneto",
+        "Friuli-Venezia Giulia", "Emilia-Romagna",
+    )},
+    **{region: "centre" for region in ("Toscana", "Umbria", "Marche", "Lazio")},
+    **{region: "south" for region in (
+        "Abruzzo", "Molise", "Campania", "Puglia", "Basilicata", "Calabria", "Sicilia", "Sardegna",
+    )},
+}
+_ITALY_MACRO_ALIASES: Dict[str, str] = {
+    "nord italia": "north", "italia settentrionale": "north", "northern italy": "north",
+    "centro italia": "centre", "italia centrale": "centre", "central italy": "centre",
+    "sud italia": "south", "italia meridionale": "south", "mezzogiorno": "south",
+    "southern italy": "south",
+}
+
 
 @dataclass(frozen=True)
 class GenericWebProviderResult:
@@ -90,6 +167,82 @@ def _host(value: Any) -> str:
     text = _text(value) or ""
     parsed = urlparse(text if "://" in text else f"https://{text}")
     return (parsed.hostname or "").lower().removeprefix("www.")
+
+
+def _normalized_geography_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+
+
+def _contains_geography_term(blob: str, term: str) -> bool:
+    return bool(re.search(rf"(?:^|\s){re.escape(term)}(?:$|\s)", blob))
+
+
+def _explicit_requested_geography(
+    request: AdapterDiscoveryRequest,
+    *source_values: Any,
+) -> Dict[str, Any]:
+    """Ground geography only in source content, never in the retrieval query."""
+    requested_pairs = [
+        (str(item).strip(), _normalized_geography_text(item))
+        for item in request.geographies
+        if _normalized_geography_text(item)
+    ]
+    requested_specific = [(raw, norm) for raw, norm in requested_pairs if norm not in _ITALY_COUNTRY_GEOGRAPHIES]
+    if not requested_specific:
+        return {
+            "geography": "",
+            "geography_match": False,
+            "requested_geographies": [raw for raw, _ in requested_pairs],
+            "matched_geography": "",
+            "geography_match_method": "country_only_unconstrained",
+            "geography_match_evidence": "",
+        }
+    blob = _normalized_geography_text(" ".join(str(value or "") for value in source_values))
+    if not blob:
+        return {
+            "geography": "",
+            "geography_match": False,
+            "requested_geographies": [raw for raw, _ in requested_pairs],
+            "matched_geography": "",
+            "geography_match_method": "no_source_geography",
+            "geography_match_evidence": "",
+        }
+    for raw, norm in requested_specific:
+        if _contains_geography_term(blob, norm):
+            return {
+                "geography": raw,
+                "geography_match": True,
+                "requested_geographies": [item for item, _ in requested_pairs],
+                "matched_geography": raw,
+                "geography_match_method": "explicit_source_geography",
+                "geography_match_evidence": raw,
+            }
+    requested_norms = {norm for _, norm in requested_specific}
+    requested_macros = {_ITALY_MACRO_ALIASES[norm] for norm in requested_norms if norm in _ITALY_MACRO_ALIASES}
+    for locality in sorted(_ITALY_LOCALITY_TO_REGION, key=len, reverse=True):
+        if not _contains_geography_term(blob, locality):
+            continue
+        region = _ITALY_LOCALITY_TO_REGION[locality]
+        region_norm = _normalized_geography_text(region)
+        region_macro = _ITALY_REGION_TO_MACRO.get(region)
+        if region_norm in requested_norms or (region_macro and region_macro in requested_macros):
+            return {
+                "geography": region,
+                "geography_match": True,
+                "requested_geographies": [item for item, _ in requested_pairs],
+                "matched_geography": region,
+                "geography_match_method": "source_locality_to_region",
+                "geography_match_evidence": locality,
+            }
+    return {
+        "geography": "",
+        "geography_match": False,
+        "requested_geographies": [raw for raw, _ in requested_pairs],
+        "matched_geography": "",
+        "geography_match_method": "no_source_geography_match",
+        "geography_match_evidence": "",
+    }
 
 
 def _iso_date(value: Any) -> Optional[str]:
@@ -421,7 +574,7 @@ def parse_primary_evidence_page(
     positions = [blob.casefold().find(phrase.casefold()) for signal in matched for phrase in _signal_phrases(request, signal)]
     start = max(0, min((value for value in positions if value >= 0), default=0) - 180)
     excerpt = blob[start:start + 900]
-    geography = next((item for item in request.geographies if item.casefold() in blob.casefold()), "")
+    geography = _explicit_requested_geography(request, blob)
     publisher_meta = soup.find("meta", attrs={"property": "og:site_name"})
     publisher = _text(publisher_meta.get("content") if publisher_meta else None) or company
     employees_raw = organization.get("numberOfEmployees")
@@ -441,7 +594,7 @@ def parse_primary_evidence_page(
         "entity_class": "operating_company",
         "matched_signal_ids": list(matched),
         "published_at": published,
-        "geography": geography,
+        **geography,
         "source_url": source_url,
         "source_publisher": publisher,
         "source_class": "official_company_website",
@@ -1190,6 +1343,7 @@ def _append_semantic_deferred_news_record(
     if not excerpt:
         return False
     publisher = str(item.get("publisher") or title or page_host) if isinstance(item, Mapping) else (title or page_host)
+    source_geography = _explicit_requested_geography(request, title, snippet, visible_text)
     row: Dict[str, Any] = {
         "company_name": company_hint,
         "official_domain": _candidate_official_domain(
@@ -1201,7 +1355,7 @@ def _append_semantic_deferred_news_record(
         "entity_class": "operating_company",
         "matched_signal_ids": list(request.signal_ids),
         "published_at": published or "",
-        "geography": next((g for g in request.geographies if g.casefold() not in {"italy", "italia"}), ""),
+        **source_geography,
         "source_url": final_url,
         "source_publisher": publisher,
         "source_class": "recognized_news",
@@ -1618,6 +1772,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                     continue
                                 domain = str(identity.get("domain") or "")
                                 excerpt = title.strip() if title.strip() and title.strip() in visible_text else visible_text[:1200]
+                                source_geography = _explicit_requested_geography(request, title, snippet, visible_text)
                                 row = {
                                     "company_name": company,
                                     "official_domain": domain,
@@ -1626,7 +1781,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                     "entity_class": "operating_company",
                                     "matched_signal_ids": list(request.signal_ids),
                                     "published_at": published or "",
-                                    "geography": next((g for g in request.geographies if g.casefold() not in {"italy", "italia"}), ""),
+                                    **source_geography,
                                     "source_url": final_url,
                                     "source_publisher": str(item.get("publisher") or title or page_host) if isinstance(item, Mapping) else (title or page_host),
                                     "source_class": "official_company_website" if domain == page_host else "recognized_news",
@@ -1731,6 +1886,9 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             matched_ids = list(request.signal_ids)
                         if not matched_ids:
                             continue
+                        source_geography = _explicit_requested_geography(
+                            request, title, snippet, visible_text, event.evidence_excerpt
+                        )
                         row = {
                             "company_name": event.company_name,
                             "official_domain": domain,
@@ -1738,7 +1896,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             "entity_class": "operating_company",
                             "matched_signal_ids": matched_ids,
                             "published_at": event.event_date,
-                            "geography": next((g for g in request.geographies if g.casefold() not in {"italy", "italia"}), ""),
+                            **source_geography,
                             "source_url": event.source_url,
                             "source_publisher": event.publisher,
                             "source_class": event.source_class,
@@ -1926,10 +2084,31 @@ def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
         verified = _matched_signals(excerpt, request)
         if not set(verified).issuperset(matched.intersection(required)):
             return False, "EVIDENCE_PATTERN_UNPROVEN"
-    requested_geo = [item.casefold() for item in request.geographies if item.casefold() not in {"italy", "italia"}]
-    geography = (_text(record.get("geography")) or "").casefold()
-    if requested_geo and geography and not any(item in geography or geography in item for item in requested_geo):
-        return False, "GEOGRAPHY_MISMATCH"
+    requested_geo = [
+        _normalized_geography_text(item)
+        for item in request.geographies
+        if _normalized_geography_text(item) not in _ITALY_COUNTRY_GEOGRAPHIES
+    ]
+    geography = _normalized_geography_text(record.get("geography"))
+    if requested_geo and not geography:
+        return False, "GEOGRAPHY_EVIDENCE_MISSING"
+    if requested_geo:
+        requested_norms = set(requested_geo)
+        source_region = _ITALY_LOCALITY_TO_REGION.get(geography)
+        geography_region = _normalized_geography_text(source_region or geography)
+        requested_macros = {
+            _ITALY_MACRO_ALIASES[norm] for norm in requested_norms if norm in _ITALY_MACRO_ALIASES
+        }
+        geography_macro = _ITALY_REGION_TO_MACRO.get(source_region or next(
+            (region for region in _ITALY_REGION_TO_MACRO if _normalized_geography_text(region) == geography_region),
+            "",
+        ))
+        if not (
+            geography in requested_norms
+            or geography_region in requested_norms
+            or (geography_macro and geography_macro in requested_macros)
+        ):
+            return False, "GEOGRAPHY_MISMATCH"
     if _requires_sme(request):
         size = (_text(record.get("company_size")) or "").casefold()
         try:
@@ -2025,7 +2204,7 @@ class GenericWebResearchAdapter:
                 if not matched:
                     warnings.append("NO_REQUESTED_SIGNAL_EVIDENCE")
                     continue
-                published = _iso_date(record.get("published_at")) or ""
+                published = _iso_date(record.get("published_at"))
                 source_url = _text(record.get("source_url")) or ""
                 publisher = _text(record.get("source_publisher")) or ""
                 excerpt = _text(record.get("evidence_excerpt")) or ""
@@ -2087,6 +2266,11 @@ class GenericWebResearchAdapter:
                         "origin_cursor_version": record.get("origin_cursor_version"),
                         "company_size": record.get("company_size"),
                         "employee_count": record.get("employee_count"),
+                        "requested_geographies": record.get("requested_geographies") or list(request.geographies),
+                        "geography_match": record.get("geography_match") is True,
+                        "matched_geography": record.get("matched_geography"),
+                        "geography_match_method": record.get("geography_match_method"),
+                        "geography_match_evidence": record.get("geography_match_evidence"),
                     },
                 ) for signal in matched)
                 if not evidence:
@@ -2119,9 +2303,8 @@ class GenericWebResearchAdapter:
                 candidates.append(OpportunityCandidate(
                     canonical_company_name=company,
                     company_identifiers={}, official_domain=domain, entity_class="operating_company",
-                    geographies=(_text(record.get("geography")) or "",), buyer_fit=buyer_fit,
-                    signal_id=matched[0], signal_date=published or date.today().isoformat(), evidence=evidence,
-                    # ponytail: placeholder date when HTML lacks published_at; semantic must ground real event_date
+                    geographies=tuple(filter(None, (_text(record.get("geography")) or "",))), buyer_fit=buyer_fit,
+                    signal_id=matched[0], signal_date=published, evidence=evidence,
                     why_now=why_now, contacts=contacts, confidence=0.55 if semantic_required else 0.72,
                     contradiction_flags=("GENERIC_FALLBACK_PARTIAL",),
                     provenance={
@@ -2135,6 +2318,11 @@ class GenericWebResearchAdapter:
                         "company_size": record.get("company_size"),
                         "employee_count": record.get("employee_count"),
                         "is_listed": bool(record.get("is_listed")),
+                        "requested_geographies": record.get("requested_geographies") or list(request.geographies),
+                        "geography_match": record.get("geography_match") is True,
+                        "matched_geography": record.get("matched_geography"),
+                        "geography_match_method": record.get("geography_match_method"),
+                        "geography_match_evidence": record.get("geography_match_evidence"),
                         "origin_adapter_id": record.get("origin_adapter_id"),
                         "origin_execution_round": record.get("origin_execution_round"),
                         "origin_provider_call_id": record.get("origin_provider_call_id"),
