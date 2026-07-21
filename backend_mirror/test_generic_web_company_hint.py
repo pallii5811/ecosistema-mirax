@@ -30,6 +30,14 @@ def test_guide_headline_come_si_sceglie_is_not_a_buyer() -> None:
     assert not _looks_like_company_name("Come si")
 
 
+def test_company_hint_from_adoption_url_slug() -> None:
+    from backend_mirror.source_adapters.generic_web import _company_hint_from_url, _serp_company_hint
+
+    url = "https://www.prnewswire.com/news-releases/tec-med-adotta-veeva-crm-per-rafforzare-le-interazioni-digitali-804299819.html"
+    assert _company_hint_from_url(url) == "Tec Med"
+    assert _serp_company_hint(title="", snippet="", url=url) == "Tec Med"
+
+
 def test_crm_shell_followup_uses_crm_recovery_not_funding() -> None:
     from backend_mirror.source_adapters.contracts import AdapterDiscoveryRequest
     from backend_mirror.source_adapters.generic_web import _enqueue_content_shell_followup

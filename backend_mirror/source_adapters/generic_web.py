@@ -725,7 +725,30 @@ def _is_challenge_or_empty_page(*, status_code: int, title: str, visible_text: s
     return len((visible_text or "").strip()) < 24
 
 
-def _serp_company_hint(*, title: str, snippet: str) -> str:
+def _company_hint_from_url(url: str) -> str:
+    """Recover buyer identity from adoption slugs when SERP title/snippet are empty."""
+    from urllib.parse import urlparse
+
+    path = (urlparse(_text(url) or "").path or "").strip("/")
+    if not path:
+        return ""
+    match = re.search(
+        r"(?P<company>[A-Za-z0-9]+(?:-[A-Za-z0-9]+){0,4})"
+        r"-(?:adotta|sceglie|implementa|migra)-",
+        path,
+        re.I,
+    )
+    if not match:
+        return ""
+    raw = match.group("company").replace("-", " ").strip()
+    # Keep compact legal-style tokens: "tec med" → "Tec Med"
+    candidate = " ".join(part.capitalize() for part in raw.split())
+    if candidate and _looks_like_company_name(candidate):
+        return candidate
+    return ""
+
+
+def _serp_company_hint(*, title: str, snippet: str, url: str = "") -> str:
     """Company identity from SERP fields only — used before/without HTML body."""
     for text in (title, snippet, f"{title} {snippet}"):
         hint = _snippet_company_hint(text)
@@ -734,7 +757,7 @@ def _serp_company_hint(*, title: str, snippet: str) -> str:
     leading = _title_company_leading(title)
     if leading and _looks_like_company_name(leading):
         return leading
-    return ""
+    return _company_hint_from_url(url)
 
 
 def _trim_title_company_candidate(value: str) -> str:
@@ -1037,8 +1060,11 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
             if not key or key in seen or key in already_salvaged:
                 continue
             meta = raw_meta.get(key) or {"url": url, "title": "", "snippet": "", "source_type": "search", "provider": "resume"}
-            hint = _serp_company_hint(title=str(meta.get("title") or ""), snippet=str(meta.get("snippet") or ""))
-            compact = re.sub(r"[^a-z0-9]", "", (hint or "").casefold())
+            hint = _serp_company_hint(
+                title=str(meta.get("title") or ""),
+                snippet=str(meta.get("snippet") or ""),
+                url=str(meta.get("url") or url),
+            )            compact = re.sub(r"[^a-z0-9]", "", (hint or "").casefold())
             if compact and any(compact in domain.replace(".", "") or domain.replace(".", "") in compact for domain in processed_domains):
                 continue
             seen.add(key)
@@ -1197,7 +1223,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                         })
                         # Recover from blocked preferred hosts using SERP identity.
                         if request.technical_filters.get("semantic_authority_required") is True:
-                            serp_hint = _serp_company_hint(title=title, snippet=snippet)
+                            serp_hint = _serp_company_hint(title=title, snippet=snippet, url=url)
                             if serp_hint:
                                 _enqueue_content_shell_followup(
                                     state,
@@ -1247,7 +1273,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 "rejection_code": "PAGE_CONTENT_MISSING",
                             })
                             recover_hint = identity_hint if not challenge_page else _serp_company_hint(
-                                title=title, snippet=snippet
+                                title=title, snippet=snippet, url=final_url or url
                             )
                             _enqueue_content_shell_followup(
                                 state,
@@ -1267,7 +1293,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 "parse_status": "rejected_content",
                                 "rejection_code": "PAGE_CONTENT_MISSING",
                             })
-                            recover_hint = _serp_company_hint(title=title, snippet=snippet)
+                            recover_hint = _serp_company_hint(title=title, snippet=snippet, url=final_url or url)
                             if recover_hint:
                                 _enqueue_content_shell_followup(
                                     state,
