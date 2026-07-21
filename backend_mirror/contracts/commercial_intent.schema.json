@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirax.internal/contracts/commercial-intent/v1.0.0",
+  "title": "MIRAX CommercialIntentSpec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "original_query",
+    "normalized_goal",
+    "request_mode",
+    "seller_profile",
+    "seller_offer",
+    "problem_solved",
+    "buyer_need",
+    "target_company_profile",
+    "target_role",
+    "geography",
+    "sectors",
+    "direct_demand_signals",
+    "inferred_fit_signals",
+    "observable_events",
+    "required_relationships",
+    "excluded_roles",
+    "evidence_policy",
+    "source_requirements",
+    "intent_strength_required",
+    "capability_status",
+    "confidence",
+    "clarification_required"
+  ],
+  "properties": {
+    "original_query": { "type": "string", "minLength": 2, "maxLength": 4000 },
+    "normalized_goal": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "request_mode": {
+      "type": "string",
+      "enum": [
+        "explicit_demand",
+        "seller_driven_lead_discovery",
+        "event_based_discovery",
+        "company_filter",
+        "digital_audit",
+        "procurement_discovery"
+      ]
+    },
+    "seller_profile": { "$ref": "#/$defs/sellerProfile" },
+    "seller_offer": { "$ref": "#/$defs/sellerOffer" },
+    "problem_solved": { "type": ["string", "null"] },
+    "buyer_need": { "type": ["string", "null"] },
+    "target_company_profile": { "$ref": "#/$defs/targetCompanyProfile" },
+    "target_role": { "type": ["string", "null"] },
+    "geography": { "type": "array", "items": { "type": "string" } },
+    "sectors": { "type": "array", "items": { "type": "string" } },
+    "freshness": {
+      "type": ["object", "null"],
+      "properties": { "maximum_age_days": { "type": ["integer", "null"] } }
+    },
+    "direct_demand_signals": { "type": "array", "items": { "type": "string" } },
+    "inferred_fit_signals": { "type": "array", "items": { "type": "string" } },
+    "observable_events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/observableEvent" }
+    },
+    "required_relationships": { "type": "array", "items": { "type": "string" } },
+    "excluded_roles": { "type": "array", "items": { "type": "string" } },
+    "evidence_policy": { "type": "object" },
+    "source_requirements": { "type": "object" },
+    "intent_strength_required": {
+      "type": "string",
+      "enum": ["direct", "strong_inferred", "moderate_inferred"]
+    },
+    "capability_status": {
+      "type": "string",
+      "enum": ["supported", "supported_partial", "unavailable"]
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "clarification_required": { "type": "boolean" },
+    "commercial_hypotheses": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/commercialHypothesis" }
+    }
+  },
+  "$defs": {
+    "marketScopePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum_employees",
+        "maximum_employees",
+        "minimum_revenue_eur",
+        "maximum_revenue_eur",
+        "allowed_size_classes",
+        "enterprise_opt_in",
+        "exclude_public_companies",
+        "exclude_state_controlled_major_operators",
+        "exclude_global_enterprises",
+        "exclude_large_corporate_groups",
+        "exclude_famous_brands",
+        "required_market_scope_confidence"
+      ],
+      "properties": {
+        "minimum_employees": { "type": ["integer", "null"] },
+        "maximum_employees": { "type": ["integer", "null"] },
+        "minimum_revenue_eur": { "type": ["number", "null"] },
+        "maximum_revenue_eur": { "type": ["number", "null"] },
+        "allowed_size_classes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["micro", "small", "medium", "large", "enterprise"]
+          },
+          "minItems": 1
+        },
+        "enterprise_opt_in": { "type": "boolean" },
+        "exclude_public_companies": { "type": "boolean" },
+        "exclude_state_controlled_major_operators": { "type": "boolean" },
+        "exclude_global_enterprises": { "type": "boolean" },
+        "exclude_large_corporate_groups": { "type": "boolean" },
+        "exclude_famous_brands": { "type": "boolean" },
+        "required_market_scope_confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "targetCompanyProfile": {
+      "type": "object",
+      "required": ["market_scope_policy"],
+      "properties": {
+        "entity_types": { "type": "array", "items": { "type": "string" } },
+        "industries": { "type": "array", "items": { "type": "string" } },
+        "company_sizes": { "type": "array", "items": { "type": "string" } },
+        "geographies": { "type": "array", "items": { "type": "string" } },
+        "required_attributes": { "type": "array", "items": { "type": "string" } },
+        "excluded_attributes": { "type": "array", "items": { "type": "string" } },
+        "excluded_entities": { "type": "array", "items": { "type": "string" } },
+        "market_scope_policy": { "$ref": "#/$defs/marketScopePolicy" }
+      }
+    },
+    "sellerProfile": { "type": "object" },
+    "sellerOffer": {
+      "type": "object",
+      "required": ["description"],
+      "properties": {
+        "description": { "type": ["string", "null"] },
+        "category": { "type": ["string", "null"] }
+      }
+    },
+    "observableEvent": {
+      "type": "object",
+      "required": ["id", "description"],
+      "properties": {
+        "id": { "type": "string" },
+        "description": { "type": "string" },
+        "triggering_phrases": { "type": "array", "items": { "type": "string" } },
+        "signals": { "type": "array", "items": { "type": "string" } },
+        "implied_need": { "type": ["string", "null"] }
+      }
+    },
+    "commercialHypothesis": {
+      "type": "object",
+      "required": [
+        "id",
+        "target_company_profile",
+        "target_role",
+        "buyer_problem",
+        "observable_event",
+        "required_relationship",
+        "sources",
+        "false_positive_risks",
+        "expected_yield",
+        "expected_cost",
+        "intent_strength"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "target_company_profile": { "$ref": "#/$defs/targetCompanyProfile" },
+        "target_role": { "type": "string" },
+        "buyer_problem": { "type": "string" },
+        "observable_event": { "type": "string" },
+        "required_relationship": { "type": "string" },
+        "sources": { "type": "array", "items": { "type": "string" } },
+        "false_positive_risks": { "type": "array", "items": { "type": "string" } },
+        "expected_yield": { "type": "string", "enum": ["high", "medium", "low"] },
+        "expected_cost": { "type": "string", "enum": ["low", "medium", "high"] },
+        "intent_strength": {
+          "type": "string",
+          "enum": ["direct", "strong_inferred", "moderate_inferred"]
+        }
+      }
+    }
+  }
+}
