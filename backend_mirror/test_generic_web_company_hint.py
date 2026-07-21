@@ -188,6 +188,25 @@ def test_serp_fetch_priority_prefers_crm_adoption_over_guides() -> None:
     assert ranked[0].url == adoption.url
 
 
+def test_serp_fetch_priority_uses_url_path_when_title_empty() -> None:
+    from types import SimpleNamespace
+
+    from backend_mirror.source_adapters.generic_web import _serp_fetch_priority
+
+    vague = SimpleNamespace(
+        url="https://www.formula.it/casi-di-successo",
+        title="",
+        snippet="",
+    )
+    tecmed = SimpleNamespace(
+        url="https://www.prnewswire.com/news-releases/tec-med-adotta-veeva-crm-per-rafforzare-le-interazioni-digitali.html",
+        title="",
+        snippet="",
+    )
+    ranked = sorted([vague, tecmed], key=_serp_fetch_priority)
+    assert ranked[0].url == tecmed.url
+
+
 def test_can_reserve_serp_after_first_semantic_for_second_lead() -> None:
     from backend_mirror.source_adapters.generic_web_budget import GenericWebDiscoveryState
 

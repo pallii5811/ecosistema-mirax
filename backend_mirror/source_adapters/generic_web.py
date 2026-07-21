@@ -381,7 +381,9 @@ def _serp_fetch_priority(hit: Any) -> Tuple[int, int, int, str]:
         tier = 0
     else:
         tier = 1
-    headline = f"{title} {snippet}"
+    # Include URL path: resume meta often has empty title/snippet but paths like
+    # /tec-med-adotta-veeva-crm-… still name the buyer event.
+    headline = f"{title} {snippet} {url}"
     # Buyer tech-adoption headlines (CRM sceglie/adotta) before how-to guides.
     guide_penalty = 1 if re.search(
         r"\b(guida|tutorial|come\s+si\s+sceglie|come\s+scegliere|cos['']?\s*è|cose\s+è|miglior\s+crm)\b",
@@ -390,7 +392,7 @@ def _serp_fetch_priority(hit: Any) -> Tuple[int, int, int, str]:
     ) else 0
     event_boost = 0 if re.search(
         r"\b(chiude un round|ha raccolto|seed round|pre-seed|raccoglie|funding round|"
-        r"sceglie|adotta|implementa|migrazione\s+crm|nuovo\s+crm)\b",
+        r"sceglie|adotta|implementa|migrazione\s+crm|nuovo\s+crm|adotta-veeva|sceglie-.*crm)\b",
         headline,
         re.I,
     ) else 1
