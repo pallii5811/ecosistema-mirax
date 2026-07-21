@@ -138,6 +138,46 @@ def test_authoritative_exhaustion_is_terminal_and_removes_stale_cursor() -> None
     assert resume["resume_cursors"] == {}
 
 
+def test_empty_generic_web_cursor_does_not_wipe_productive_prior() -> None:
+    from source_adapters.generic_web_budget import GenericWebDiscoveryState, encode_generic_web_cursor
+
+    rich = encode_generic_web_cursor(
+        GenericWebDiscoveryState(
+            provider_calls=1,
+            pages_fetched=3,
+            executed_query_keys=('azienda Italia ("adotta") CRM',),
+            url_meta=({"url": "https://example.it/news"},),
+        )
+    ).value
+    empty = encode_generic_web_cursor(GenericWebDiscoveryState()).value
+    result = OrchestrationResult(**{
+        **_mock_partial_time_result(cursor=empty, qualified_payloads=[]).__dict__,
+        "adapter_progress": (
+            AdapterProgress(
+                adapter_id="generic_web_research_v1",
+                exhausted=True,
+                exhaustion_authoritative=False,
+                exhaustion_scope="partition",
+                exhaustion_reason="sample_partition_complete_not_global_exhaustion",
+                next_cursor=DiscoveryCursor(empty),
+                acquisition_telemetry={"pages_fetched": 0, "provider_queries": 0},
+            ),
+        ),
+    })
+    resume = build_shadow_resume_state(
+        result,
+        qualified_lead_payloads=[],
+        prior_state={
+            "resume_cursors": {"generic_web_research_v1": rich},
+            "acquisition": {"pages_fetched": 3, "provider_queries": 1},
+            "prior_cost_eur": 0.02,
+        },
+        requested_count=2,
+    )
+    assert resume["resume_cursors"]["generic_web_research_v1"] == rich
+    assert int(resume["acquisition"].get("pages_fetched") or 0) >= 3
+
+
 def test_merge_shadow_qualified_payloads_preserves_primary_and_related() -> None:
     prior = [{
         "sito": "https://verisure.com",

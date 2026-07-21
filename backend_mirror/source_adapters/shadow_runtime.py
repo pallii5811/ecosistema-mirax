@@ -287,6 +287,21 @@ async def execute_source_adapter_shadow(
     return result
 
 
+def _generic_web_cursor_progress(value: str) -> tuple[int, int, int, int]:
+    """Rank discovery cursors so empty resume states cannot wipe productive ones."""
+    try:
+        from .generic_web_budget import decode_generic_web_v2_payload
+    except Exception:
+        return (0, 0, 0, 0)
+    payload = decode_generic_web_v2_payload(value) or {}
+    return (
+        int(payload.get("provider_calls") or 0),
+        int(payload.get("pages_fetched") or 0),
+        len(payload.get("executed_query_keys") or ()),
+        len(payload.get("url_meta") or ()),
+    )
+
+
 def build_shadow_resume_state(
     result: OrchestrationResult,
     *,
@@ -301,7 +316,19 @@ def build_shadow_resume_state(
     acquisition: dict[str, Any] = dict(prior.get("acquisition") or {})
     for item in result.adapter_progress:
         if item.next_cursor is not None:
-            resume_cursors[item.adapter_id] = item.next_cursor.value
+            new_value = item.next_cursor.value
+            old_value = resume_cursors.get(item.adapter_id)
+            # Q2 resume bug: a later no-op strategy (budget left < SERP+semantic)
+            # emitted an empty generic-web cursor and wiped the productive SERP state.
+            if (
+                old_value
+                and str(new_value).startswith("generic-web:v2:")
+                and str(old_value).startswith("generic-web:v2:")
+                and _generic_web_cursor_progress(str(new_value)) < _generic_web_cursor_progress(str(old_value))
+            ):
+                pass
+            else:
+                resume_cursors[item.adapter_id] = new_value
         elif item.exhausted:
             resume_cursors.pop(item.adapter_id, None)
         provider_exhausted = provider_exhausted and item.exhausted
@@ -311,7 +338,14 @@ def build_shadow_resume_state(
             and bool(getattr(item, "exhaustion_authoritative", False))
         )
         if item.acquisition_telemetry:
-            acquisition.update(dict(item.acquisition_telemetry))
+            incoming = dict(item.acquisition_telemetry)
+            for key in ("pages_fetched", "provider_queries", "urls_fetched"):
+                try:
+                    if int(incoming.get(key) or 0) < int(acquisition.get(key) or 0):
+                        incoming[key] = acquisition.get(key)
+                except (TypeError, ValueError):
+                    pass
+            acquisition.update(incoming)
     processed_domains = list(dict.fromkeys(
         list(prior.get("processed_domains") or [])
         + [
