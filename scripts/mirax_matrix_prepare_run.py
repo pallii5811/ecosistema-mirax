@@ -213,7 +213,8 @@ def build_plan(spec_id: str, hard: float = 0.05) -> tuple[dict, dict]:
         "optional_signals": list(spec.get("optional_signals") or []),
         "negative_signals": [],
         "maximum_age_days_by_signal": {
-            s: 180 for s in list(spec["signals"]) + list(spec.get("optional_signals") or [])
+            s: (365 if spec_id == "q2" else 180)
+            for s in list(spec["signals"]) + list(spec.get("optional_signals") or [])
         },
         "minimum_signal_confidence": 0.75,
     }

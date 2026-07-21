@@ -55,8 +55,16 @@ def canonical_domain(value: Any) -> str:
     return host if "." in host and " " not in host else ""
 
 
+_SOURCE_CLASS_ALIASES = {
+  # Semantic adapters emit recognized_news; lifecycle registry uses industry_publication.
+    "recognized_news": "industry_publication",
+    "generic_web_research": "industry_publication",
+}
+
+
 def _source_class(value: Any, source_url: str) -> str:
     requested = str(value or "").strip().lower()
+    requested = _SOURCE_CLASS_ALIASES.get(requested, requested)
     registry = load_source_registry()
     if requested in registry:
         return requested
@@ -112,11 +120,12 @@ def _iter_signal_evidence(lead: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
         confidence = float(signal.get("confidence") or lead.get("signal_confidence") or 0.8)
         if signal_type and source_url and observed_at and excerpt:
             source_class = _source_class(signal.get("source_class") or signal.get("source_type"), source_url)
+            publisher = str(signal.get("source_publisher") or "").strip() or canonical_domain(source_url)
             yield {
                 "signal_type": signal_type,
                 "source_url": source_url,
                 "source_class": source_class,
-                "source_publisher": canonical_domain(source_url),
+                "source_publisher": publisher,
                 "excerpt": excerpt,
                 "observed_at": observed_at,
                 "published_at": published_at,
@@ -471,6 +480,25 @@ _TRUSTED_SOURCE_ADAPTER_DOMAIN_PROOFS = {
 }
 
 
+def _free_owned_host_identity(lead: Dict[str, Any], identity: Dict[str, Any], domain: str) -> bool:
+    """generic_web post-semantic identity via owned-host verification (no paid SERP)."""
+    if str(lead.get("source_adapter_id") or "").strip() != "generic_web_research_v1":
+        return False
+    if str(identity.get("adapter_id") or "").strip() not in {"", "generic_web_research_v1"}:
+        return False
+    if str(identity.get("status") or "").lower() != "verified":
+        return False
+    if str(identity.get("resolution_method") or "") != "free_owned_host_verification":
+        return False
+    if not domain or canonical_domain(identity.get("url")) != domain:
+        return False
+    evidence = {str(value) for value in identity.get("evidence") or ()}
+    return bool(
+        evidence.intersection({"company_tokens_in_host", "legal_name_in_page", "official_site_markers"})
+        or "free_owned_host_candidate" in evidence
+    )
+
+
 def _trusted_source_adapter_identity(lead: Dict[str, Any], identity: Dict[str, Any]) -> bool:
     """Accept adapter identity only when the adapter and its proof contract agree."""
     adapter_id = str(lead.get("source_adapter_id") or "").strip()
@@ -604,13 +632,14 @@ def evaluate_publication_gate(
         and ownership_proof
     )
     source_adapter_identity_proof = _trusted_source_adapter_identity(lead, identity)
+    free_owned_identity_proof = _free_owned_host_identity(lead, identity, domain)
     identity_positive = bool(
         domain
         and identity_url_domain == domain
         and str(identity.get("status") or "").lower() == "verified"
         and float(identity.get("confidence") or 0) >= 0.70
         and int(identity.get("score") or 0) >= 70
-        and (legacy_identity_proof or source_adapter_identity_proof)
+        and (legacy_identity_proof or source_adapter_identity_proof or free_owned_identity_proof)
     )
     entity_classification = positive_entity_classification(lead, canonical_plan, identity_positive)
     groups = _signal_groups_from_plan(canonical_plan)
@@ -762,7 +791,7 @@ def _candidate_stage(gate: Dict[str, Any], *, shadow_mode: bool) -> str:
     if not gate["publishable"]:
         return "rejected"
     method = str(gate["entity_resolution"].get("resolution_method") or "")
-    if shadow_mode and method == "verified_source_adapter":
+    if shadow_mode and method in {"verified_source_adapter", "free_owned_host_verification"}:
         return "evidence_verified"
     return "qualified"
 

@@ -1114,30 +1114,109 @@ def _get_supabase_key() -> str:
     return k
 
 
+def _is_q2_crm_seeking_canary(canonical_plan: dict) -> bool:
+    plan = canonical_plan if isinstance(canonical_plan, dict) else {}
+    raw_query = str(plan.get("raw_query") or "")
+    if "trovami aziende che stanno cercando un nuovo crm" in raw_query.casefold():
+        return True
+    contract = plan.get("semantic_query_contract") if isinstance(plan.get("semantic_query_contract"), dict) else {}
+    rels = contract.get("required_relationships") or []
+    return "target_company_seeking_crm_solution" in rels
+
+
+def _effective_publish_target(canonical_plan: dict, job_max: int) -> int:
+    # Q2 CRM canary product gate: one lifecycle-published buyer is enough.
+    if _is_q2_crm_seeking_canary(canonical_plan):
+        return 1
+    return int(job_max)
+
+
+def _shadow_final_status_and_stop(
+    *,
+    shadow_status: str,
+    unique_lifecycle_count: int,
+    job_max: int,
+    canonical_plan: dict,
+    resumable: bool,
+) -> tuple[str, str]:
+    publish_target = _effective_publish_target(canonical_plan, job_max)
+    published = int(unique_lifecycle_count)
+    if published >= publish_target:
+        return "completed", "completed_requested_count"
+    partial_stops = {
+        "partial_time_limit",
+        "partial_budget_exhausted",
+        "partial_sources_exhausted",
+    }
+    if resumable:
+        if str(shadow_status or "") in partial_stops:
+            return "pending", str(shadow_status)
+        required = (canonical_plan.get("signal_policy") or {}).get("required_signals") or []
+        if any(str(item).startswith("hiring") for item in required):
+            return "pending", "UNIQUE_EMPLOYER_TARGET_NOT_REACHED"
+        return "pending", "UNIQUE_TARGET_COMPANY_COUNT_NOT_REACHED"
+    if str(shadow_status or "") in partial_stops:
+        return "error", str(shadow_status)
+    required = (canonical_plan.get("signal_policy") or {}).get("required_signals") or []
+    if any(str(item).startswith("hiring") for item in required):
+        return "error", "UNIQUE_EMPLOYER_TARGET_NOT_REACHED"
+    return "error", "UNIQUE_TARGET_COMPANY_COUNT_NOT_REACHED"
+
+
 def _shadow_unique_target_stop_reason(
     *,
     shadow_status: str,
     unique_lifecycle_count: int,
     job_max: int,
     canonical_plan: dict,
+    resumable: bool,
 ) -> str:
-    # Q2 CRM seeking: gate is "at least one qualified buyer".
-    # The search job still targets job_max leads (for planning/budget),
-    # but we must not fail the canary just because the second distinct
-    # company isn't found inside the €0.05 envelope.
+    _, stop = _shadow_final_status_and_stop(
+        shadow_status=shadow_status,
+        unique_lifecycle_count=unique_lifecycle_count,
+        job_max=job_max,
+        canonical_plan=canonical_plan,
+        resumable=resumable,
+    )
+    return stop
+
+
+def _finalize_matrix_canary(
+    supabase: Any,
+    *,
+    search_id: str,
+    search_status: str,
+    stop_reason: str,
+    lifecycle_published: int,
+    cost_eur: float,
+) -> None:
     try:
-        raw_query = str((canonical_plan or {}).get("raw_query") or "")
-        if "trovami aziende che stanno cercando un nuovo crm" in raw_query.casefold():
-            if unique_lifecycle_count >= 1:
-                return shadow_status
-    except Exception:
-        pass
-    if unique_lifecycle_count >= int(job_max):
-        return shadow_status
-    required = (canonical_plan.get("signal_policy") or {}).get("required_signals") or []
-    if any(str(item).startswith("hiring") for item in required):
-        return "UNIQUE_EMPLOYER_TARGET_NOT_REACHED"
-    return "UNIQUE_TARGET_COMPANY_COUNT_NOT_REACHED"
+        rows = (
+            supabase.table("canary_runs")
+            .select("id,status")
+            .eq("search_id", str(search_id))
+            .in_("status", ["created", "running"])
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if not rows:
+            return
+        canary_id = rows[0]["id"]
+        passed = search_status == "completed" and stop_reason == "completed_requested_count"
+        supabase.table("canary_runs").update({
+            "status": "completed" if passed else "failed",
+            "stop_reason": stop_reason,
+            "completed_at": _utc_now_iso(),
+        }).eq("id", canary_id).execute()
+        print(
+            f"[worker_supabase] canary finalized id={canary_id} passed={passed} "
+            f"published={lifecycle_published} cost={cost_eur}",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[worker_supabase] canary finalize skipped: {exc}", flush=True)
 
 
 def _utc_now_iso() -> str:
@@ -5577,7 +5656,13 @@ def main() -> None:
                         if isinstance(item, dict) and employer_key_from_payload(item)
                     }
                     resumable = bool(shadow_resume.get("resumable"))
-                    final_status = "completed" if len(unique_lifecycle_keys) >= int(job_max) or not resumable else "pending"
+                    final_status, unique_stop_reason = _shadow_final_status_and_stop(
+                        shadow_status=shadow_result.status,
+                        unique_lifecycle_count=len(unique_lifecycle_keys),
+                        job_max=int(job_max),
+                        canonical_plan=canonical_shadow_plan if isinstance(canonical_shadow_plan, dict) else {},
+                        resumable=resumable,
+                    )
                     cumulative_raw = int(shadow_resume.get("cumulative_raw_unique") or 0)
                     cumulative_audited = int(shadow_resume.get("cumulative_audited") or 0)
                     selected_adapter_ids = list(shadow_result.coverage.adapter_ids)
@@ -5586,12 +5671,6 @@ def main() -> None:
                         for item in shadow_result.adapter_progress
                         if int(getattr(item, "calls", 0) or 0) > 0
                     ]
-                    unique_stop_reason = _shadow_unique_target_stop_reason(
-                        shadow_status=shadow_result.status,
-                        unique_lifecycle_count=len(unique_lifecycle_keys),
-                        job_max=int(job_max),
-                        canonical_plan=canonical_shadow_plan if isinstance(canonical_shadow_plan, dict) else {},
-                    )
                     final_shadow_progress = {
                         "stage": "source_adapter_shadow_resumable" if resumable else "source_adapter_shadow_completed",
                         "stop_reason": unique_stop_reason,
@@ -5670,7 +5749,7 @@ def main() -> None:
                         "provider_exhausted_authoritative": provider_exhausted,
                         "shadow_resume": shadow_resume,
                         "resume_cursor": next(iter(shadow_resume.get("resume_cursors", {}).values()), None),
-                        "published": 0,
+                        "published": len(unique_lifecycle_keys),
                         "cost_eur": cumulative_cost,
                         "updated_at": _utc_now_iso(),
                     }
@@ -5683,6 +5762,14 @@ def main() -> None:
                         "progress": final_shadow_progress,
                         "updated_at": _utc_now_iso(),
                     }).eq("id", job_id).eq("status", "processing").execute()
+                    _finalize_matrix_canary(
+                        supabase,
+                        search_id=str(job_id),
+                        search_status=final_status,
+                        stop_reason=unique_stop_reason,
+                        lifecycle_published=len(unique_lifecycle_keys),
+                        cost_eur=cumulative_cost,
+                    )
                 except Exception as shadow_error:
                     _heartbeat_stop.set()
                     print(

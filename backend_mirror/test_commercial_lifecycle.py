@@ -258,6 +258,24 @@ def test_source_adapter_identity_rejects_unknown_forged_or_incomplete_proof():
     assert evaluate_publication_gate(lead, PLAN, cost_within_budget=True)["official_domain_verified"] is False
 
 
+def test_free_owned_host_generic_web_identity_is_accepted():
+    lead = valid_lead()
+    lead["source_adapter_id"] = "generic_web_research_v1"
+    lead["sito"] = "https://trenord.it/"
+    lead["domain_verification"].update({
+        "adapter_id": "generic_web_research_v1",
+        "url": "https://trenord.it/",
+        "status": "verified",
+        "confidence": 0.85,
+        "score": 85,
+        "resolution_method": "free_owned_host_verification",
+        "resolution_source": "name_or_evidence_host_candidate",
+        "evidence": ["company_tokens_in_host", "legal_name_in_page", "free_owned_host_candidate"],
+    })
+    gate = evaluate_publication_gate(lead, PLAN, cost_within_budget=True)
+    assert gate["official_domain_verified"] is True
+
+
 def test_publication_gate_requires_budget_and_why_now_and_causal_plan():
     lead = valid_lead()
     assert evaluate_publication_gate(lead, PLAN)["cost_within_budget"] is False
