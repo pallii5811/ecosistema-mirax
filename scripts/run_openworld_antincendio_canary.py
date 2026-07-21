@@ -215,8 +215,8 @@ def main() -> int:
         "original_query": QUERY,
         "search_mode": "agentic_only",
         "search_strategy": "organic_web_search",
-        "max_leads": REQUESTED,
-        "requested_leads": REQUESTED,
+        "max_leads": ZONE_LEADS,
+        "requested_leads": ZONE_LEADS,
         "lead_target": REQUESTED,
         "canonical_plan": plan,
         "uqe_plan": {
