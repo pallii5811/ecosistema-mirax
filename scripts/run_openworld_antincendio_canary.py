@@ -16,33 +16,35 @@ from supabase import create_client
 ROOT = Path("/home/worker/app/backend-staging")
 sys.path.insert(0, str(ROOT))
 
-from commercial_intent.compiler import CommercialIntentCompiler
-from commercial_intent.planner import OfferToBuyerNeedPlanner
-from contracts.commercial_intent import normalize_commercial_intent
+    from commercial_intent.compiler import CommercialIntentCompiler
+    from commercial_intent.planner import OfferToBuyerNeedPlanner
+    from commercial_intent.runtime import spec_to_canonical_plan
+    from contracts.commercial_intent import normalize_commercial_intent
 
-QUERY = (
-    "Installiamo sistemi antincendio industriali. "
-    "Trovami 3 PMI del Nord Italia con segnali recenti di nuovi stabilimenti, "
-    "ampliamenti produttivi o adeguamenti documentati, con un contatto pubblico."
-)
-REQUESTED = 3
-HARD_CAP = 0.10
+    QUERY = (
+        "Installiamo sistemi antincendio industriali. "
+        "Trovami 3 PMI del Nord Italia con segnali recenti di nuovi stabilimenti, "
+        "ampliamenti produttivi o adeguamenti documentati, con un contatto pubblico."
+    )
+    REQUESTED = 3
+    HARD_CAP = 0.10
 
 
-def main() -> int:
-    env = dotenv_values(ROOT / ".env")
-    os.environ.update({k: v for k, v in env.items() if v is not None})
-    sb = create_client(env["SUPABASE_URL"], env["SUPABASE_SERVICE_ROLE_KEY"])
+    def main() -> int:
+        env = dotenv_values(ROOT / ".env")
+        os.environ.update({k: v for k, v in env.items() if v is not None})
+        sb = create_client(env["SUPABASE_URL"], env["SUPABASE_SERVICE_ROLE_KEY"])
 
-    compiler = CommercialIntentCompiler()
-    planner = OfferToBuyerNeedPlanner()
-    spec_obj = compiler.compile(QUERY)
-    spec = normalize_commercial_intent({
-        **spec_obj.to_dict(),
-        "target_company_profile": spec_obj.target_company_profile,
-    })
-    hypotheses = [h.to_dict() for h in planner.plan(spec)]
-    spec["commercial_hypotheses"] = hypotheses
+        compiler = CommercialIntentCompiler()
+        planner = OfferToBuyerNeedPlanner()
+        spec_obj = compiler.compile(QUERY)
+        spec = normalize_commercial_intent({
+            **spec_obj.to_dict(),
+            "target_company_profile": spec_obj.target_company_profile,
+        })
+        hypotheses = [h.to_dict() for h in planner.plan(spec)]
+        spec["commercial_hypotheses"] = hypotheses
+        canonical_plan = spec_to_canonical_plan(spec)
 
     search_id = str(uuid.uuid4())
     canary_id = str(uuid.uuid4())
@@ -57,6 +59,8 @@ def main() -> int:
         "max_leads": REQUESTED,
         "requested_leads": REQUESTED,
         "lead_target": REQUESTED,
+        "canonical_plan": canonical_plan,
+        "uqe_plan": {"canonical_plan": canonical_plan},
         "commercial_intent_spec": spec,
         "commercial_hypotheses": hypotheses,
         "commercial_intent_required": True,

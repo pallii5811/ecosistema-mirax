@@ -2054,7 +2054,18 @@ def _canonical_plan_from_intent(intent: Any) -> Optional[Dict[str, Any]]:
     uqe_plan = intent.get("uqe_plan")
     if isinstance(uqe_plan, dict) and isinstance(uqe_plan.get("canonical_plan"), dict):
         return uqe_plan["canonical_plan"]
-    return intent.get("canonical_plan") if isinstance(intent.get("canonical_plan"), dict) else None
+    if isinstance(intent.get("canonical_plan"), dict):
+        return intent["canonical_plan"]
+    # Persisted CommercialIntentSpec is authoritative when no legacy canonical_plan exists.
+    try:
+        from commercial_intent.runtime import resolve_authoritative_intent
+
+        authoritative = resolve_authoritative_intent(intent)
+        if isinstance(authoritative, dict) and authoritative.get("raw_query"):
+            return authoritative
+    except Exception:
+        pass
+    return None
 
 
 def _hydrate_intent_from_job(job: Dict[str, Any], intent: Any) -> Dict[str, Any]:
