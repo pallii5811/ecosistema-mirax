@@ -329,7 +329,9 @@ def build_shadow_resume_state(
                 pass
             else:
                 resume_cursors[item.adapter_id] = new_value
-        elif item.exhausted:
+        elif item.exhausted and bool(getattr(item, "exhaustion_authoritative", False)):
+            # Only authoritative exhaustion drops the cursor. Budget/time partials
+            # often arrive with next_cursor=None and were wiping productive SERP state.
             resume_cursors.pop(item.adapter_id, None)
         provider_exhausted = provider_exhausted and item.exhausted
         provider_exhausted_authoritative = (

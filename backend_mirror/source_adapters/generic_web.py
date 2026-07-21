@@ -588,6 +588,13 @@ _STARTUP_DESCRIPTOR = (
     r"(?:italiana|italo-americana|edutech|deeptech|fintech|foodtech|biotech|cleantech|saas|ai|tech)?"
 )
 _SNIPPET_COMPANY_PATTERNS = (
+    # Buyer adoption headlines: "Valsir sceglie CDM … per implementare il CRM"
+    # must keep the buyer (Valsir), not the vendor/publisher host.
+    re.compile(
+        r"^([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+"
+        r"(?:sceglie|adotta|implementa|migra(?:\s+a)?|passa a)\b",
+        re.I,
+    ),
     # Prefer "la startup … Name chiude/ha/annuncia" over topical prefixes.
     re.compile(
         rf"\bla startup(?:\s+{_STARTUP_DESCRIPTOR})?\s+"
@@ -637,7 +644,8 @@ def _snippet_company_hint(snippet: str) -> str:
 _COMPANY_NAME_MAX_LEN = 45
 _COMPANY_NAME_MAX_WORDS = 5
 _TITLE_ACTION_TAIL_RE = re.compile(
-    r"\s+(?:chiude un|chiude il|chiude la|ha raccolto|hanno raccolto|raccoglie|annuncia|annunciano|sfiora|supera|porta a)\b",
+    r"\s+(?:chiude un|chiude il|chiude la|ha raccolto|hanno raccolto|raccoglie|annuncia|annunciano|"
+    r"sfiora|supera|porta a|sceglie|adotta|implementa|migra a|passa a)\b",
     re.I,
 )
 

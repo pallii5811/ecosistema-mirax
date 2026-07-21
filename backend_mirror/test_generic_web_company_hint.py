@@ -15,6 +15,14 @@ def test_title_company_rejects_market_summary_headlines() -> None:
     assert _title_company_leading("Invertix chiude un round pre-seed da 1,7 milioni di euro") == "Invertix"
 
 
+def test_crm_adoption_title_extracts_buyer_not_vendor() -> None:
+    title = "Valsir sceglie CDM Tecnoconsulting per implementare il CRM analitico"
+    assert _title_company_leading(title) == "Valsir"
+    assert _snippet_company_hint(title) == "Valsir"
+    html = f"<html><body><article>{title}. Valsir rafforza la gestione clienti.</article></body></html>"
+    assert _company_identity_hint(title=title, snippet=title, html=html) == "Valsir"
+
+
 def test_company_hint_matches_legal_suffix_variants() -> None:
     source = "Sirius Game, la startup edutech chiude un round da 1,3 milioni di euro."
     assert company_hint_present_in_source("Sirius Game S.r.l.", source)
