@@ -70,6 +70,7 @@ _WORKDAY_TENANT_CORPORATE_DOMAINS: Mapping[str, str] = {
     "kiongroup": "still.com",
     "edenpeople": "edenred.com",
     "db": "db.com",
+    "pwc": "pwc.com",
 }
 
 RETRYABLE_FAILURE_CODES = frozenset({
@@ -333,6 +334,7 @@ def parse_workday_json(payload: Mapping[str, Any], source_url: str) -> List[Dict
             "columbiasportswearcompany": "Columbia Sportswear",
             "movadogroup": "Movado",
             "scj": "SC Johnson",
+            "pwc": "PwC",
         }
         employer_name = name_map.get(tenant, "")
     if not employer_name:

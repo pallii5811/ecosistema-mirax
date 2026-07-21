@@ -39,6 +39,22 @@ def _sales_request() -> AdapterDiscoveryRequest:
     )
 
 
+def _technology_request() -> AdapterDiscoveryRequest:
+    return AdapterDiscoveryRequest(
+        intent="hiring",
+        signal_ids=("hiring_technology",),
+        signal_match_mode="all",
+        geographies=("Italia",),
+        freshness_max_age_days=180,
+        requested_count=2,
+        budget_eur=0.05,
+        query="ingegneri informatici Italia",
+        sectors=(),
+        technical_filters={},
+        cursor=None,
+    )
+
+
 def test_jsonld_vacancy_extracted():
     html = """
     <html><head>
@@ -137,6 +153,49 @@ def test_workday_cxs_tenant_name_fallback_without_hiring_organization():
     assert records[0]["company_name"] == "ING"
     assert records[0]["employer_official_domain"] == "ing.it"
     assert records[0]["published_at"].startswith("2026-03-16")
+
+
+def test_workday_cxs_pwc_tenant_maps_corporate_domain():
+    payload = {
+        "jobPostingInfo": {
+            "title": "Software Engineer Associate - MILANO [DIG]",
+            "location": "Milan",
+            "startDate": "2026-02-10",
+            "canApply": True,
+            "jobReqId": "REQ-12345",
+            "jobDescription": "Software engineering role in Milan.",
+            "hiringOrganization": {"name": "PricewaterhouseCoopers Business Services Srl"},
+        }
+    }
+    url = (
+        "https://pwc.wd3.myworkdayjobs.com/global_campus_careers/job/milan/"
+        "software-engineer-associate---milan/apply"
+    )
+    records = parse_workday_json(payload, url)
+    assert len(records) == 1
+    assert records[0]["employer_official_domain"] == "pwc.com"
+    assert records[0]["official_domain_verified"] is True
+    assert records[0]["employer_is_direct"] is True
+
+
+def test_validate_record_accepts_blacklisted_enterprise_on_first_party_ats():
+    payload = {
+        "jobPostingInfo": {
+            "title": "Software Engineer Associate - MILANO [DIG]",
+            "location": "Milan",
+            "startDate": "2026-07-20",
+            "canApply": True,
+            "jobDescription": "Software engineering role in Milan.",
+            "hiringOrganization": {"name": "PricewaterhouseCoopers Business Services Srl"},
+        }
+    }
+    url = (
+        "https://pwc.wd3.myworkdayjobs.com/global_campus_careers/job/milan/"
+        "software-engineer-associate---milan/apply"
+    )
+    record = enrich_record_with_recruiter_fields(parse_workday_json(payload, url)[0])
+    ok, rejection = _validate_record(record, _technology_request(), date(2026, 7, 21))
+    assert ok, rejection
 
 
 def test_workday_cxs_failure_codes_are_precise():

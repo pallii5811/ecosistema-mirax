@@ -1394,6 +1394,23 @@ def _employer_official_domain(record: Mapping[str, Any]) -> str:
     )
 
 
+def _official_domain_accepted_for_hiring(record: Mapping[str, Any], official_domain: str) -> bool:
+    if not official_domain:
+        return False
+    if not is_blacklisted_domain(official_domain):
+        return True
+    # Enterprise blacklist blocks CRM/news targets, not a verified first-party ATS vacancy.
+    if record.get("official_domain_verified") is not True or record.get("employer_is_direct") is not True:
+        return False
+    if str(record.get("source_subtype") or "") != "first_party_ats":
+        return False
+    evidence = {str(item) for item in (record.get("domain_verification_evidence") or ())}
+    return bool(
+        {"workday_tenant_corporate_map", "employer_corporate_domain_resolved"} & evidence
+        or "careers_subdomain_corporate_link" in evidence
+    )
+
+
 def _validate_record(
     record: Mapping[str, Any],
     request: AdapterDiscoveryRequest,
@@ -1500,7 +1517,7 @@ def _validate_record(
                 return False, "OPERATIONAL_ROLE_UNPROVEN" if specialized == ["hiring_operational"] else "HIRING_ROLE_MISMATCH"
     official_domain = _employer_official_domain(record)
     vacancy_source_domain = _host(record.get("vacancy_source_domain") or record.get("source_url"))
-    if not official_domain or is_blacklisted_domain(official_domain):
+    if not _official_domain_accepted_for_hiring(record, official_domain):
         return False, "OFFICIAL_DOMAIN_UNRESOLVED"
     if vacancy_source_domain and official_domain == vacancy_source_domain:
         host_parts = vacancy_source_domain.split(".")
