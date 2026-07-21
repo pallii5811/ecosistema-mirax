@@ -23,6 +23,12 @@ _IT_MONTHS = {
 _EVENT_PATTERNS: Tuple[Tuple[str, re.Pattern[str]], ...] = (
     ("hiring_sales", re.compile(r"\b(assum\w*|ricerca|cerca)\b.{0,40}\b(commercial\w*|sales|account manager|business developer)\b", re.I)),
     ("new_location", re.compile(r"\b(nuova sede|nuovo punto vendita|ha aperto|inaugur\w+)\b", re.I)),
+    ("production_expansion", re.compile(
+        r"\b(nuovo\s+stabilimento|nuova\s+unit[aà]\s+produttiva|ampliamento\s+(?:produttivo|dello\s+stabilimento|della\s+sede)|"
+        r"capacit[aà]\s+produttiva|nuovo\s+impianto|nuova\s+linea\s+di\s+produzione|"
+        r"investe\s+in\s+(?:un\s+)?(?:nuovo\s+)?(?:stabilimento|impianto))\b",
+        re.I,
+    )),
     ("geographic_expansion", re.compile(r"\b(espansione|entra nel mercato|nuova filiale|rete commerciale)\b", re.I)),
     ("tender_won", re.compile(r"\b(aggiudicat\w*|ha vinto la gara|affidamento|appalto)\b", re.I)),
     ("funding", re.compile(r"\b(ha raccolto|round|finanziament\w*|investiment\w* di)\b", re.I)),

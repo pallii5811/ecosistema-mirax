@@ -127,7 +127,10 @@ def resolve_market_scope(
             reasons.append("EMPLOYEES_BELOW_MINIMUM")
         if max_e is not None and employees > int(max_e):
             reasons.append("EMPLOYEES_ABOVE_MAXIMUM")
-    else:
+    elif size_class in {"unknown", ""}:
+        # Exact headcount missing is only a hard fail when size class is also unknown.
+        # A known PMI class (micro/small/medium) is enough to keep the lead in
+        # market-scope evaluation; enterprise still fails via SIZE_CLASS_OUT_OF_SCOPE.
         reasons.append("SIZE_UNVERIFIED")
 
     if revenue is not None:
@@ -176,7 +179,10 @@ def resolve_market_scope(
     )):
         status = MarketScopeStatus.OUT_OF_SCOPE
         passed = False
-    elif authoritative_hits >= 1 or support_hits >= 2:
+    elif authoritative_hits >= 1 or support_hits >= 1:
+        # One support hit is enough when size class is an allowed PMI band
+        # (or another non-contradictory support signal). Exact headcount remains
+        # preferred and still raises authoritative_hits when present.
         status = MarketScopeStatus.IN_SCOPE
         passed = True
         out_codes = []

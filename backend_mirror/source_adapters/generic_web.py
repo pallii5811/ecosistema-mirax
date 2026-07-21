@@ -1461,6 +1461,15 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 "technology_adoption": {"technology_adoption", "technology_migration"},
                                 "regulatory_change": {"regulatory_change", "compliance_gap", "certification"},
                                 "leadership_change": {"leadership_change"},
+                                "production_expansion": {
+                                    "production_expansion", "new_location", "geographic_expansion", "expansion",
+                                },
+                                "new_location": {
+                                    "new_location", "production_expansion", "geographic_expansion", "expansion",
+                                },
+                                "geographic_expansion": {
+                                    "geographic_expansion", "production_expansion", "new_location", "expansion",
+                                },
                             }
                             for req in request.signal_ids:
                                 family = related.get(event.event_type or "", set()) | {event.event_type or ""}
@@ -1674,7 +1683,14 @@ def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
             employees = None
         if size in {"enterprise", "large"} or (employees is not None and employees > 249):
             return False, "ENTERPRISE_OUT_OF_TARGET"
-        if size not in {"micro", "small", "medium", "pmi", "sme"} and employees is None:
+        # Open-world semantic path: market-scope acceptance verifies PMI later.
+        # Rejecting unknown size here zeroed discovery on every "PMI …" query
+        # (news pages rarely expose employee counts in acquisition HTML).
+        if (
+            size not in {"micro", "small", "medium", "pmi", "sme"}
+            and employees is None
+            and not semantic_required
+        ):
             return False, "SME_STATUS_UNVERIFIED"
     return True, ""
 

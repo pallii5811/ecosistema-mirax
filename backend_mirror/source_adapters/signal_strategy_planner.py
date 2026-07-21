@@ -71,22 +71,22 @@ _SIGNAL_LEXICON: Dict[str, Dict[str, Any]] = {
         "sources": ("procurement_registry",),
     },
     "new_location": {
-        "events": ("nuova sede", "nuovo punto vendita", "ha aperto", "inaugura"),
-        "synonyms": ("apertura", "filiale", "store opening"),
-        "adapters": ("official_growth_signals_v1",),
+        "events": ("nuova sede", "nuovo punto vendita", "ha aperto", "inaugura", "nuovo stabilimento"),
+        "synonyms": ("apertura", "filiale", "store opening", "stabilimento"),
+        "adapters": ("generic_web_research_v1", "official_growth_signals_v1"),
         "sources": ("corporate_newsroom", "official_company_website", "recognized_news"),
     },
     "geographic_expansion": {
         "events": ("espansione", "entra nel mercato", "nuova area", "rete commerciale"),
         "synonyms": ("espansione geografica", "espansione commerciale", "nuove filiali"),
-        "adapters": ("official_growth_signals_v1",),
+        "adapters": ("generic_web_research_v1", "official_growth_signals_v1"),
         "sources": ("corporate_newsroom", "industry_publication", "recognized_news"),
     },
     "production_expansion": {
-        "events": ("nuovo stabilimento", "ampliamento produttivo", "capacità produttiva"),
-        "synonyms": ("stabilimento", "impianto", "produzione"),
-        "adapters": ("official_growth_signals_v1",),
-        "sources": ("corporate_newsroom", "industry_publication"),
+        "events": ("nuovo stabilimento", "ampliamento produttivo", "capacità produttiva", "nuova unità produttiva"),
+        "synonyms": ("stabilimento", "impianto", "produzione", "ampliamento dello stabilimento"),
+        "adapters": ("generic_web_research_v1", "official_growth_signals_v1"),
+        "sources": ("corporate_newsroom", "industry_publication", "recognized_news"),
     },
     "funding": {
         "events": ("ha raccolto", "round di investimento", "finanziamento", "venture capital"),
@@ -392,6 +392,42 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
                 adapter_affinity=("generic_web_research_v1",),
             ),
         )
+
+    if set(signals).intersection({"production_expansion", "new_location", "geographic_expansion", "expansion"}):
+        # Buyer expansion headlines — keep seller-offer terms out of the SERP so
+        # fire-protection vendors are not mistaken for expanding industrial buyers.
+        expansion_exclude = '-antincendio -sprinkler -"impianti antincendio" -extinguisher -vigilanza'
+        expansion_queries = (
+            f'("nuovo stabilimento" OR "ampliamento produttivo" OR "ampliamento dello stabilimento" '
+            f'OR "nuova unità produttiva") {geo} (2024 OR 2025 OR 2026) (Spa OR Srl OR impresa) {expansion_exclude}',
+            f'{geo} ("inaugura" OR "ha inaugurato" OR "ha aperto") ("nuovo stabilimento" OR "nuovo impianto" '
+            f'OR "nuova sede produttiva") (2024 OR 2025 OR 2026) {expansion_exclude}',
+            f'site:.it "comunicato stampa" ("nuovo stabilimento" OR "ampliamento produttivo" OR '
+            f'"capacità produttiva") {geo} (2025 OR 2026) {expansion_exclude}',
+        )
+        signal_set = set(signals)
+        primary_signal = next(
+            (item for item in ("production_expansion", "new_location", "geographic_expansion", "expansion") if item in signal_set),
+            "production_expansion",
+        )
+        for idx, query in enumerate(expansion_queries):
+            strategies.insert(
+                idx,
+                DiscoveryStrategy(
+                    strategy_id=f"{primary_signal}:industrial_expansion_{idx}",
+                    signal_type=primary_signal,
+                    source_class="recognized_news",
+                    search_query=query.strip(),
+                    preferred_domains=(),
+                    excluded_domains=_DEFAULT_EXCLUDED,
+                    freshness_days=spec.freshness_days,
+                    expected_evidence=("company_name", "event_date", "evidence_excerpt", "source_url"),
+                    estimated_cost=0.005,
+                    priority=1 + idx,
+                    fallback_level=0,
+                    adapter_affinity=("generic_web_research_v1",),
+                ),
+            )
 
     # Stable sort: lower priority number first, then fallback_level.
     strategies.sort(key=lambda item: (item.priority, item.fallback_level, item.strategy_id))

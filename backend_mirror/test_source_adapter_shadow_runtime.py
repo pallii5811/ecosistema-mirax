@@ -86,6 +86,7 @@ def _candidate():
         contradiction_flags=(),
         provenance={
             "company_size": "small",
+            "employee_count": 45,
             "domain_verification": domain_verification,
             "urgency_score": 0.9,
             "causality_score": 0.9,

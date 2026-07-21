@@ -56,7 +56,12 @@ class GenericWebDiscoveryState:
         if hard + 1e-9 < reserved:
             return min(DISCOVERY_SOFT_CAP_EUR, hard)
         hard_discovery = max(0.0, hard - reserved)
-        base = min(DISCOVERY_SOFT_CAP_EUR, hard_discovery)
+        # Scale the first-wave soft pool with the product hard cap. A fixed
+        # €0.015 envelope was correct for €0.05 canaries but starved €0.10
+        # open-world runs (fetch/identity/market-scope never got enough SERPs
+        # in one strategy wave).
+        soft = max(DISCOVERY_SOFT_CAP_EUR, min(0.045, hard_discovery * 0.45))
+        base = min(soft, hard_discovery)
         if self.followup_queries:
             return hard_discovery
         # Soft cap bounds the first wave only. Once that wave is drained and
@@ -66,7 +71,7 @@ class GenericWebDiscoveryState:
             self.provider_calls >= 1
             and self.pages_fetched > 0
             and not self.pending_urls
-            and float(self.discovery_spent_eur) + 1e-9 >= DISCOVERY_SOFT_CAP_EUR
+            and float(self.discovery_spent_eur) + 1e-9 >= base
         ):
             return hard_discovery
         return base

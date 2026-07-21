@@ -446,6 +446,7 @@ async def _default_growth_provider(request: AdapterDiscoveryRequest, offset: int
     if bool((request.technical_filters or {}).get("universal_engine")):
         from .cheap_discovery_prefilter import DiscoveryHit, prefilter_discovery_hit
         active_query = next(iter(queries), request.query)
+        semantic_open_world = request.technical_filters.get("semantic_authority_required") is True
         gated: List[str] = []
         codes: Dict[str, int] = {}
         raw = len(urls)
@@ -453,6 +454,8 @@ async def _default_growth_provider(request: AdapterDiscoveryRequest, offset: int
             path = (urlparse(url).path or "").replace("/", " ").replace("-", " ")
             decision = prefilter_discovery_hit(
                 DiscoveryHit(title="", url=url, snippet=f"{path} {active_query}"),
+                require_event_hint=not semantic_open_world,
+                allow_admin_assoc=semantic_open_world,
             )
             if decision.accepted:
                 gated.append(url)
@@ -589,7 +592,12 @@ def _record_valid(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
             employees = None
         if size in {"enterprise", "large"} or (employees is not None and employees > 249):
             return False, "ENTERPRISE_OUT_OF_TARGET"
-        if size not in {"micro", "small", "medium", "pmi", "sme"} and employees is None:
+        semantic_required = request.technical_filters.get("semantic_authority_required") is True
+        if (
+            size not in {"micro", "small", "medium", "pmi", "sme"}
+            and employees is None
+            and not semantic_required
+        ):
             return False, "SME_STATUS_UNVERIFIED"
     return True, ""
 

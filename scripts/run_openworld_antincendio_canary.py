@@ -201,9 +201,11 @@ def main() -> int:
         "lane_id": "antincendio_web",
         "source_types": plan["source_policy"]["preferred_source_classes"],
         "query_templates": [
-            QUERY,
-            "nuovo stabilimento OR ampliamento produttivo antincendio Nord Italia 2025 OR 2026",
-            "adeguamento antincendio PMI Lombardia Veneto Emilia",
+            # Buyer expansion evidence only — never include seller offer terms
+            # (antincendio) or SERPs collapse onto fire-protection vendors.
+            "nuovo stabilimento OR ampliamento produttivo Nord Italia 2025 OR 2026 Spa OR Srl",
+            "inaugura nuovo stabilimento Lombardia OR Veneto OR Emilia 2025 OR 2026",
+            "ampliamento dello stabilimento OR nuova unita produttiva PMI Nord Italia",
         ],
         "expected_evidence": SIGNALS,
         "execution_mode": "search",

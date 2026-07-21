@@ -24,7 +24,9 @@ _ADMIN_ASSOC_RE = re.compile(
     re.I,
 )
 _EVENT_HINT_RE = re.compile(
-    r"\b(assum\w*|inaugur\w*|apertur\w*|nuova sede|espans\w*|aggiudic\w*|"
+    r"\b(assum\w*|inaugur\w*|apertur\w*|nuova sede|nuovo stabilimento|nuova unit[aà] produttiva|"
+    r"ampliamento\s+(?:produttivo|dello\s+stabilimento|della\s+sede)|capacit[aà]\s+produttiva|"
+    r"nuovo\s+impianto|linea\s+di\s+produzione|espans\w*|aggiudic\w*|"
     r"finanz\w*|investiment\w*|nomina\w*|CEO|direttore|certific\w*|adeguament\w*|"
     r"campagna\w*|rebrand\w*|migrazion\w*|implementa\w*|raccolt\w*|CRM|ERP|Meta Ads|Google Ads|pubblicitaria)\b",
     re.I,

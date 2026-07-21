@@ -5928,7 +5928,15 @@ def main() -> None:
                             "error_message": str(shadow_error)[:500],
                             "runtime_started": runtime_started,
                             "budget_stage": "post_runtime" if budget_after_runtime else "pre_runtime",
-                            "remaining_budget": max(0.0, 0.05 - float(prior_shadow_resume.get("prior_cost_eur") or 0.0)),
+                            "remaining_budget": max(
+                                0.0,
+                                float(
+                                    ((canonical_shadow_plan or {}).get("budget_policy") or {}).get("hard_cost_eur")
+                                    or 0.10
+                                )
+                                - float(prior_shadow_resume.get("prior_cost_eur") or 0.0)
+                                - float(ledger_spent or 0.0),
+                            ),
                             "target": job_max,
                             "found": len(prior_qualified_payloads),
                             "unique_lifecycle_accepted_count": unique_prior_count,
