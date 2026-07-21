@@ -585,8 +585,23 @@ async def semantic_authority_qualifier(
             # after discovery spend; 8k still covers the evidence excerpt.
             semantic_window = 8_000
             if len(source_text) > semantic_window:
+                # For CRM seeking queries, the generic extractor's evidence
+                # excerpt may not include the "CRM selection/adoption" span.
+                # Re-anchor the semantic window on deterministic CRM evidence
+                # so the CRM semantic bridge can prove relationships.
+                if "target_company_seeking_crm_solution" in set(contract.required_relationships):
+                    try:
+                        from .crm_semantic_bridge import find_crm_seeking_evidence
+                        _crm_excerpt, crm_start, _crm_end = find_crm_seeking_evidence(source_text)
+                        if crm_start >= 0:
+                            evidence_offset = crm_start
+                        else:
+                            evidence_offset = -1
+                    except Exception:
+                        evidence_offset = -1
+                else:
+                    evidence_offset = source_text.find(evidence.excerpt)
                 snippet = str(provenance.get("search_snippet") or "")
-                evidence_offset = source_text.find(evidence.excerpt)
                 if evidence_offset < 0 and snippet:
                     evidence_offset = source_text.find(snippet[: min(len(snippet), 240)])
                 if evidence_offset < 0 and candidate.canonical_company_name:
