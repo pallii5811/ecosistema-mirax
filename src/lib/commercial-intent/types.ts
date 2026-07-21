@@ -30,6 +30,36 @@ export type SellerOffer = {
   category?: string | null
 }
 
+export type MarketScopePolicy = {
+  minimum_employees: number | null
+  maximum_employees: number | null
+  minimum_revenue_eur: number | null
+  maximum_revenue_eur: number | null
+  allowed_size_classes: Array<'micro' | 'small' | 'medium' | 'large' | 'enterprise'>
+  enterprise_opt_in: boolean
+  exclude_public_companies: boolean
+  exclude_state_controlled_major_operators: boolean
+  exclude_global_enterprises: boolean
+  exclude_large_corporate_groups: boolean
+  exclude_famous_brands: boolean
+  required_market_scope_confidence: number
+}
+
+export const DEFAULT_MIRAX_MARKET_SCOPE_POLICY: MarketScopePolicy = {
+  minimum_employees: 2,
+  maximum_employees: 249,
+  minimum_revenue_eur: null,
+  maximum_revenue_eur: 50_000_000,
+  allowed_size_classes: ['micro', 'small', 'medium'],
+  enterprise_opt_in: false,
+  exclude_public_companies: true,
+  exclude_state_controlled_major_operators: true,
+  exclude_global_enterprises: true,
+  exclude_large_corporate_groups: true,
+  exclude_famous_brands: true,
+  required_market_scope_confidence: 0.75,
+}
+
 export type TargetCompanyProfile = {
   entity_types?: Array<'company' | 'person' | 'public_body' | 'startup'>
   industries?: string[]
@@ -38,6 +68,7 @@ export type TargetCompanyProfile = {
   required_attributes?: string[]
   excluded_attributes?: string[]
   excluded_entities?: string[]
+  market_scope_policy?: MarketScopePolicy
 }
 
 export type EvidencePolicy = {
@@ -115,7 +146,7 @@ export const EMPTY_COMMERCIAL_INTENT_SPEC: CommercialIntentSpec = {
   seller_offer: { description: null },
   problem_solved: null,
   buyer_need: null,
-  target_company_profile: {},
+  target_company_profile: { market_scope_policy: DEFAULT_MIRAX_MARKET_SCOPE_POLICY },
   target_role: null,
   geography: [],
   sectors: [],

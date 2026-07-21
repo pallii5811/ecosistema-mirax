@@ -523,6 +523,36 @@ def evaluate_publication_gate(
     *,
     cost_within_budget: bool = False,
 ) -> Dict[str, Any]:
+    from lead_acceptance_service import default_market_scope_policy, evaluate_lead
+
+    decision = evaluate_lead(
+        lead,
+        canonical_plan,
+        market_scope_policy=default_market_scope_policy(canonical_plan),
+        cost_within_budget=cost_within_budget,
+    )
+    gate = dict(decision.publication_gate or {})
+    gate.update(
+        {
+            "publishable": decision.accepted,
+            "failures": [] if decision.accepted else (gate.get("failures") or ["lead_acceptance_rejected"]),
+            "rejection_codes": decision.rejection_codes,
+            "canonical_domain": decision.official_domain or gate.get("canonical_domain"),
+            "market_scope_status": decision.market_scope_status,
+            "commercial_event_status": decision.commercial_event_status,
+            "intent_strength": decision.intent_strength,
+            "lead_acceptance": decision.to_dict(),
+        }
+    )
+    return gate
+
+
+def _evaluate_publication_gate_core(
+    lead: Dict[str, Any],
+    canonical_plan: Dict[str, Any],
+    *,
+    cost_within_budget: bool = False,
+) -> Dict[str, Any]:
     domain = canonical_domain(
         lead.get("official_domain")
         or lead.get("employer_official_domain")
@@ -657,7 +687,7 @@ def evaluate_publication_gate(
     ]
     why_now = str(lead.get("why_now") or "").strip()
     why_now_present = len(why_now) >= 20 and not re.search(
-        r"(?:opportunit[aà]\s+generica|potrebbe\s+avere\s+bisogno|azienda\s+interessante)",
+        r"(?:opportunit[aÃ ]\s+generica|potrebbe\s+avere\s+bisogno|azienda\s+interessante)",
         why_now,
         re.I,
     )
@@ -787,6 +817,11 @@ def _execute_data(response: Any) -> List[Dict[str, Any]]:
     return data if isinstance(data, list) else []
 
 
+class _Response:
+    def __init__(self, data: Any):
+        self.data = data
+
+
 def _candidate_stage(gate: Dict[str, Any], *, shadow_mode: bool) -> str:
     if not gate["publishable"]:
         return "rejected"
@@ -794,6 +829,126 @@ def _candidate_stage(gate: Dict[str, Any], *, shadow_mode: bool) -> str:
     if shadow_mode and method in {"verified_source_adapter", "free_owned_host_verification"}:
         return "evidence_verified"
     return "qualified"
+
+
+def _persist_gated_lead(
+    supabase: Any,
+    *,
+    search_id: str,
+    user_id: Optional[str],
+    lead: Dict[str, Any],
+    gate: Dict[str, Any],
+    shadow_mode: bool,
+) -> Optional[Dict[str, Any]]:
+    domain = gate.get("canonical_domain")
+    if not domain:
+        return None
+    existing = _execute_data(
+        supabase.table("search_candidates")
+        .select("id")
+        .eq("search_id", search_id)
+        .eq("canonical_domain", domain)
+        .limit(1)
+        .execute()
+    )
+    payload = {
+        "search_id": search_id,
+        "user_id": user_id,
+        "canonical_domain": domain,
+        "entity_name": str(lead.get("azienda") or lead.get("name") or lead.get("nome") or domain)[:300],
+        "entity_type": gate["entity_classification"]["entity_type"],
+        "stage": _candidate_stage(gate, shadow_mode=shadow_mode),
+        "official_domain_verified": gate["official_domain_verified"],
+        "legal_name": gate["entity_resolution"]["legal_name"][:300] or None,
+        "entity_resolution_method": gate["entity_resolution"]["resolution_method"],
+        "entity_resolution_confidence": gate["entity_resolution"]["confidence"],
+        "positive_identity_signals": gate["entity_resolution"]["positive_signals"],
+        "identity_source_url": gate["entity_resolution"]["identity_source_url"],
+        "identity_resolved_at": gate["entity_resolution"]["resolved_at"],
+        "operating_company_probability": gate["entity_classification"]["operating_company_probability"],
+        "official_domain_confidence": gate["entity_classification"]["official_domain_confidence"],
+        "company_size_class": gate["entity_classification"]["company_size_class"],
+        "local_presence": gate["entity_classification"]["local_presence"],
+        "is_media": gate["entity_classification"]["is_media"],
+        "is_directory": gate["entity_classification"]["is_directory"],
+        "is_university": gate["entity_classification"]["is_university"],
+        "is_public_body": gate["entity_classification"]["is_public_body"],
+        "is_global_brand": gate["entity_classification"]["is_global_brand"],
+        "is_source_publisher": gate["entity_classification"]["is_source_publisher"],
+        "is_operating_buyer": gate["entity_classification"]["is_operating_buyer"],
+        "target_fit_verified": gate["buyer_fit_verified"],
+        "signal_verified": gate["relevant_buying_signal_present"],
+        "evidence_policy_passed": gate["evidence_supports_signal"],
+        "audit_completed": gate["audit_completed"],
+        "buyer_offer_fit_score": min(1.0, float(gate.get("buyer_fit_score") or 0) / 100),
+        "rejection_code": None if gate["publishable"] else gate["rejection_codes"][0],
+        "rejection_detail": {
+            "failed_gates": gate["failures"],
+            "reason_codes": gate["rejection_codes"],
+            "signal_match_mode": gate["signal_match_mode"],
+            "buyer_fit_method": gate.get("buyer_fit_method"),
+            "buyer_fit_evidence": gate.get("buyer_fit_evidence"),
+            "buyer_fit_score": gate.get("buyer_fit_score"),
+            "buyer_fit_pass": gate.get("buyer_fit_pass"),
+        },
+        "payload": lead,
+        "updated_at": _iso_now(),
+    }
+    if existing:
+        candidate_id = existing[0]["id"]
+        _execute_data(supabase.table("search_candidates").update(payload).eq("id", candidate_id).execute())
+    else:
+        rows = _execute_data(supabase.table("search_candidates").insert(payload).execute())
+        candidate_id = rows[0]["id"] if rows else None
+    if not candidate_id:
+        return None
+    for evidence in gate["evidence"]:
+        evidence_payload = {
+            "search_id": search_id,
+            "candidate_id": candidate_id,
+            "signal_type": canonical_signal_id(evidence["signal_type"]) or evidence["signal_type"],
+            "fact_type": evidence["fact_type"],
+            "source_url": evidence["source_url"],
+            "source_class": evidence["source_class"],
+            "claim_type": evidence["claim_type"],
+            "claim_value": evidence["claim_value"][:4000],
+            "source_publisher": evidence["source_publisher"],
+            "published_at": evidence["published_at"],
+            "retrieval_method": evidence["retrieval_method"],
+            "verification_status": evidence["verification_status"],
+            "contradiction_status": evidence["contradiction_status"],
+            "contradiction_detail": evidence.get("contradiction_detail") or {},
+            "evidence_excerpt": evidence["excerpt"][:2000],
+            "observed_at": evidence["observed_at"],
+            "confidence": evidence["confidence"],
+            "is_primary_source": evidence["source_class"] in {
+                "official_company_website", "official_registry", "public_procurement_portal",
+                "municipal_register", "company_careers", "technology_audit", "ad_transparency_library",
+            },
+            "content_hash": evidence["content_hash"],
+        }
+        try:
+            supabase.table("search_evidence").upsert(
+                evidence_payload,
+                on_conflict="candidate_id,signal_type,source_url,content_hash",
+            ).execute()
+        except Exception:
+            pass
+    if not gate["publishable"]:
+        return None
+    if shadow_mode:
+        stamped = dict(lead)
+        stamped["_lead_acceptance"] = gate.get("lead_acceptance")
+        stamped["_lead_acceptance_authority"] = "LeadAcceptanceService"
+        return stamped
+    try:
+        supabase.rpc("publish_search_candidate", {"p_candidate_id": candidate_id}).execute()
+        stamped = dict(lead)
+        stamped["_lead_acceptance"] = gate.get("lead_acceptance")
+        stamped["_lead_acceptance_authority"] = "LeadAcceptanceService"
+        return stamped
+    except Exception:
+        return None
 
 
 def persist_and_publish_candidates(
@@ -813,127 +968,15 @@ def persist_and_publish_candidates(
     """
     if not user_id and not shadow_mode:
         return []
-    budget_rows = _execute_data(
-        supabase.table("search_budget_state")
-        .select("hard_cost_eur,committed_cost_eur,status")
-        .eq("search_id", search_id)
-        .limit(1)
-        .execute()
+    from lead_acceptance.publication import evaluate_and_publish
+
+    result = evaluate_and_publish(
+        search_id,
+        leads,
+        canonical_plan,
+        requested_count=max(len(leads), 1),
+        supabase=supabase,
+        user_id=user_id,
+        shadow_mode=shadow_mode,
     )
-    budget = budget_rows[0] if budget_rows else {}
-    try:
-        cost_within_budget = bool(
-            budget
-            and float(budget.get("committed_cost_eur") or 0) <= float(budget.get("hard_cost_eur") or -1)
-            and str(budget.get("status") or "").lower() not in {"halted", "failed"}
-        )
-    except (TypeError, ValueError):
-        cost_within_budget = False
-    released: List[Dict[str, Any]] = []
-    for lead in leads:
-        if not isinstance(lead, dict):
-            continue
-        gate = evaluate_publication_gate(lead, canonical_plan, cost_within_budget=cost_within_budget)
-        domain = gate["canonical_domain"]
-        if not domain:
-            continue
-        existing = _execute_data(
-            supabase.table("search_candidates")
-            .select("id")
-            .eq("search_id", search_id)
-            .eq("canonical_domain", domain)
-            .limit(1)
-            .execute()
-        )
-        payload = {
-            "search_id": search_id,
-            "user_id": user_id,
-            "canonical_domain": domain,
-            "entity_name": str(lead.get("azienda") or lead.get("name") or lead.get("nome") or domain)[:300],
-            "entity_type": gate["entity_classification"]["entity_type"],
-            "stage": _candidate_stage(gate, shadow_mode=shadow_mode),
-            "official_domain_verified": gate["official_domain_verified"],
-            "legal_name": gate["entity_resolution"]["legal_name"][:300] or None,
-            "entity_resolution_method": gate["entity_resolution"]["resolution_method"],
-            "entity_resolution_confidence": gate["entity_resolution"]["confidence"],
-            "positive_identity_signals": gate["entity_resolution"]["positive_signals"],
-            "identity_source_url": gate["entity_resolution"]["identity_source_url"],
-            "identity_resolved_at": gate["entity_resolution"]["resolved_at"],
-            "operating_company_probability": gate["entity_classification"]["operating_company_probability"],
-            "official_domain_confidence": gate["entity_classification"]["official_domain_confidence"],
-            "company_size_class": gate["entity_classification"]["company_size_class"],
-            "local_presence": gate["entity_classification"]["local_presence"],
-            "is_media": gate["entity_classification"]["is_media"],
-            "is_directory": gate["entity_classification"]["is_directory"],
-            "is_university": gate["entity_classification"]["is_university"],
-            "is_public_body": gate["entity_classification"]["is_public_body"],
-            "is_global_brand": gate["entity_classification"]["is_global_brand"],
-            "is_source_publisher": gate["entity_classification"]["is_source_publisher"],
-            "is_operating_buyer": gate["entity_classification"]["is_operating_buyer"],
-            "target_fit_verified": gate["buyer_fit_verified"],
-            "signal_verified": gate["relevant_buying_signal_present"],
-            "evidence_policy_passed": gate["evidence_supports_signal"],
-            "audit_completed": gate["audit_completed"],
-            "buyer_offer_fit_score": min(1.0, float(gate.get("buyer_fit_score") or 0) / 100),
-            "rejection_code": None if gate["publishable"] else gate["rejection_codes"][0],
-            "rejection_detail": {
-                "failed_gates": gate["failures"],
-                "reason_codes": gate["rejection_codes"],
-                "signal_match_mode": gate["signal_match_mode"],
-                "buyer_fit_method": gate.get("buyer_fit_method"),
-                "buyer_fit_evidence": gate.get("buyer_fit_evidence"),
-                "buyer_fit_score": gate.get("buyer_fit_score"),
-                "buyer_fit_pass": gate.get("buyer_fit_pass"),
-            },
-            "payload": lead,
-            "updated_at": _iso_now(),
-        }
-        if existing:
-            candidate_id = existing[0]["id"]
-            rows = _execute_data(supabase.table("search_candidates").update(payload).eq("id", candidate_id).execute())
-        else:
-            rows = _execute_data(supabase.table("search_candidates").insert(payload).execute())
-            candidate_id = rows[0]["id"] if rows else None
-        if not candidate_id:
-            continue
-        for evidence in gate["evidence"]:
-            evidence_payload = {
-                "search_id": search_id,
-                "candidate_id": candidate_id,
-                "signal_type": canonical_signal_id(evidence["signal_type"]) or evidence["signal_type"],
-                "fact_type": evidence["fact_type"],
-                "source_url": evidence["source_url"],
-                "source_class": evidence["source_class"],
-                "claim_type": evidence["claim_type"],
-                "claim_value": evidence["claim_value"][:4000],
-                "source_publisher": evidence["source_publisher"],
-                "published_at": evidence["published_at"],
-                "retrieval_method": evidence["retrieval_method"],
-                "verification_status": evidence["verification_status"],
-                "contradiction_status": evidence["contradiction_status"],
-                "contradiction_detail": evidence.get("contradiction_detail") or {},
-                "evidence_excerpt": evidence["excerpt"][:2000],
-                "observed_at": evidence["observed_at"],
-                "confidence": evidence["confidence"],
-                "is_primary_source": evidence["source_class"] in {
-                    "official_company_website", "official_registry", "public_procurement_portal",
-                    "municipal_register", "company_careers", "technology_audit", "ad_transparency_library",
-                },
-                "content_hash": evidence["content_hash"],
-            }
-            try:
-                supabase.table("search_evidence").upsert(
-                    evidence_payload,
-                    on_conflict="candidate_id,signal_type,source_url,content_hash",
-                ).execute()
-            except Exception:
-                pass
-        if gate["publishable"] and shadow_mode:
-            released.append(lead)
-        elif gate["publishable"]:
-            try:
-                supabase.rpc("publish_search_candidate", {"p_candidate_id": candidate_id}).execute()
-                released.append(lead)
-            except Exception:
-                continue
-    return released
+    return result.published_leads

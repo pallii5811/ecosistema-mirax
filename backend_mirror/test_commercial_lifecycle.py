@@ -71,6 +71,7 @@ def valid_lead():
     return {
         "azienda": "Alfa Logistica Srl",
         "sito": "https://www.alfalogistica.example/",
+        "employee_count": 45,
         "source_url": "https://www.alfalogistica.example/lavora-con-noi",
         "evidence": "Alfa Logistica cerca nuovi autisti per la sede lombarda",
         "why_now": "L'apertura di nuove posizioni operative aumenta oggi l'esposizione assicurativa della PMI.",
@@ -375,7 +376,9 @@ def test_shadow_persists_canonical_gate_without_customer_publication():
         canonical_plan=PLAN,
         shadow_mode=True,
     )
-    assert released == [lead]
+    assert len(released) == 1
+    assert released[0].get("azienda") == lead["azienda"]
+    assert released[0].get("_lead_acceptance_authority") == "LeadAcceptanceService"
     candidate_inserts = [call for call in service.calls if call[0] == "search_candidates" and call[1] == "insert"]
     assert len(candidate_inserts) == 1
     assert candidate_inserts[0][2]["user_id"] is None
@@ -401,6 +404,7 @@ def digital_audit_lead(**overrides):
     lead = {
         "azienda": "Shine Cleaning – Impresa di Pulizie Milano",
         "sito": "https://shinecleaning.it",
+        "employee_count": 28,
         "entity_type": "company",
         "citta": "Milano",
         "company_size_class": "unknown",

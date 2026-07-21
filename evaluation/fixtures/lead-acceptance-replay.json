@@ -1,0 +1,78 @@
+{
+  "version": "1.0.0",
+  "description": "Offline replay fixtures for LeadAcceptanceService — zero spend",
+  "accept_fixtures": [
+    {
+      "id": "accept-pmi-hiring-001",
+      "query_plan": "commercial-search-plan.valid",
+      "lead": {
+        "azienda": "Alfa Logistica Srl",
+        "employee_count": 45,
+        "sito": "https://www.alfalogistica.example/",
+        "matched_signals": ["hiring_operational"]
+      }
+    },
+    {
+      "id": "accept-invertix-funding-001",
+      "plan": {
+        "raw_query": "startup che hanno ricevuto finanziamenti recenti",
+        "signal_policy": { "required_signals": ["funding_received"], "maximum_age_days_by_signal": { "funding_received": 120 } },
+        "source_policy": { "allowed_source_classes": ["official_company_website", "industry_publication"], "minimum_independent_sources": 1, "primary_source_required_for": [] },
+        "evidence_policy": { "minimum_evidence_confidence": 0.7 },
+        "seller": {},
+        "commercial_hypotheses": [],
+        "target": { "entity_types": ["company"], "geographies": ["Italia"], "company_sizes": ["micro", "piccola", "media"] }
+      },
+      "lead": {
+        "azienda": "Invertix",
+        "employee_count": 18,
+        "sito": "https://invertix.ai/",
+        "official_domain": "invertix.ai",
+        "evidence": "Invertix chiude un round pre-seed da 1,7 milioni di euro.",
+        "why_now": "Il round pre-seed consente l'espansione commerciale nel settore energy.",
+        "matched_signals": ["funding_received"],
+        "semantic_grounding": { "accepted": true, "confidence": 0.91, "target_entity_role": "recipient" },
+        "employee_count": 18
+      }
+    },
+    {
+      "id": "accept-sintropy-funding-001",
+      "plan": {
+        "raw_query": "startup che hanno ricevuto finanziamenti recenti",
+        "signal_policy": { "required_signals": ["funding_received"], "maximum_age_days_by_signal": { "funding_received": 120 } },
+        "source_policy": { "allowed_source_classes": ["official_company_website", "industry_publication"], "minimum_independent_sources": 1, "primary_source_required_for": [] },
+        "evidence_policy": { "minimum_evidence_confidence": 0.7 },
+        "seller": {},
+        "commercial_hypotheses": [],
+        "target": { "entity_types": ["company"], "geographies": ["Italia"], "company_sizes": ["micro", "piccola", "media"] }
+      },
+      "lead": {
+        "azienda": "Sintropy.AI",
+        "employee_count": 22,
+        "sito": "https://sintropy.ai/",
+        "official_domain": "sintropy.ai",
+        "evidence": "Sintropy.AI chiude un round seed da 1 milione di euro.",
+        "why_now": "Il finanziamento seed accelera il go-to-market B2B.",
+        "matched_signals": ["funding_received"],
+        "semantic_grounding": { "accepted": true, "confidence": 0.9, "target_entity_role": "recipient" }
+      }
+    }
+  ],
+  "reject_fixtures": [
+    {
+      "id": "reject-trenord-crm",
+      "expected_codes": ["COMPANY_OUT_OF_MARKET_SCOPE"],
+      "fixture": "trenord_crm"
+    },
+    {
+      "id": "reject-pwc-enterprise",
+      "expected_codes": ["GLOBAL_ENTERPRISE", "COMPANY_OUT_OF_MARKET_SCOPE"],
+      "fixture": "pwc_hiring"
+    },
+    {
+      "id": "reject-abbott-enterprise",
+      "expected_codes": ["GLOBAL_ENTERPRISE", "COMPANY_OUT_OF_MARKET_SCOPE"],
+      "fixture": "abbott_hiring"
+    }
+  ]
+}
