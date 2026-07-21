@@ -301,9 +301,7 @@ def build_plan(spec_id: str, hard: float = 0.05) -> tuple[dict, dict]:
 def prepare_and_run(spec_id: str) -> dict:
     clear_actives()
     plan, spec = build_plan(spec_id)
-    # Q2 currently yields only one reliable CRM-adoption lead under the €0.05
-    # envelope; keep Q2 gate aligned with "at least one qualified buyer".
-    max_leads = 1 if spec_id == "q2" else 2
+    max_leads = 2
     hard = 0.05
     search_id = str(uuid.uuid4())
     run_id = str(uuid.uuid4())
