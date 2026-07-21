@@ -507,6 +507,12 @@ def candidate_to_lifecycle_shadow_payload(
         item.get("interpretation") for item in grounded_items
         if isinstance(item, Mapping) and isinstance(item.get("interpretation"), Mapping)
     ), {})
+    why_now = str(candidate.why_now or "").strip()
+    if len(why_now) < 20 and candidate.evidence:
+        excerpt = str(candidate.evidence[0].excerpt or "").strip()
+        if excerpt:
+            prefix = why_now or "Evidenza primaria recente"
+            why_now = f"{prefix}: {excerpt[:240]}".strip()
     public_source = candidate.evidence[0].source_url if candidate.evidence else f"https://{candidate.official_domain}"
     legal_name = str(candidate.company_identifiers.get("legal_name") or "").strip() or None
 
@@ -534,7 +540,7 @@ def candidate_to_lifecycle_shadow_payload(
         "event_date": field(candidate.signal_date, "verified" if candidate.signal_date else "unavailable", candidate.confidence if candidate.signal_date else 0.0),
         "evidence": field(candidate.evidence[0].excerpt if candidate.evidence else None, "verified" if candidate.evidence else "unavailable", candidate.confidence),
         "buyer_need": field(grounded_interpretation.get("buyer_need") or None, "inferred" if grounded_interpretation.get("buyer_need") else "unavailable", candidate.confidence),
-        "why_now": field(candidate.why_now, "inferred" if candidate.why_now else "unavailable", candidate.confidence),
+        "why_now": field(why_now or None, "inferred" if why_now else "unavailable", candidate.confidence),
         "opportunity_score": field(round(opportunity_value_score * 100, 2), "inferred", candidate.confidence),
         "company_size": field(size if size != "unknown" else None, "inferred" if size != "unknown" else "unavailable", 0.65 if size != "unknown" else 0.0),
         "revenue": field(None, "unavailable", 0.0),
@@ -585,7 +591,7 @@ def candidate_to_lifecycle_shadow_payload(
         "business_signals": signals,
         "matched_signals": list(dict.fromkeys(item.signal_id for item in candidate.evidence)),
         "required_signals": list(dict.fromkeys(item.signal_id for item in candidate.evidence)),
-        "why_now": candidate.why_now,
+        "why_now": why_now or None,
         "signal_confidence": candidate.confidence,
         "hotness_score": round(opportunity_value_score * 100, 2),
         "lead_quality_contract": {

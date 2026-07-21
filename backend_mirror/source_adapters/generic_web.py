@@ -138,10 +138,12 @@ def _size_class_from_employees(employees: Optional[int]) -> str:
     return "enterprise"
 
 
-def _public_contacts_from_html(html: str, *, source_url: str = "") -> Tuple[ContactRecord, ...]:
+def _public_contacts_from_html(html: str, *, source_url: str = "", prefer_domain: str = "") -> Tuple[ContactRecord, ...]:
     """Deterministic public mailto/tel extraction — no invented contacts."""
     out: List[ContactRecord] = []
     seen: set[str] = set()
+    preferred_domain = (prefer_domain or "").casefold().removeprefix("www.")
+    emails: List[str] = []
     for match in re.finditer(
         r"mailto:([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})",
         html or "",
@@ -151,9 +153,15 @@ def _public_contacts_from_html(html: str, *, source_url: str = "") -> Tuple[Cont
         if not email or email in seen or any(marker in email for marker in _FAKE_EMAIL_MARKERS):
             continue
         seen.add(email)
+        emails.append(email)
+    if preferred_domain:
+        company_emails = [
+            value for value in emails
+            if value.endswith("@" + preferred_domain) or value.endswith("." + preferred_domain)
+        ]
+        emails = company_emails  # never publish third-party publisher mailtos as company contact
+    for email in emails[:2]:
         out.append(ContactRecord(kind="email", value=email, source_url=source_url, verified=True))
-        if len(out) >= 2:
-            break
     for match in re.finditer(r"tel:([+\d][\d\s./\-()]{6,})", html or "", re.I):
         phone = re.sub(r"[^\d+]", "", match.group(1) or "")
         if len(re.sub(r"\D", "", phone)) < 8 or phone in seen:
@@ -182,10 +190,49 @@ def _enrich_record_from_page(row: MutableMapping[str, Any], *, html: str = "", t
     if not contacts and html:
         contacts = [
             {"kind": item.kind, "value": item.value, "source_url": item.source_url, "verified": item.verified}
-            for item in _public_contacts_from_html(html, source_url=str(row.get("source_url") or ""))
+            for item in _public_contacts_from_html(
+                html,
+                source_url=str(row.get("source_url") or ""),
+                prefer_domain=_host(row.get("official_domain")),
+            )
         ]
         if contacts:
             row["contacts"] = contacts
+    return row
+
+
+def _enrich_from_official_domain(row: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
+    """Best-effort company homepage enrichment for size/public contacts (no SERP)."""
+    domain = _host(row.get("official_domain"))
+    if not domain or is_blacklisted_domain(domain):
+        return row
+    need_size = row.get("employee_count") is None and not _text(row.get("company_size"))
+    need_contact = not (row.get("contacts") or ())
+    if not need_size and not need_contact:
+        return row
+    import httpx
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml",
+    }
+    for path in ("/", "/contatti", "/contact", "/azienda", "/about"):
+        try:
+            with httpx.Client(timeout=8.0, follow_redirects=True, headers=headers) as client:
+                response = client.get(f"https://{domain}{path}")
+            if response.status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
+                continue
+            html = response.text[:1_500_000]
+            row = _enrich_record_from_page(row, html=html, text="")
+            if (not need_size or row.get("employee_count") is not None or _text(row.get("company_size"))) and (
+                not need_contact or (row.get("contacts") or ())
+            ):
+                break
+        except Exception:
+            continue
     return row
 
 
@@ -1077,6 +1124,8 @@ def _append_semantic_deferred_news_record(
     )
     row = _apply_free_identity(row, request)
     row = _enrich_record_from_page(row, html=html or "", text=visible_text)
+    if row.get("official_domain_verified") is True:
+        row = _enrich_from_official_domain(row)
     records.append(row)
     _remember_candidate_source_url(state, final_url)
     return True
@@ -1501,6 +1550,8 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 )
                                 row = _apply_free_identity(row, request)
                                 row = _enrich_record_from_page(row, html=html or "", text=visible_text)
+                                if row.get("official_domain_verified") is True:
+                                    row = _enrich_from_official_domain(row)
                                 records.append(row)
                                 _remember_candidate_source_url(state, str(fetch_provenance.get("final_url") or final_url or url))
                             if len(records) > structured_before:
@@ -1610,6 +1661,8 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                         )
                         row = _apply_free_identity(row, request)
                         row = _enrich_record_from_page(row, html=html or "", text=visible_text)
+                        if row.get("official_domain_verified") is True:
+                            row = _enrich_from_official_domain(row)
                         records.append(row)
                         _remember_candidate_source_url(state, str(fetch_provenance.get("final_url") or final_url or url))
                     if (
@@ -1953,6 +2006,7 @@ class GenericWebResearchAdapter:
                     contacts = _public_contacts_from_html(
                         str(record.get("source_html") or ""),
                         source_url=source_url,
+                        prefer_domain=domain,
                     )
                 candidates.append(OpportunityCandidate(
                     canonical_company_name=company,
