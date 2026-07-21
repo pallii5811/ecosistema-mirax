@@ -333,13 +333,14 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
         crm_vendor_exclude = _DEFAULT_EXCLUDED + (
             "salesforce.com", "hubspot.com", "microsoft.com", "zoho.com", "pipedrive.com",
         )
+        crm_guide_exclude = '-guida -tutorial -"come scegliere" -"come si sceglie" -"miglior CRM"'
         crm_queries = (
             # Exact "ricerca nuovo CRM" is a Serper zero-hit; prefer adoption verbs.
-            'azienda Italia ("adotta" OR "sceglie" OR "implementa") CRM -Salesforce -HubSpot',
-            '"sceglie" CRM OR "adotta" CRM (Group OR Spa OR Srl OR azienda) Italia -Salesforce -HubSpot',
+            f'azienda Italia ("adotta" OR "sceglie" OR "implementa") CRM -Salesforce -HubSpot {crm_guide_exclude}',
+            f'"sceglie" CRM OR "adotta" CRM (Group OR Spa OR Srl OR azienda) Italia -Salesforce -HubSpot {crm_guide_exclude}',
             'site:.it ("comunicato stampa" OR newsroom) CRM (adotta OR sceglie OR implementa OR migrazione)',
-            '"migrazione CRM" OR "implementazione CRM" (annuncia OR sceglie OR adotta) Italia azienda -guida',
-            '"nuovo CRM" (sceglie OR adotta OR implementa) Italia (spa OR srl OR group) -Salesforce -HubSpot',
+            f'"migrazione CRM" OR "implementazione CRM" (annuncia OR sceglie OR adotta) Italia azienda {crm_guide_exclude}',
+            f'"nuovo CRM" (sceglie OR adotta OR implementa) Italia (spa OR srl OR group) -Salesforce -HubSpot {crm_guide_exclude}',
             '"gara CRM" OR "bando" CRM OR "RFP CRM" Italia azienda -Salesforce -HubSpot',
         )
         for idx, query in enumerate(crm_queries):

@@ -363,11 +363,17 @@ _CHALLENGE_PAGE_RE = re.compile(
 )
 
 
-def _serp_fetch_priority(hit: Any) -> Tuple[int, int, str]:
+def _hit_str(hit: Any, key: str) -> str:
+    if isinstance(hit, Mapping):
+        return str(hit.get(key) or "")
+    return str(getattr(hit, key, "") or "")
+
+
+def _serp_fetch_priority(hit: Any) -> Tuple[int, int, int, str]:
     """Fetch real articles before exchange/archive shells in the same SERP wave."""
-    url = str(getattr(hit, "url", "") or "")
-    title = str(getattr(hit, "title", "") or "")
-    snippet = str(getattr(hit, "snippet", "") or "")
+    url = _hit_str(hit, "url")
+    title = _hit_str(hit, "title")
+    snippet = _hit_str(hit, "snippet")
     host = _host(url)
     if any(host == suffix or host.endswith("." + suffix) for suffix in _CONTENT_SHELL_HOST_SUFFIXES):
         tier = 2
@@ -376,12 +382,19 @@ def _serp_fetch_priority(hit: Any) -> Tuple[int, int, str]:
     else:
         tier = 1
     headline = f"{title} {snippet}"
+    # Buyer tech-adoption headlines (CRM sceglie/adotta) before how-to guides.
+    guide_penalty = 1 if re.search(
+        r"\b(guida|tutorial|come\s+si\s+sceglie|come\s+scegliere|cos['']?\s*è|cose\s+è|miglior\s+crm)\b",
+        headline,
+        re.I,
+    ) else 0
     event_boost = 0 if re.search(
-        r"\b(chiude un round|ha raccolto|seed round|pre-seed|raccoglie|funding round)\b",
+        r"\b(chiude un round|ha raccolto|seed round|pre-seed|raccoglie|funding round|"
+        r"sceglie|adotta|implementa|migrazione\s+crm|nuovo\s+crm)\b",
         headline,
         re.I,
     ) else 1
-    return (tier, event_boost, url.casefold())
+    return (tier, guide_penalty, event_boost, url.casefold())
 
 
 def _hits_from_urls(urls: Sequence[str], *, query: str) -> List[Dict[str, str]]:
@@ -444,7 +457,8 @@ def _apply_free_identity(row: MutableMapping[str, Any], request: AdapterDiscover
 
 _GENERIC_TITLE_RE = re.compile(
     r"\b(?:news|notizie|comunicato|stampa|evento|eventi|home|homepage|blog|"
-    r"finanziamento|funding|round|nomina|partnership|tecnologia|marketing)\b",
+    r"finanziamento|funding|round|nomina|partnership|tecnologia|marketing|"
+    r"guida|tutorial|come|perch[eé]|quando|chi|cos['']?[eè]|miglior)\b",
     re.I,
 )
 _LEGAL_ENTITY_RE = re.compile(
@@ -590,8 +604,10 @@ _STARTUP_DESCRIPTOR = (
 _SNIPPET_COMPANY_PATTERNS = (
     # Buyer adoption headlines: "Valsir sceglie CDM … per implementare il CRM"
     # must keep the buyer (Valsir), not the vendor/publisher host.
+    # Reject interrogatives: "Come si sceglie …" is a guide, not a buyer.
     re.compile(
-        r"^([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+"
+        r"^(?!Come\b|Perch[eé]\b|Quando\b|Chi\b|Come\s+si\b)"
+        r"([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+"
         r"(?:sceglie|adotta|implementa|migra(?:\s+a)?|passa a)\b",
         re.I,
     ),
@@ -736,11 +752,36 @@ def _candidate_official_domain(*, page_host: str, source_class: str, semantic_re
     return host
 
 
+def _shell_recovery_query(company: str, *, failed_host: str, request: Any = None) -> str:
+    """Recovery SERP must match the active signal — not always funding."""
+    exclude = f" -site:{failed_host}" if failed_host else ""
+    signals = {
+        str(item).strip().casefold()
+        for item in (getattr(request, "signal_ids", None) or ())
+        if str(item).strip()
+    }
+    blob = " ".join(
+        (
+            str(getattr(request, "query", "") or ""),
+            " ".join(sorted(signals)),
+        )
+    ).casefold()
+    if "crm" in blob or (
+        "technology_adoption" in signals and "funding" not in signals
+    ):
+        return (
+            f'"{company}" (CRM OR "customer relationship") '
+            f"(sceglie OR adotta OR implementa OR migrazione){exclude}"
+        )
+    return f'"{company}" (chiude un round OR ha raccolto OR funding round OR seed round){exclude}'
+
+
 def _enqueue_content_shell_followup(
     state: GenericWebDiscoveryState,
     *,
     identity_hint: str,
     failed_url: str,
+    request: Any = None,
 ) -> None:
     """When a SERP hit is a content shell, queue a targeted recovery query."""
     company = (_text(identity_hint) or "").strip()
@@ -755,8 +796,7 @@ def _enqueue_content_shell_followup(
     if any(company_key in str(item).casefold() for item in state.executed_query_keys):
         return
     failed_host = _host(failed_url)
-    exclude = f" -site:{failed_host}" if failed_host else ""
-    followup = f'"{company}" (chiude un round OR ha raccolto OR funding round OR seed round){exclude}'
+    followup = _shell_recovery_query(company, failed_host=failed_host or "", request=request)
     existing = {item.casefold() for item in state.followup_queries}
     existing.update(item.casefold() for item in state.executed_query_keys)
     if followup.casefold() in existing:
@@ -1101,7 +1141,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
         page_fetch = (request.technical_filters or {}).get("universal_page_fetch")
         next_pending_urls: List[str] = []
         next_url_meta: Dict[str, Dict[str, Any]] = dict(raw_meta)
-        wave = accepted_hits[: max(3, min(limit, URLS_PER_WAVE))]
+        wave = sorted(accepted_hits, key=_serp_fetch_priority)[: max(3, min(limit, URLS_PER_WAVE))]
         for item in wave:
             url = item.url if hasattr(item, "url") else str(item.get("url") or "")
             title = item.title if hasattr(item, "title") else str(item.get("title") or "")
@@ -1144,6 +1184,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                     state,
                                     identity_hint=serp_hint,
                                     failed_url=url,
+                                    request=request,
                                 )
                         state.wave_terminal_rejections += 1
                         state.processed_terminal_urls = (*state.processed_terminal_urls, url)
@@ -1193,6 +1234,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 state,
                                 identity_hint=recover_hint or identity_hint,
                                 failed_url=final_url or url,
+                                request=request,
                             )
                             state.wave_terminal_rejections += 1
                             continue
@@ -1212,6 +1254,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                     state,
                                     identity_hint=recover_hint,
                                     failed_url=final_url or url,
+                                    request=request,
                                 )
                             state.wave_terminal_rejections += 1
                             continue
@@ -1405,6 +1448,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                     state,
                                     identity_hint=company_hint,
                                     failed_url=final_url or url,
+                                    request=request,
                                 )
                             state.wave_terminal_rejections += 1
                 else:

@@ -23,6 +23,41 @@ def test_crm_adoption_title_extracts_buyer_not_vendor() -> None:
     assert _company_identity_hint(title=title, snippet=title, html=html) == "Valsir"
 
 
+def test_guide_headline_come_si_sceglie_is_not_a_buyer() -> None:
+    title = "Come si sceglie il CRM immobiliare giusto?"
+    assert _snippet_company_hint(title) == ""
+    assert _title_company_leading(title) == ""
+    assert not _looks_like_company_name("Come si")
+
+
+def test_crm_shell_followup_uses_crm_recovery_not_funding() -> None:
+    from backend_mirror.source_adapters.contracts import AdapterDiscoveryRequest
+    from backend_mirror.source_adapters.generic_web import _enqueue_content_shell_followup
+    from backend_mirror.source_adapters.generic_web_budget import GenericWebDiscoveryState
+
+    request = AdapterDiscoveryRequest(
+        intent="technology_adoption",
+        signal_ids=("technology_adoption",),
+        signal_match_mode="all",
+        geographies=("Italia",),
+        freshness_max_age_days=365,
+        requested_count=2,
+        budget_eur=0.05,
+        query="Trovami aziende che stanno cercando un nuovo CRM.",
+    )
+    state = GenericWebDiscoveryState()
+    _enqueue_content_shell_followup(
+        state,
+        identity_hint="Valsir",
+        failed_url="https://www.borsaitaliana.it/valsir.html",
+        request=request,
+    )
+    assert state.followup_queries
+    assert "Valsir" in state.followup_queries[0]
+    assert "CRM" in state.followup_queries[0]
+    assert "chiude un round" not in state.followup_queries[0].casefold()
+
+
 def test_company_hint_matches_legal_suffix_variants() -> None:
     source = "Sirius Game, la startup edutech chiude un round da 1,3 milioni di euro."
     assert company_hint_present_in_source("Sirius Game S.r.l.", source)
@@ -132,6 +167,25 @@ def test_serp_fetch_priority_prefers_news_over_exchange_shell() -> None:
     ranked = sorted([shell, other, news], key=_serp_fetch_priority)
     assert ranked[0].url == news.url
     assert ranked[-1].url == shell.url
+
+
+def test_serp_fetch_priority_prefers_crm_adoption_over_guides() -> None:
+    from types import SimpleNamespace
+
+    from backend_mirror.source_adapters.generic_web import _serp_fetch_priority
+
+    guide = SimpleNamespace(
+        url="https://www.canthiere.it/blog/crm-guida",
+        title="Come si sceglie il CRM immobiliare",
+        snippet="Guida 2026",
+    )
+    adoption = SimpleNamespace(
+        url="https://bi.gruppocdm.it/valsir-sceglie-cdm/",
+        title="Valsir sceglie CDM per implementare il CRM analitico",
+        snippet="Valsir adotta un nuovo CRM",
+    )
+    ranked = sorted([guide, adoption], key=_serp_fetch_priority)
+    assert ranked[0].url == adoption.url
 
 
 def test_can_reserve_serp_after_first_semantic_for_second_lead() -> None:
