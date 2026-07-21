@@ -5136,7 +5136,24 @@ def main() -> None:
                 # Shadow/matrix jobs honor exact requested_leads; Maps demo keeps floor 5.
                 target_floor = 1 if _source_adapter_shadow_is_requested(intent) else 5
                 z = job.get("zone")
-                if isinstance(z, str) and z.strip().isdigit():
+                if _source_adapter_shadow_is_requested(intent) and isinstance(intent, dict):
+                    # Prefer explicit commercial target over zone (zone may be inflated
+                    # only to unlock the product budget formula, e.g. zone=10 → €0.10).
+                    for target_key in ("lead_target", "max_leads", "requested_leads", "target"):
+                        raw_target = intent.get(target_key)
+                        if raw_target is None:
+                            continue
+                        try:
+                            job_max = min(10000, max(target_floor, int(str(raw_target).strip())))
+                            break
+                        except Exception:
+                            continue
+                    else:
+                        if isinstance(z, str) and z.strip().isdigit():
+                            job_max = min(10000, max(target_floor, int(z.strip())))
+                        elif isinstance(z, dict) and z.get("max_results"):
+                            job_max = min(10000, max(target_floor, int(z.get("max_results") or default_max)))
+                elif isinstance(z, str) and z.strip().isdigit():
                     job_max = min(10000, max(target_floor, int(z.strip())))
                 elif isinstance(z, dict) and z.get("max_results"):
                     job_max = min(10000, max(target_floor, int(z.get("max_results") or default_max)))
