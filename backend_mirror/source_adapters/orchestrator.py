@@ -872,6 +872,12 @@ class UniversalSourceOrchestrator:
                 required_source_classes=required_source_classes,
                 allow_generic_fallback=True,
             )
+            if coverage_probe.status == "unsupported":
+                raise SourceAdapterRegistryMismatchError(
+                    "canonical plan requires "
+                    f"{list(mandatory)} but runtime selected {list(coverage_probe.adapter_ids)} "
+                    f"with status=unsupported; reasons={list(coverage_probe.reasons)}"
+                )
             # Explicit mandatory IDs are authoritative. Capability resolve may keep
             # only the structured peer when it already covers required signals;
             # canaries still need ordered fallback adapters available.

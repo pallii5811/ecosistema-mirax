@@ -145,7 +145,7 @@ def _mandatory_adapter_ids(intent: Mapping[str, Any], plan: Mapping[str, Any]) -
     adapter_ids = source_coverage.get("adapter_ids")
     collected: list[str] = []
     if isinstance(adapter_ids, list) and adapter_ids:
-        collected.extend(str(item).strip() for item in adapter_ids if str(item).strip())
+        return tuple(dict.fromkeys(str(item).strip() for item in adapter_ids if str(item).strip()))
     source_plan = uqe.get("source_plan") if isinstance(uqe.get("source_plan"), list) else []
     for lane in source_plan:
         if not isinstance(lane, Mapping) or lane.get("execution_mode") != "adapter":
