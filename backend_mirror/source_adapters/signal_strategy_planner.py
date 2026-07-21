@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 from .universal_query_spec import SOURCE_CLASSES, UniversalQuerySpec
@@ -22,6 +22,12 @@ class DiscoveryStrategy:
     priority: int
     fallback_level: int
     adapter_affinity: Tuple[str, ...] = ()
+    hypothesis_id: str = ""
+    event_type: str = ""
+    evidence_claim_type: str = "OBSERVED_EVENT"
+    semantic_justification: str = ""
+    required_target_role: str = "target_operating_company"
+    prohibited_roles: Tuple[str, ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -203,6 +209,86 @@ def _lexicon(signal: str) -> Dict[str, Any]:
     }
 
 
+def _claim_type_for_signal(signal: str) -> str:
+    if signal in {"procurement", "active_tender", "rfp", "request_for_proposal"}:
+        return "SELECTION_PROCESS"
+    if signal in {"website_weakness", "seo_errors", "missing_analytics", "missing_advertising_pixel", "site_stale"}:
+        return "COMPANY_ATTRIBUTE"
+    return "OBSERVED_EVENT"
+
+
+def hypothesis_contracts_for_spec(spec: UniversalQuerySpec) -> Tuple[Mapping[str, Any], ...]:
+    """Return complete contracts, synthesizing only from canonical signals.
+
+    The synthetic path is deterministic and exists for legacy plans; it never
+    invents a new signal family or cross-links an unrelated commercial play.
+    """
+    if spec.hypothesis_contracts:
+        return tuple(spec.hypothesis_contracts)
+    contracts: List[Mapping[str, Any]] = []
+    for signal in tuple(dict.fromkeys((*spec.required_signals, *spec.optional_signals))):
+        lex = _lexicon(signal)
+        contracts.append({
+            "hypothesis_id": f"canonical-signal:{signal}",
+            "buyer_archetype": spec.target_company_profile or "target operating company",
+            "buyer_problem": spec.business_problem,
+            "expected_outcome": spec.seller_offer,
+            "observable_event_types": (signal,),
+            "required_relationships": (f"company_has_{signal}",),
+            "allowed_signal_families": (signal,),
+            "excluded_signal_families": (),
+            "source_classes": tuple(lex.get("sources") or spec.source_preferences),
+            "evidence_claim_type": _claim_type_for_signal(signal),
+            "query_templates": (),
+            "expected_yield": "medium",
+            "expected_cost": "low",
+            "false_positive_risks": tuple(spec.prohibited_roles),
+        })
+    return tuple(contracts)
+
+
+def _bind_strategy(
+    strategy: DiscoveryStrategy,
+    *,
+    spec: UniversalQuerySpec,
+    hypotheses: Sequence[Mapping[str, Any]],
+) -> DiscoveryStrategy:
+    signal = strategy.signal_type
+    hypothesis = next(
+        (
+            item for item in hypotheses
+            if signal in {
+                str(value).strip()
+                for value in (item.get("allowed_signal_families") or item.get("signals") or ())
+            }
+        ),
+        None,
+    )
+    if hypothesis is None:
+        return strategy
+    events = tuple(
+        str(value).strip()
+        for value in (hypothesis.get("observable_event_types") or hypothesis.get("triggering_events") or (signal,))
+        if str(value).strip()
+    )
+    event_type = signal if signal in events else (events[0] if events else signal)
+    hypothesis_id = str(hypothesis.get("hypothesis_id") or hypothesis.get("id") or "").strip()
+    problem = str(hypothesis.get("buyer_problem") or spec.business_problem or "").strip()
+    outcome = str(hypothesis.get("expected_outcome") or hypothesis.get("implied_need") or spec.seller_offer or "").strip()
+    justification = f"{event_type} supports {problem}"
+    if outcome:
+        justification += f"; expected outcome: {outcome}"
+    return replace(
+        strategy,
+        hypothesis_id=hypothesis_id,
+        event_type=event_type,
+        evidence_claim_type=str(hypothesis.get("evidence_claim_type") or _claim_type_for_signal(signal)).upper(),
+        semantic_justification=justification,
+        required_target_role=spec.required_target_role or "target_operating_company",
+        prohibited_roles=tuple(spec.prohibited_roles),
+    )
+
+
 def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
     """Generate multi-strategy discovery plans for required + optional signals."""
     geo = _geo_phrase(spec)
@@ -262,7 +348,7 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
                 strategy_id=f"{signal}:event_specific",
                 signal_type=signal,
                 source_class="recognized_news",
-                search_query=f'aziende {geo} ({event_or}) (annuncia OR inaugura OR assume OR aggiudicata) {industry}'.strip(),
+                search_query=f'aziende {geo} ({event_or}) (annuncia OR comunica OR conferma) {industry}'.strip(),
                 preferred_domains=(),
                 excluded_domains=_DEFAULT_EXCLUDED,
                 freshness_days=spec.freshness_days,
@@ -435,6 +521,9 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
                     adapter_affinity=("generic_web_research_v1",),
                 ),
             )
+
+    hypotheses = hypothesis_contracts_for_spec(spec)
+    strategies = [_bind_strategy(item, spec=spec, hypotheses=hypotheses) for item in strategies]
 
     # Stable sort: lower priority number first, then fallback_level.
     strategies.sort(key=lambda item: (item.priority, item.fallback_level, item.strategy_id))

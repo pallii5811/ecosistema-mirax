@@ -104,6 +104,25 @@ def test_stale_evidence_scores_below_fresh_evidence() -> None:
     assert score_opportunity(stale, today=TODAY).total < score_opportunity(candidate(), today=TODAY).total
 
 
+def test_query_freshness_horizon_is_preserved_for_recent_observed_events() -> None:
+    observed = candidate(
+        signal_id="production_expansion",
+        signal_date="2026-03-17",
+        evidence=(evidence(published_at="2026-03-17", proof_level="direct"),),
+        provenance={
+            **candidate().provenance,
+            "freshness_horizon_days": 180,
+            "urgency_score": 0.80,
+            "causality_score": 0.82,
+        },
+    )
+    inherited = score_opportunity(observed, today=TODAY)
+    hard_ninety = score_opportunity(observed, today=TODAY, freshness_horizon_days=90)
+    inherited_freshness = next(item.value for item in inherited.components if item.name == "freshness")
+    assert inherited_freshness > 0.30
+    assert inherited.total > hard_ninety.total
+
+
 def test_contradictions_and_weak_sources_are_visible_penalties() -> None:
     weak = candidate(
         contradiction_flags=("company_name_mismatch", "geography_mismatch"),

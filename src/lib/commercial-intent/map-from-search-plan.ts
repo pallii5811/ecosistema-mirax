@@ -43,14 +43,28 @@ function intentStrength(plan: CommercialSearchPlan): IntentStrength {
 function mapHypotheses(plan: CommercialSearchPlan) {
   return (plan.commercial_hypotheses || []).map((hyp) => ({
     id: hyp.id,
+    hypothesis_id: hyp.id,
+    buyer_archetype: plan.semantic_query_contract?.target_company_description || 'target operating company',
     target_company_profile: {
       required_attributes: hyp.triggering_events,
     },
     target_role: 'buyer',
     buyer_problem: hyp.buyer_problem,
+    expected_outcome: hyp.implied_need,
     observable_event: hyp.triggering_events[0] || hyp.implied_need,
+    observable_event_types: hyp.triggering_events.length ? hyp.triggering_events : hyp.signals,
     required_relationship: hyp.signals[0] || 'company_with_observable_need',
+    required_relationships: plan.semantic_query_contract?.required_relationships?.length
+      ? plan.semantic_query_contract.required_relationships
+      : hyp.signals,
+    allowed_signal_families: hyp.signals,
+    excluded_signal_families: plan.signal_policy?.negative_signals ?? [],
     sources: plan.source_policy?.allowed_source_classes ?? [],
+    source_classes: plan.source_policy?.allowed_source_classes ?? [],
+    evidence_claim_type: requestModeFromPlan(plan) === 'explicit_demand'
+      ? 'DIRECT_DEMAND' as const
+      : 'OBSERVED_EVENT' as const,
+    query_templates: hyp.triggering_events,
     false_positive_risks: ['inferred need presented as explicit RFP'],
     expected_yield: hyp.confidence >= 0.8 ? 'high' as const : 'medium' as const,
     expected_cost: 'medium' as const,

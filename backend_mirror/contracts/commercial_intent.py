@@ -30,6 +30,10 @@ RequestMode = Literal[
     "procurement_discovery",
 ]
 IntentStrength = Literal["direct", "strong_inferred", "moderate_inferred"]
+EvidenceClaimType = Literal[
+    "DIRECT_DEMAND", "SELECTION_PROCESS", "OBSERVED_EVENT", "COMPANY_ATTRIBUTE",
+    "MARKET_SCOPE", "IDENTITY", "CONTACT", "COMMERCIAL_INFERENCE",
+]
 
 
 DEFAULT_MIRAX_MARKET_SCOPE_POLICY: Dict[str, Any] = {
@@ -72,12 +76,22 @@ class MarketScopePolicy:
 @dataclass
 class CommercialHypothesis:
     id: str
+    hypothesis_id: str
+    buyer_archetype: str
     target_company_profile: Dict[str, Any]
     target_role: str
     buyer_problem: str
+    expected_outcome: str
     observable_event: str
+    observable_event_types: List[str]
     required_relationship: str
+    required_relationships: List[str]
+    allowed_signal_families: List[str]
+    excluded_signal_families: List[str]
     sources: List[str]
+    source_classes: List[str]
+    evidence_claim_type: EvidenceClaimType
+    query_templates: List[str]
     false_positive_risks: List[str]
     expected_yield: Literal["high", "medium", "low"]
     expected_cost: Literal["low", "medium", "high"]

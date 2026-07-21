@@ -85,8 +85,18 @@ def append_query_telemetry(
     if not isinstance(bucket, list):
         bucket = []
         technical_filters["generic_web_query_telemetry"] = bucket
+    active = technical_filters.get("universal_active_strategies") or ()
+    strategy = next((item for item in active if isinstance(item, Mapping)), {})
     bucket.append({
         "query_text": query_text,
+        "strategy_id": str(strategy.get("strategy_id") or ""),
+        "hypothesis_id": str(strategy.get("hypothesis_id") or ""),
+        "signal_family": str(strategy.get("signal_type") or ""),
+        "event_type": str(strategy.get("event_type") or ""),
+        "source_class": str(strategy.get("source_class") or ""),
+        "semantic_justification": str(strategy.get("semantic_justification") or ""),
+        "required_target_role": str(strategy.get("required_target_role") or ""),
+        "prohibited_roles": list(strategy.get("prohibited_roles") or ()),
         "raw_provider_hits": int(raw_provider_hits),
         "rich_hits_before_prefilter": int(raw_provider_hits),
         "prefilter_accepted": int(prefilter_accepted),

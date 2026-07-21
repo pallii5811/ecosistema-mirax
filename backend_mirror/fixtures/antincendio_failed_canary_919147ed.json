@@ -1,0 +1,85 @@
+{
+  "search_id": "919147ed-f903-4345-923e-56c8d05edc3c",
+  "query": "Installiamo sistemi antincendio industriali. Trovami 3 PMI del Nord Italia con segnali recenti di nuovi stabilimenti, ampliamenti produttivi o adeguamenti documentati, con un contatto pubblico.",
+  "requested_count": 3,
+  "actual_cost_eur": 0.087946,
+  "provider_queries": [
+    {
+      "query": "nuovo stabilimento ampliamento produttivo Nord Italia 2025 2026",
+      "expected": "ALLOW",
+      "hypothesis_id": "antincendio-expansion",
+      "signal": "production_expansion"
+    },
+    {
+      "query": "\"Wopta\" (chiude un round OR ha raccolto OR funding round OR seed round)",
+      "expected": "STRATEGY_INTENT_LEAKAGE",
+      "hypothesis_id": "antincendio-expansion",
+      "signal": "production_expansion"
+    }
+  ],
+  "candidates": [
+    {
+      "company": "ECOSYSTEM SpA",
+      "source_url": "https://assoambiente.org/entry_p/News/news/16707/P250",
+      "source_publisher": "Assoambiente",
+      "source_role": "publisher_association",
+      "event": "production_expansion",
+      "evidence_excerpt": "Inaugurato il nuovo impianto ECOSYSTEM SpA. Il 20 giugno Assoambiente ha preso parte all'inaugurazione della nuova linea di trattamento.",
+      "expected": "OBSERVED_EVENT_VALID_IDENTITY_SIZE_CONTACT_ENRICHMENT_REQUIRED"
+    },
+    {
+      "company": "Wopta",
+      "source_url": "https://www.aziendabanca.it/notizie/fintech-insurtech/wopta-round-da-5-milioni",
+      "source_publisher": "AziendaBanca",
+      "source_role": "publisher",
+      "event": "funding",
+      "evidence_excerpt": "Wopta chiude un round da 5 milioni.",
+      "expected": "STRATEGY_INTENT_LEAKAGE"
+    },
+    {
+      "company": "Scalapay",
+      "source_url": "https://aifi.it/it/private-capital-today/Scalapay-chiude-un-round-da-497-milioni-di-dollari",
+      "source_publisher": "AIFI",
+      "source_role": "publisher_association",
+      "event": "funding",
+      "evidence_excerpt": "Scalapay chiude un round da 497 milioni di dollari.",
+      "expected": "STRATEGY_INTENT_LEAKAGE"
+    },
+    {
+      "company": "TWIS #304",
+      "source_url": "https://dealflowit.niccolosanarico.com/p/twis-304",
+      "source_publisher": "The Week in Italian Startups",
+      "source_role": "publisher",
+      "event": "funding",
+      "evidence_excerpt": "Svolgo raised 400k euro in a pre-seed round.",
+      "expected": "ACTOR_ROLE_EXCLUDED"
+    },
+    {
+      "company": "Hardware Upgrade S.r.l",
+      "source_url": "https://edge9.hwupgrade.it/home/startup/",
+      "source_publisher": "Hardware Upgrade",
+      "source_role": "publisher",
+      "event": "funding",
+      "evidence_excerpt": "Svolgo raccoglie 400.000 euro in un round pre-seed.",
+      "expected": "ACTOR_ROLE_EXCLUDED"
+    },
+    {
+      "company": "Studio Legale SG SERAFIN",
+      "source_url": "https://www.sgserafin.it/2026/07/finanziamenti-alle-imprese-tecnologiche.html",
+      "source_publisher": "Studio Legale SG SERAFIN",
+      "source_role": "advisor_publisher",
+      "event": "funding",
+      "evidence_excerpt": "",
+      "expected": "ACTOR_ROLE_EXCLUDED"
+    },
+    {
+      "company": "Smartness",
+      "source_url": "https://www.cdpventurecapital.it/en/newsroom.page?category=news",
+      "source_publisher": "CDP Venture Capital",
+      "source_role": "investor_publisher",
+      "event": "funding",
+      "evidence_excerpt": "Smartness chiude un round da 50M.",
+      "expected": "STRATEGY_INTENT_LEAKAGE"
+    }
+  ]
+}

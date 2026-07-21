@@ -638,9 +638,13 @@ def test_strategy_telemetry_and_cursor_isolation():
             expected_evidence=("company_name",),
             estimated_cost=0.005,
             priority=10,
-            fallback_level=0,
-            adapter_affinity=("generic_web_research_v1",),
-        ),
+                fallback_level=0,
+                adapter_affinity=("generic_web_research_v1",),
+                hypothesis_id="h-funding",
+                event_type="funding",
+                semantic_justification="funding event supports growth",
+                required_target_role="target_operating_company",
+            ),
         DiscoveryStrategy(
             strategy_id="funding:B",
             signal_type="funding",
@@ -652,9 +656,13 @@ def test_strategy_telemetry_and_cursor_isolation():
             expected_evidence=("company_name",),
             estimated_cost=0.005,
             priority=11,
-            fallback_level=1,
-            adapter_affinity=("generic_web_research_v1",),
-        ),
+                fallback_level=1,
+                adapter_affinity=("generic_web_research_v1",),
+                hypothesis_id="h-funding",
+                event_type="funding",
+                semantic_justification="funding event supports growth",
+                required_target_role="target_operating_company",
+            ),
     )
     engine.plan = lambda spec: two  # type: ignore[method-assign]
     seed = next(item for item in CANARY_QUERY_SPECS if item["id"] == "funding")

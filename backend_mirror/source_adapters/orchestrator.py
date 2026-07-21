@@ -441,7 +441,18 @@ def _apply_semantic_enrichment(
         signal_id=enriched_signal_id,
         evidence=evidence,
         confidence=confidence,
-        provenance={**candidate.provenance, "semantic_grounding": dict(semantic_grounding)},
+        provenance={
+            **candidate.provenance,
+            **{
+                key: raw[key]
+                for key in (
+                    "causality_score", "urgency_score", "evidence_claim_type",
+                    "commercial_inference_label", "hypothesis_id", "freshness_horizon_days",
+                )
+                if key in raw
+            },
+            "semantic_grounding": dict(semantic_grounding),
+        },
     )
 
 
@@ -468,6 +479,17 @@ def _apply_semantic_candidate_enrichment(
         why_now=why_now or candidate.why_now,
         signal_date=signal_date or candidate.signal_date,
         confidence=max(candidate.confidence, confidence_value or 0.0),
+        provenance={
+            **candidate.provenance,
+            **{
+                key: enrichment[key]
+                for key in (
+                    "causality_score", "urgency_score", "evidence_claim_type",
+                    "commercial_inference_label", "hypothesis_id", "freshness_horizon_days",
+                )
+                if key in enrichment
+            },
+        },
     )
 
 
@@ -539,6 +561,35 @@ async def semantic_authority_qualifier(
             original_query=request.query,
             requested_count=request.requested_count,
         )
+        active_hypothesis = request.technical_filters.get("active_commercial_hypothesis")
+        if isinstance(active_hypothesis, Mapping):
+            active_relationships = tuple(
+                str(item).strip()
+                for item in active_hypothesis.get("required_relationships") or ()
+                if str(item).strip()
+            )
+            active_strategies = request.technical_filters.get("universal_active_strategies")
+            active_strategy = (
+                active_strategies[0]
+                if isinstance(active_strategies, list)
+                and active_strategies
+                and isinstance(active_strategies[0], Mapping)
+                else {}
+            )
+            active_target_role = str(active_strategy.get("required_target_role") or "").strip()
+            contract = replace(
+                contract,
+                required_relationships=active_relationships or contract.required_relationships,
+                target_role_in_event=active_target_role or contract.target_role_in_event,
+                canonical_signal_hints=tuple(
+                    str(item).strip()
+                    for item in active_hypothesis.get("allowed_signal_families") or contract.canonical_signal_hints
+                    if str(item).strip()
+                ),
+                evidence_claim_type=str(
+                    active_hypothesis.get("evidence_claim_type") or contract.evidence_claim_type
+                ).upper(),
+            )
         if contract.clarification_required:
             return QualificationDecision(False, False, False, "SEMANTIC_CLARIFICATION_REQUIRED")
         telemetry_bucket = request.technical_filters.get("semantic_telemetry")
@@ -803,6 +854,27 @@ async def semantic_authority_qualifier(
         semantic_dates = sorted(
             str(item.get("event_date"))[:10] for item in accepted_interpretations if item.get("event_date")
         )
+        active_problem = str(active_hypothesis.get("buyer_problem") or "").strip() if isinstance(active_hypothesis, Mapping) else ""
+        active_outcome = str(active_hypothesis.get("expected_outcome") or "").strip() if isinstance(active_hypothesis, Mapping) else ""
+        claim_type = str(contract.evidence_claim_type or "OBSERVED_EVENT").upper()
+        if accepted_interpretations:
+            first = accepted_interpretations[0]
+            excerpt = str(first.get("evidence_excerpt") or semantic_why_now or "").strip()
+            event_date = str(first.get("event_date") or "").strip()
+            event_label = str(first.get("event_type") or "evento osservato").replace("_", " ")
+            fact = f"Evento osservato {event_label}"
+            if event_date:
+                fact += f" del {event_date[:10]}"
+            if excerpt:
+                fact += f": {excerpt[:320]}"
+            if claim_type in {"OBSERVED_EVENT", "COMPANY_ATTRIBUTE", "COMMERCIAL_INFERENCE"}:
+                causal = " → ".join(item for item in (active_problem, active_outcome) if item)
+                semantic_why_now = (
+                    f"{fact}. {('Rilevanza: ' + causal + '. ') if causal else ''}"
+                    "Inferenza commerciale, non domanda esplicita."
+                )
+            else:
+                semantic_why_now = fact
         enriched_candidate = replace(
             candidate,
             buyer_fit=max(candidate.buyer_fit or 0.0, semantic_buyer_fit),
@@ -816,6 +888,14 @@ async def semantic_authority_qualifier(
             "why_now": enriched_candidate.why_now,
             "signal_date": enriched_candidate.signal_date,
             "confidence": enriched_candidate.confidence,
+            "causality_score": 0.82 if claim_type in {"OBSERVED_EVENT", "COMMERCIAL_INFERENCE"} else 0.95,
+            "urgency_score": 0.80 if semantic_dates else 0.55,
+            "evidence_claim_type": claim_type,
+            "commercial_inference_label": (
+                "INFERRED" if claim_type in {"OBSERVED_EVENT", "COMPANY_ATTRIBUTE", "COMMERCIAL_INFERENCE"} else "DIRECT"
+            ),
+            "hypothesis_id": str(active_hypothesis.get("hypothesis_id") or "") if isinstance(active_hypothesis, Mapping) else "",
+            "freshness_horizon_days": int(request.freshness_max_age_days or 90),
         }
         if not result.qualified:
             flush_telemetry()

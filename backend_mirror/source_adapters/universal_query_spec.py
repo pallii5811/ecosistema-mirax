@@ -42,6 +42,9 @@ class UniversalQuerySpec:
     cost_budget: float
     capability_status: str
     commercial_hypotheses: Tuple[str, ...] = ()
+    hypothesis_contracts: Tuple[Mapping[str, Any], ...] = ()
+    required_target_role: str = "target_operating_company"
+    prohibited_roles: Tuple[str, ...] = ()
     observability_notes: Tuple[str, ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
@@ -103,11 +106,50 @@ def compile_universal_query_spec(
     budget = min(_cost_budget(count, hard_cap=hard_cap_eur), hard)
 
     hypotheses = []
+    hypothesis_contracts: List[Mapping[str, Any]] = []
     for item in plan.get("commercial_hypotheses") or ():
         if isinstance(item, Mapping):
             text = str(item.get("buyer_problem") or item.get("implied_need") or "").strip()
             if text:
                 hypotheses.append(text)
+            signals = _tuple_str(item.get("signals") or item.get("allowed_signal_families") or required)
+            events = _tuple_str(item.get("triggering_events") or item.get("observable_event_types") or signals)
+            preferred_sources = _tuple_str(
+                item.get("source_classes") or source_policy.get("preferred_source_classes")
+            )
+            allowed_sources = _tuple_str(source_policy.get("allowed_source_classes"))
+            source_classes = tuple(dict.fromkeys((*preferred_sources, *allowed_sources)))
+            hypothesis_id = str(item.get("hypothesis_id") or item.get("id") or "").strip()
+            if hypothesis_id:
+                hypothesis_contracts.append({
+                    "hypothesis_id": hypothesis_id,
+                    "buyer_archetype": str(
+                        item.get("buyer_archetype")
+                        or semantic_contract.get("target_company_description")
+                        or "target operating company"
+                    ).strip(),
+                    "buyer_problem": text or "commercial problem supported by observable evidence",
+                    "expected_outcome": str(item.get("expected_outcome") or item.get("implied_need") or "").strip(),
+                    "observable_event_types": events,
+                    "required_relationships": _tuple_str(
+                        item.get("required_relationships")
+                        or semantic_contract.get("required_relationships")
+                        or signals
+                    ),
+                    "allowed_signal_families": signals,
+                    "excluded_signal_families": _tuple_str(
+                        item.get("excluded_signal_families") or signal_policy.get("negative_signals")
+                    ),
+                    "source_classes": source_classes,
+                    "evidence_claim_type": str(
+                        item.get("evidence_claim_type")
+                        or ("DIRECT_DEMAND" if plan.get("search_strategy") == "explicit_demand" else "OBSERVED_EVENT")
+                    ).strip().upper(),
+                    "query_templates": _tuple_str(item.get("query_templates")),
+                    "expected_yield": str(item.get("expected_yield") or "medium"),
+                    "expected_cost": str(item.get("expected_cost") or "low"),
+                    "false_positive_risks": _tuple_str(item.get("false_positive_risks")),
+                })
 
     evidence_reqs: List[str] = []
     if evidence_policy.get("require_official_domain", True):
@@ -161,6 +203,11 @@ def compile_universal_query_spec(
         cost_budget=budget,
         capability_status="SUPPORTED_PARTIAL",  # upgraded by engine after strategy coverage
         commercial_hypotheses=tuple(hypotheses) or _tuple_str(semantic_contract.get("positive_conditions")),
+        hypothesis_contracts=tuple(hypothesis_contracts),
+        required_target_role=str(semantic_contract.get("target_role_in_event") or "target_operating_company"),
+        prohibited_roles=_tuple_str(
+            semantic_contract.get("excluded_roles") or target.get("excluded_entities")
+        ),
         observability_notes=tuple(observability),
     )
 

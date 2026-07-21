@@ -46,18 +46,13 @@ def test_compiler_produces_valid_spec():
         "ottimizzazione consumi industriali",
     ],
 )
-def test_open_world_planner_emits_verifiable_hypotheses(query: str):
+def test_open_world_planner_does_not_invent_unrequested_event_families(query: str):
     compiler = CommercialIntentCompiler()
     planner = OfferToBuyerNeedPlanner()
     spec = compiler.compile(f"Sono un fornitore: {query}")
     hypotheses = planner.plan(spec.to_dict())
-    assert 3 <= len(hypotheses) <= 6
-    for hyp in hypotheses:
-        assert hyp.buyer_problem
-        assert hyp.observable_event
-        assert hyp.required_relationship
-        assert hyp.false_positive_risks
-        assert hyp.target_company_profile.get("market_scope_policy")
+    assert hypotheses == []
+    assert spec.target_company_profile["market_scope_policy"]["maximum_employees"] == 249
 
 
 def test_schema_file_loads():

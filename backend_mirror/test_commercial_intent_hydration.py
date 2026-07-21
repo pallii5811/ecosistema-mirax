@@ -32,7 +32,9 @@ def test_persisted_spec_hydration_makes_zero_compiler_calls():
     assert plan["commercial_intent_spec"]["original_query"] == payload["original_query"]
     # Planner on already-compiled spec must not invent a second compile path.
     again = planner.plan(payload)
-    assert 3 <= len(again) <= 6
+    assert 1 <= len(again) <= 6
+    assert all(item.hypothesis_id for item in again)
+    assert all(item.allowed_signal_families for item in again)
 
 
 def test_spec_to_canonical_plan_is_pure():

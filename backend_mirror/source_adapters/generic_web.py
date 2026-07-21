@@ -64,6 +64,10 @@ _SIGNAL_ALIASES: Dict[str, Tuple[str, ...]] = {
     "technology_migration": ("migrazione", "sostituzione sistema", "passaggio a"),
     "active_advertising": ("campagna pubblicitaria", "Meta Ads", "Google Ads", "investimento media"),
     "investing_marketing": ("campagna pubblicitaria", "investimento marketing", "media buyer"),
+    "production_expansion": ("nuovo stabilimento", "ampliamento produttivo", "nuova unità produttiva", "capacità produttiva"),
+    "new_location": ("nuova sede", "nuovo stabilimento", "inaugura", "apre una sede"),
+    "geographic_expansion": ("espansione", "nuova sede", "nuovo mercato", "ampliamento"),
+    "expansion": ("espansione", "ampliamento", "nuovo stabilimento", "nuova sede"),
 }
 
 
@@ -143,6 +147,11 @@ def _public_contacts_from_html(html: str, *, source_url: str = "", prefer_domain
     out: List[ContactRecord] = []
     seen: set[str] = set()
     preferred_domain = (prefer_domain or "").casefold().removeprefix("www.")
+    source_host = _host(source_url)
+    source_is_company_owned = bool(
+        preferred_domain
+        and (source_host == preferred_domain or source_host.endswith("." + preferred_domain))
+    )
     emails: List[str] = []
     for match in re.finditer(
         r"mailto:([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})",
@@ -162,7 +171,10 @@ def _public_contacts_from_html(html: str, *, source_url: str = "", prefer_domain
         emails = company_emails  # never publish third-party publisher mailtos as company contact
     for email in emails[:2]:
         out.append(ContactRecord(kind="email", value=email, source_url=source_url, verified=True))
-    for match in re.finditer(r"tel:([+\d][\d\s./\-()]{6,})", html or "", re.I):
+    # A publisher page may expose its own newsroom telephone. With a known
+    # company domain, only a company-owned page can verify a telephone.
+    phone_html = html if not preferred_domain or source_is_company_owned else ""
+    for match in re.finditer(r"tel:([+\d][\d\s./\-()]{6,})", phone_html, re.I):
         phone = re.sub(r"[^\d+]", "", match.group(1) or "")
         if len(re.sub(r"\D", "", phone)) < 8 or phone in seen:
             continue
@@ -170,6 +182,35 @@ def _public_contacts_from_html(html: str, *, source_url: str = "", prefer_domain
         out.append(ContactRecord(kind="phone", value=phone, source_url=source_url, verified=True))
         break
     return tuple(out)
+
+
+def _organization_facts_from_html(html: str) -> Mapping[str, Any]:
+    """Extract only explicit Organization JSON-LD facts from a fetched page."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    for script in soup.find_all("script", attrs={"type": re.compile("ld\\+json", re.I)}):
+        try:
+            payload = json.loads(script.string or script.get_text() or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        for item in _iter_json(payload):
+            raw_type = item.get("@type")
+            types = raw_type if isinstance(raw_type, list) else [raw_type]
+            if not any(str(value).casefold() in {"organization", "corporation", "localbusiness"} for value in types):
+                continue
+            employees = item.get("numberOfEmployees")
+            if isinstance(employees, Mapping):
+                employees = employees.get("value") or employees.get("maxValue")
+            parent = item.get("parentOrganization")
+            if isinstance(parent, Mapping):
+                parent = parent.get("name") or parent.get("legalName")
+            return {
+                "legal_name": _text(item.get("legalName") or item.get("name")),
+                "employee_count": employees,
+                "parent_group": _text(parent),
+                "email": _text(item.get("email")),
+                "telephone": _text(item.get("telephone")),
+            }
+    return {}
 
 
 def _enrich_record_from_page(row: MutableMapping[str, Any], *, html: str = "", text: str = "") -> MutableMapping[str, Any]:
@@ -186,18 +227,59 @@ def _enrich_record_from_page(row: MutableMapping[str, Any], *, html: str = "", t
             pass
     if _LISTED_HINT_RE.search(blob):
         row["is_listed"] = True
+    official_domain = _host(row.get("official_domain"))
+    enrichment_url = str(row.get("official_enrichment_url") or "")
+    page_url = enrichment_url or str(row.get("source_url") or "")
+    page_host = _host(page_url)
+    official_page = bool(
+        official_domain
+        and page_host
+        and (page_host == official_domain or page_host.endswith("." + official_domain))
+        and (enrichment_url or row.get("source_class") == "official_company_website")
+    )
+    organization = _organization_facts_from_html(html) if html and official_page else {}
+    if organization:
+        if row.get("employee_count") is None and organization.get("employee_count") is not None:
+            try:
+                employees = int(str(organization["employee_count"]).replace(".", "").strip())
+                row["employee_count"] = employees
+                row["company_size"] = _size_class_from_employees(employees)
+            except (TypeError, ValueError):
+                pass
+        for key in ("legal_name", "parent_group"):
+            if organization.get(key) and not row.get(key):
+                row[key] = organization[key]
     contacts = list(row.get("contacts") or [])
     if not contacts and html:
         contacts = [
             {"kind": item.kind, "value": item.value, "source_url": item.source_url, "verified": item.verified}
             for item in _public_contacts_from_html(
                 html,
-                source_url=str(row.get("source_url") or ""),
-                prefer_domain=_host(row.get("official_domain")),
+                source_url=page_url,
+                prefer_domain=official_domain,
             )
         ]
         if contacts:
             row["contacts"] = contacts
+    if not contacts and organization:
+        source = str(row.get("official_enrichment_url") or row.get("source_url") or "")
+        email = str(organization.get("email") or "").removeprefix("mailto:").strip().casefold()
+        phone = str(organization.get("telephone") or "").removeprefix("tel:").strip()
+        domain = _host(row.get("official_domain"))
+        if email and domain and email.endswith("@" + domain) and not any(marker in email for marker in _FAKE_EMAIL_MARKERS):
+            contacts.append({"kind": "email", "value": email, "source_url": source, "verified": True})
+        if phone and len(re.sub(r"\D", "", phone)) >= 8:
+            contacts.append({"kind": "phone", "value": phone, "source_url": source, "verified": True})
+        if contacts:
+            row["contacts"] = contacts
+    source_url = str(row.get("official_enrichment_url") or "")
+    if not (row.get("contacts") or ()) and html and source_url:
+        if "<form" in html.casefold() and re.search(
+            r"\b(?:contatt\w*|contact\w*|richiedi informazioni)\b", blob, re.I
+        ):
+            row["contacts"] = [{
+                "kind": "other", "value": source_url, "source_url": source_url, "verified": True,
+            }]
     return row
 
 
@@ -226,7 +308,22 @@ def _enrich_from_official_domain(row: MutableMapping[str, Any]) -> MutableMappin
             if response.status_code != 200 or "html" not in str(response.headers.get("content-type") or "").lower():
                 continue
             html = response.text[:1_500_000]
+            official_url = str(response.url)
+            row["official_enrichment_url"] = official_url
             row = _enrich_record_from_page(row, html=html, text="")
+            evidence = list(row.get("market_scope_evidence") or ())
+            if row.get("employee_count") is not None or row.get("parent_group") or row.get("is_listed") is True:
+                evidence.append({
+                    "source_url": official_url,
+                    "observed_at": datetime.now(timezone.utc).isoformat(),
+                    "method": "official_website_structured_or_literal",
+                    "authority_class": "official_company_website",
+                    "employee_count": row.get("employee_count"),
+                    "company_size": row.get("company_size"),
+                    "parent_group": row.get("parent_group"),
+                    "is_listed": row.get("is_listed"),
+                })
+                row["market_scope_evidence"] = evidence
             if (not need_size or row.get("employee_count") is not None or _text(row.get("company_size"))) and (
                 not need_contact or (row.get("contacts") or ())
             ):
@@ -929,22 +1026,31 @@ def _shell_recovery_query(company: str, *, failed_host: str, request: Any = None
         for item in (getattr(request, "signal_ids", None) or ())
         if str(item).strip()
     }
-    blob = " ".join(
-        (
-            str(getattr(request, "query", "") or ""),
-            " ".join(sorted(signals)),
-        )
-    ).casefold()
-    if "crm" in blob or (
-        "technology_adoption" in signals and "funding" not in signals
-    ):
+    filters = getattr(request, "technical_filters", None)
+    filters = filters if isinstance(filters, Mapping) else {}
+    active_items = filters.get("universal_active_strategies") or ()
+    active = next((item for item in active_items if isinstance(item, Mapping)), None)
+    if active is None or not str(active.get("hypothesis_id") or "").strip():
+        return ""
+    signal = str(active.get("signal_type") or "").strip().casefold()
+    if not signal or (signals and signal not in signals):
+        return ""
+    blob = " ".join((str(getattr(request, "query", "") or ""), signal)).casefold()
+    if "crm" in blob or signal == "technology_adoption":
         social_exclude = " -site:linkedin.com -site:facebook.com -site:instagram.com"
         return (
             f'"{company}" CRM ("selezione" OR "valutazione" OR "migrazione" OR '
             f'"in cerca" OR gara OR RFP OR "progetto CRM" OR sceglie OR adotta)'
             f'{exclude}{social_exclude}'
         )
-    return f'"{company}" (chiude un round OR ha raccolto OR funding round OR seed round){exclude}'
+    terms = tuple(_SIGNAL_ALIASES.get(signal) or ())
+    event_type = str(active.get("event_type") or "").strip()
+    if not terms and event_type:
+        terms = (event_type.replace("_", " "),)
+    if not terms:
+        return ""
+    event_or = " OR ".join(f'"{term}"' for term in terms[:5])
+    return f'"{company}" ({event_or}){exclude}'
 
 
 def _crm_shell_company_ok(company: str) -> bool:
@@ -1005,6 +1111,8 @@ def _enqueue_content_shell_followup(
         return
     failed_host = _host(failed_url)
     followup = _shell_recovery_query(company, failed_host=failed_host or "", request=request)
+    if not followup:
+        return
     existing = {item.casefold() for item in state.followup_queries}
     existing.update(item.casefold() for item in state.executed_query_keys)
     if followup.casefold() in existing:

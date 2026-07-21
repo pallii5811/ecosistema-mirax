@@ -327,7 +327,8 @@ def test_grounder_rejects_ambiguous_repeated_excerpt_with_wrong_offsets(tmp_path
         maximum_age_days=3650,
     )
     assert verdict.accepted is False
-    assert verdict.rejection_code == "EVIDENCE_GROUNDING_FAILED"
+    assert verdict.rejection_code == "EVENT_GROUNDING_FAILED"
+    assert verdict.gate_results["event_grounding"] is False
 
 
 def test_grounder_recovers_whitespace_normalized_excerpt_offsets() -> None:
@@ -499,6 +500,109 @@ def test_financing_provider_is_not_recipient(tmp_path: Path) -> None:
     assert verdict.rejection_code == "TARGET_ROLE_UNVERIFIED"
 
 
+def test_observed_factory_expansion_does_not_require_literal_seller_product() -> None:
+    text = "Beta Srl ha annunciato il 10 luglio 2026 l'ampliamento dello stabilimento produttivo di Brescia."
+    contract = SemanticQueryContract.from_model(
+        query_payload(
+            query_goal="PMI industriali con ampliamenti recenti",
+            event_or_state_description="ampliamento produttivo documentato",
+            target_role_in_event="expanding_company",
+            required_relationships=["company_opening_or_expanding_facility"],
+            acceptance_rubric=["expanding_company_grounded"],
+            excluded_roles=["publisher", "advisor", "vendor"],
+            evidence_claim_type="OBSERVED_EVENT",
+            canonical_signal_hints=["production_expansion"],
+        ),
+        original_query="Installiamo sistemi antincendio: trova PMI con ampliamenti produttivi",
+        requested_count=3,
+    )
+    interpretation = SemanticEventInterpretation.from_model(event_payload(
+        text,
+        entities=[{"name": "Beta Srl", "type": "operating_company", "role": "expanding_company"}],
+        target_company="Beta Srl",
+        target_entity_role="expanding_company",
+        event_type="production_expansion",
+        predicate="company_opening_or_expanding_facility",
+        event_status="announced",
+        event_date="2026-07-10",
+        relations=[{
+            "subject": "Beta Srl",
+            "predicate": "company_opening_or_expanding_facility",
+            "object": "stabilimento produttivo di Brescia",
+        }],
+        satisfied_relationships=["company_opening_or_expanding_facility"],
+        acceptance_rubric_passed=["expanding_company_grounded"],
+        query_match=True,
+        evidence_excerpt=text,
+        evidence_start=0,
+        evidence_end=len(text),
+    ))
+    verdict = SemanticEvidenceGroundingVerifier().verify(
+        contract,
+        interpretation,
+        source_text=text,
+        source_url="https://news.example/beta-ampliamento",
+        source_publisher="Economia Locale",
+        official_domain_verified=True,
+        official_domain_confidence=0.95,
+        entity_class="operating_company",
+        candidate_company="Beta Srl",
+        maximum_age_days=180,
+        now=date(2026, 7, 20),
+    )
+    assert verdict.accepted is True
+    assert verdict.evidence_claim_type == "OBSERVED_EVENT"
+    assert all(verdict.gate_results.values())
+
+
+def test_closed_supplier_award_cannot_ground_active_selection() -> None:
+    text = "Beta Srl ha aggiudicato definitivamente la fornitura ad Acme il 10 luglio 2026."
+    contract = SemanticQueryContract.from_model(
+        query_payload(
+            query_goal="aziende che stanno scegliendo un fornitore",
+            event_or_state_description="selezione fornitore attiva",
+            target_role_in_event="buyer",
+            required_relationships=["company_seeking_supplier"],
+            acceptance_rubric=["active_selection_grounded"],
+            excluded_roles=["supplier", "publisher"],
+            evidence_claim_type="SELECTION_PROCESS",
+        ),
+        original_query="Trova aziende che stanno scegliendo un fornitore",
+        requested_count=3,
+    )
+    interpretation = SemanticEventInterpretation.from_model(event_payload(
+        text,
+        entities=[{"name": "Beta Srl", "type": "operating_company", "role": "buyer"}],
+        target_company="Beta Srl",
+        target_entity_role="buyer",
+        event_type="supplier_award",
+        predicate="company_seeking_supplier",
+        event_status="awarded",
+        event_date="2026-07-10",
+        satisfied_relationships=["company_seeking_supplier"],
+        acceptance_rubric_passed=["active_selection_grounded"],
+        query_match=True,
+        evidence_excerpt=text,
+        evidence_start=0,
+        evidence_end=len(text),
+    ))
+    verdict = SemanticEvidenceGroundingVerifier().verify(
+        contract,
+        interpretation,
+        source_text=text,
+        source_url="https://beta.example/aggiudicazione",
+        source_publisher="Beta Srl",
+        official_domain_verified=True,
+        official_domain_confidence=0.95,
+        entity_class="operating_company",
+        candidate_company="Beta Srl",
+        maximum_age_days=180,
+        now=date(2026, 7, 20),
+    )
+    assert verdict.accepted is False
+    assert verdict.gate_results["explicit_demand_grounding"] is False
+
+
 def test_negation_hypothesis_fail_closed_after_safe_offset_recovery(tmp_path: Path) -> None:
     text = "Delta potrebbe ricevere capitale, ma il round non e stato concluso."
     contract = SemanticQueryContract.from_model(
@@ -520,7 +624,8 @@ def test_negation_hypothesis_fail_closed_after_safe_offset_recovery(tmp_path: Pa
         entity_class="operating_company", candidate_company="Delta",
     )
     assert verdict.accepted is False
-    assert verdict.rejection_code == "SEMANTIC_QUERY_MISMATCH"
+    assert verdict.rejection_code == "EVENT_GROUNDING_FAILED"
+    assert verdict.gate_results["event_grounding"] is False
 
 
 def test_callable_model_rejects_non_object() -> None:

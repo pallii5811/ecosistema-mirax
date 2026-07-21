@@ -67,11 +67,28 @@ def build_schema_valid_plan(spec: dict, hypotheses: list[dict]) -> dict:
     }
     mapped = []
     for hyp in hypotheses[:6]:
+        hypothesis_signals = [
+            str(item)
+            for item in hyp.get("allowed_signal_families") or ()
+            if str(item) in SIGNALS
+        ]
+        # This immutable canary certifies documented facility expansion.  A
+        # hypothesis from another explicit OR branch (for example compliance)
+        # must not inherit expansion signals or leak into its retrieval plan.
+        if not hypothesis_signals:
+            continue
+        observable_events = [
+            str(item)
+            for item in hyp.get("observable_event_types") or ()
+            if str(item)
+        ]
         mapped.append({
-            "id": hyp.get("id") or f"hyp-{len(mapped)+1}",
+            "id": hyp.get("hypothesis_id") or hyp.get("id") or f"hyp-{len(mapped)+1}",
             "buyer_problem": hyp.get("buyer_problem") or "Necessita di adeguamento antincendio",
-            "triggering_events": [hyp.get("observable_event") or "ampliamento produttivo documentato"],
-            "signals": SIGNALS[:2],
+            "triggering_events": observable_events or [
+                hyp.get("observable_event") or "ampliamento produttivo documentato"
+            ],
+            "signals": hypothesis_signals,
             "implied_need": hyp.get("buyer_problem") or "Valutare sistemi antincendio e adeguamenti",
             "relevance_to_offer": (
                 f"Il segnale '{hyp.get('observable_event')}' rende attuale "
@@ -80,21 +97,16 @@ def build_schema_valid_plan(spec: dict, hypotheses: list[dict]) -> dict:
             "confidence": 0.82,
         })
     if not mapped:
-        mapped = [{
-            "id": "antincendio-expansion",
-            "buyer_problem": "Nuovo stabilimento o ampliamento richiede adeguamento antincendio",
-            "triggering_events": ["nuovo stabilimento", "ampliamento produttivo", "adeguamento documentato"],
-            "signals": SIGNALS,
-            "implied_need": "Progettazione e installazione sistemi antincendio",
-            "relevance_to_offer": "Espansione produttiva crea bisogno immediato di protezione antincendio",
-            "confidence": 0.85,
-        }]
+        raise ValueError("immutable canary compiler produced no expansion-bound hypothesis")
+    plan_signals = list(dict.fromkeys(
+        signal for hypothesis in mapped for signal in hypothesis.get("signals") or ()
+    ))
     plan["commercial_hypotheses"] = mapped
     plan["signal_policy"] = {
-        "required_signals": SIGNALS[:2],
-        "optional_signals": SIGNALS[2:],
+        "required_signals": plan_signals,
+        "optional_signals": [],
         "negative_signals": ["business_closed"],
-        "maximum_age_days_by_signal": {s: 180 for s in SIGNALS},
+        "maximum_age_days_by_signal": {s: 180 for s in plan_signals},
         "minimum_signal_confidence": 0.7,
     }
     plan["source_policy"] = {
@@ -166,12 +178,15 @@ def build_schema_valid_plan(spec: dict, hypotheses: list[dict]) -> dict:
                 "signals": list(h.get("signals") or SIGNALS),
                 "buyer_problem": h.get("buyer_problem"),
                 "implied_need": h.get("implied_need"),
+                "evidence_claim_type": "OBSERVED_EVENT",
+                "required_target_role": "expanding_company",
+                "prohibited_roles": ["publisher", "advisor", "investor", "vendor"],
             }
             for h in mapped
         ],
         "clarification_required": False,
         "confidence": float(spec.get("confidence") or 0.85),
-        "canonical_signal_hints": SIGNALS,
+        "canonical_signal_hints": plan_signals,
     }
     return validate_commercial_search_plan(plan).model_dump(mode="json")
 

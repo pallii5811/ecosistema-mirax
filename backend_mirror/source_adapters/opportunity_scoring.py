@@ -151,8 +151,13 @@ def score_opportunity(
     candidate: OpportunityCandidate,
     *,
     today: Optional[date] = None,
-    freshness_horizon_days: int = 30,
+    freshness_horizon_days: Optional[int] = None,
 ) -> OpportunityScore:
+    if freshness_horizon_days is None:
+        try:
+            freshness_horizon_days = int(candidate.provenance.get("freshness_horizon_days") or 90)
+        except (TypeError, ValueError):
+            freshness_horizon_days = 90
     if freshness_horizon_days <= 0:
         raise ValueError("freshness horizon must be positive")
     today = today or date.today()

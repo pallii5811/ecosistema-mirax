@@ -98,7 +98,10 @@ def test_specialized_hiring_signal_requires_a_coherent_role() -> None:
     row = fixture_rows()[0][0]
     sales_request = replace(request(), signal_ids=("hiring_sales",), query="PMI italiane che assumono sales")
     assert _validate_record(row, sales_request, date.today()) == (False, "HIRING_ROLE_MISMATCH")
-    row.update({"vacancy_title": "Sales account", "evidence": "Ricerca un sales account. Candidati."})
+    row.update({
+        "vacancy_title": "Sales account - sviluppo nuovi clienti",
+        "evidence": "Ricerca un sales account responsabile di acquisire e sviluppare nuovi clienti B2B. Candidati.",
+    })
     assert _validate_record(row, sales_request, date.today()) == (True, "")
 
 

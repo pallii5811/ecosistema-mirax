@@ -152,6 +152,7 @@ class SemanticQueryContract:
     clarification_required: bool
     confidence: float
     canonical_signal_hints: Tuple[str, ...] = ()
+    evidence_claim_type: str = "OBSERVED_EVENT"
     schema_version: str = QUERY_SCHEMA_VERSION
 
     def to_dict(self) -> Dict[str, Any]:
@@ -179,6 +180,13 @@ class SemanticQueryContract:
             dict(item) for item in value.get("discovery_hypotheses") or ()
             if isinstance(item, Mapping)
         )
+        relationships_blob = " ".join(required).casefold()
+        claim_type = _clean(value.get("evidence_claim_type")).upper()
+        if not claim_type:
+            if any(token in relationships_blob for token in ("seeking", "selection", "procurement", "rfp", "request_for")):
+                claim_type = "SELECTION_PROCESS"
+            else:
+                claim_type = "OBSERVED_EVENT"
         return cls(
             original_query=_clean(original_query),
             requested_count=max(1, int(requested_count)),
@@ -208,6 +216,7 @@ class SemanticQueryContract:
             clarification_required=clarification,
             confidence=_bounded_confidence(value.get("confidence")),
             canonical_signal_hints=_tuple(value.get("canonical_signal_hints")),
+            evidence_claim_type=claim_type,
         )
 
 
@@ -324,6 +333,9 @@ class GroundingVerdict:
     source_url: str
     source_publisher: str
     verified_at: str
+    evidence_claim_type: str
+    gate_results: Mapping[str, bool]
+    failed_gate_codes: Tuple[str, ...]
     schema_version: str = GROUNDING_SCHEMA_VERSION
 
     def to_dict(self) -> Dict[str, Any]:
@@ -1277,17 +1289,72 @@ class SemanticEvidenceGroundingVerifier:
             "operating_entity": entity_class == "operating_company",
             "confidence_sufficient": interpretation.confidence >= 0.70 and interpretation.certainty >= 0.70,
         }
+        claim_type = str(contract.evidence_claim_type or "OBSERVED_EVENT").upper()
+        event_grounding = all((
+            checks["excerpt_literal"],
+            checks["not_negated_hypothetical_conditional_or_rumor"],
+            checks["event_status_observed"],
+            checks["temporal_evidence_valid"],
+        ))
+        company_grounding = all((
+            checks["target_identity_matches_candidate"],
+            checks["target_present_in_source"],
+            checks["target_role_matches_query"],
+            checks["target_role_not_excluded"],
+            checks["official_domain_verified"],
+            checks["operating_entity"],
+        ))
+        hypothesis_compatibility = all((
+            checks["required_relationships_supported"],
+            checks["acceptance_rubric_satisfied"],
+            checks["query_match"],
+        ))
+        closed_status = interpretation.event_status.casefold() in {
+            "closed", "completed_award", "awarded", "expired", "cancelled", "implemented",
+        }
+        explicit_required = claim_type in {"DIRECT_DEMAND", "SELECTION_PROCESS"}
+        explicit_demand_grounding = (not explicit_required) or (
+            event_grounding and hypothesis_compatibility and not closed_status
+        )
+        commercial_inference_validity = (
+            event_grounding and hypothesis_compatibility
+            if claim_type in {"OBSERVED_EVENT", "COMPANY_ATTRIBUTE", "COMMERCIAL_INFERENCE"}
+            else True
+        )
+        gate_results = {
+            "event_grounding": event_grounding,
+            "company_grounding": company_grounding,
+            "hypothesis_compatibility": hypothesis_compatibility,
+            "commercial_inference_validity": commercial_inference_validity,
+            "explicit_demand_grounding": explicit_demand_grounding,
+        }
+        gate_codes = {
+            "event_grounding": "EVENT_GROUNDING_FAILED",
+            "company_grounding": "COMPANY_GROUNDING_FAILED",
+            "hypothesis_compatibility": "HYPOTHESIS_COMPATIBILITY_FAILED",
+            "commercial_inference_validity": "COMMERCIAL_INFERENCE_INVALID",
+            "explicit_demand_grounding": "EXPLICIT_DEMAND_GROUNDING_FAILED",
+        }
+        failed_gate_codes = tuple(
+            gate_codes[name] for name, passed in gate_results.items() if not passed
+        )
         reasons = tuple(name for name, passed in checks.items() if not passed)
         if hiring_proxy is not None and not duty_ok:
             rejection = "CUSTOMER_ACQUISITION_DUTY_UNPROVEN"
-        elif not literal or not target_in_source:
-            rejection = "EVIDENCE_GROUNDING_FAILED"
+        elif not event_grounding:
+            rejection = "EVENT_GROUNDING_FAILED"
         elif not role_match or excluded_role:
             rejection = "TARGET_ROLE_UNVERIFIED"
-        elif not relationships_pass or not rubric_pass or not query_match:
-            rejection = "SEMANTIC_QUERY_MISMATCH"
+        elif not company_grounding:
+            rejection = "COMPANY_GROUNDING_FAILED"
+        elif not hypothesis_compatibility:
+            rejection = "HYPOTHESIS_COMPATIBILITY_FAILED"
+        elif not explicit_demand_grounding:
+            rejection = "EXPLICIT_DEMAND_GROUNDING_FAILED"
+        elif not commercial_inference_validity:
+            rejection = "COMMERCIAL_INFERENCE_INVALID"
         elif reasons:
-            rejection = "EVIDENCE_GROUNDING_FAILED"
+            rejection = failed_gate_codes[0] if failed_gate_codes else "EVIDENCE_GROUNDING_FAILED"
         else:
             rejection = None
         return GroundingVerdict(
@@ -1305,6 +1372,9 @@ class SemanticEvidenceGroundingVerifier:
             source_url=source_url,
             source_publisher=source_publisher,
             verified_at=datetime.now(timezone.utc).isoformat(),
+            evidence_claim_type=claim_type,
+            gate_results=gate_results,
+            failed_gate_codes=failed_gate_codes,
         )
 
 

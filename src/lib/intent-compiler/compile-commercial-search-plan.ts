@@ -582,13 +582,16 @@ function semanticPlanEnvelope(query: string, input: unknown): unknown {
     input && typeof input === 'object' && !Array.isArray(input) &&
     ('schema_version' in input || 'semantic_query_contract' in input)
   ) return input
-  const parsed = SemanticQueryContractSchema.safeParse(input)
-  if (!parsed.success) return { semantic_query_contract: input }
+  // Tier-1 is allowed to omit structural, non-semantic fields. Complete those
+  // deterministically before building the canonical plan; otherwise a valid
+  // semantic core becomes an empty plan and fails with no actionable issue.
+  const completed = completeSemanticContract(query, input)
+  if (!completed) return { semantic_query_contract: input }
   const semantic: SemanticQueryContract = {
-    ...parsed.data,
+    ...completed,
     canonical_signal_hints: filterRoutingHintsForContract(
-      parsed.data.canonical_signal_hints,
-      parsed.data,
+      completed.canonical_signal_hints,
+      completed,
     ),
   }
   // Heuristic floor is structural only; contract relationships remain authority for geo vs staffing.
@@ -923,6 +926,9 @@ function normalizePayload(
     ? payload.semantic_query_contract as Record<string, unknown>
     : null
   if (semantic) {
+    // The enclosing request is the only lossless authority for wording. A
+    // cached/full-plan payload may carry an older or omitted copy.
+    semantic.original_query = query.trim()
     const contractView = {
       required_relationships: stringArray(semantic.required_relationships),
       event_or_state_description: String(semantic.event_or_state_description || ''),
@@ -1542,13 +1548,34 @@ export async function compileCommercialSearchPlan(
     let planner: 'llm' | 'repaired_llm' = 'llm'
     let finalModel = tier1Model
 
+    let deterministicNormalizeIssues: PlanValidationIssue[] = []
     const tryAccept = (raw: unknown): CommercialSearchPlan | null => {
       const envelope = semanticPlanEnvelope(query, raw)
       const parsed = safeParseCommercialSearchPlan(
         normalizePayload(envelope, query, finalModel, options, planner),
       )
-      if (!parsed.success) return null
-      if (validateCommercialPlanSemantics(parsed.data).length > 0) return null
+      if (!parsed.success) {
+        deterministicNormalizeIssues = parsed.error.issues.map((issue) => ({
+          code: `SCHEMA_${String(issue.code).toUpperCase()}`,
+          path: issue.path.map(String).join('.') || 'commercial_search_plan',
+          message: issue.message,
+        }))
+        return null
+      }
+      const contractIssues = semanticContractIssues(
+        query,
+        parsed.data.semantic_query_contract || null,
+      )
+      if (contractIssues.length > 0) {
+        deterministicNormalizeIssues = contractIssues
+        return null
+      }
+      const semanticIssues = validateCommercialPlanSemantics(parsed.data)
+      if (semanticIssues.length > 0) {
+        deterministicNormalizeIssues = semanticIssues
+        return null
+      }
+      deterministicNormalizeIssues = []
       return parsed.data
     }
 
@@ -1588,7 +1615,7 @@ export async function compileCommercialSearchPlan(
     if (!needsTier2) {
       options.onDiagnostic?.({
         stage: 'initial',
-        issues: [{
+        issues: deterministicNormalizeIssues.length ? deterministicNormalizeIssues : [{
           code: 'DETERMINISTIC_NORMALIZE_FAILED',
           path: 'commercial_search_plan',
           message: 'Tier-1 output remained invalid after deterministic normalization.',
@@ -1646,7 +1673,7 @@ export async function compileCommercialSearchPlan(
     if (!repaired) {
       options.onDiagnostic?.({
         stage: 'repair',
-        issues: [{
+        issues: deterministicNormalizeIssues.length ? deterministicNormalizeIssues : [{
           code: 'DETERMINISTIC_NORMALIZE_FAILED',
           path: 'commercial_search_plan',
           message: 'Tier-2 output remained invalid after deterministic normalization.',

@@ -13,6 +13,15 @@ export type CommercialRequestMode =
   | 'procurement_discovery'
 
 export type IntentStrength = 'direct' | 'strong_inferred' | 'moderate_inferred'
+export type EvidenceClaimType =
+  | 'DIRECT_DEMAND'
+  | 'SELECTION_PROCESS'
+  | 'OBSERVED_EVENT'
+  | 'COMPANY_ATTRIBUTE'
+  | 'MARKET_SCOPE'
+  | 'IDENTITY'
+  | 'CONTACT'
+  | 'COMMERCIAL_INFERENCE'
 
 export type CapabilityStatus = 'supported' | 'supported_partial' | 'unavailable'
 
@@ -98,12 +107,22 @@ export type ObservableEvent = {
 
 export type CommercialHypothesis = {
   id: string
+  hypothesis_id: string
+  buyer_archetype: string
   target_company_profile: TargetCompanyProfile
   target_role: string
   buyer_problem: string
+  expected_outcome: string
   observable_event: string
+  observable_event_types: string[]
   required_relationship: string
+  required_relationships: string[]
+  allowed_signal_families: string[]
+  excluded_signal_families: string[]
   sources: string[]
+  source_classes: string[]
+  evidence_claim_type: EvidenceClaimType
+  query_templates: string[]
   false_positive_risks: string[]
   expected_yield: 'high' | 'medium' | 'low'
   expected_cost: 'low' | 'medium' | 'high'

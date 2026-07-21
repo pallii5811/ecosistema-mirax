@@ -9,8 +9,9 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from .catalog import SourceCapabilityRegistry, default_source_capability_registry
 from .cheap_discovery_prefilter import DiscoveryHit, cheap_rank_hits
 from .contracts import AdapterDiscoveryRequest, DiscoveryCursor, QualifiedLead
-from .orchestrator import OrchestrationResult, ProgressCallback, TerminalStatus, UniversalSourceOrchestrator
-from .signal_strategy_planner import DiscoveryStrategy, plan_strategies
+from .orchestrator import OrchestrationResult, ProgressCallback, SearchProgress, TerminalStatus, UniversalSourceOrchestrator
+from .hypothesis_retrieval_validator import HypothesisRetrievalValidator
+from .signal_strategy_planner import DiscoveryStrategy, hypothesis_contracts_for_spec, plan_strategies
 from .universal_evidence import extract_evidence_from_text
 from .universal_query_spec import UniversalQuerySpec, compile_universal_query_spec
 
@@ -63,6 +64,11 @@ class StrategyRuntimeStats:
     prefilter_accepted: int = 0
     pages_opened: int = 0
     candidates: int = 0
+    company_associated: int = 0
+    event_grounded: int = 0
+    identity_valid: int = 0
+    market_scope_valid: int = 0
+    contactable: int = 0
     qualified: int = 0
     cost_eur: float = 0.0
     cursor: Optional[str] = None
@@ -79,8 +85,14 @@ class StrategyRuntimeStats:
             "prefilter_accepted": self.prefilter_accepted,
             "pages_opened": self.pages_opened,
             "candidates": self.candidates,
+            "company_associated": self.company_associated,
+            "event_grounded": self.event_grounded,
+            "identity_valid": self.identity_valid,
+            "market_scope_valid": self.market_scope_valid,
+            "contactable": self.contactable,
             "qualified": self.qualified,
             "cost_eur": self.cost_eur,
+            "cost_per_accepted": self.cost_eur / self.qualified if self.qualified else None,
             "cursor": self.cursor,
             "aborted": self.aborted,
             "productive": self.productive,
@@ -333,6 +345,8 @@ class UniversalSignalDiscoveryEngine:
         }
         spec = self.compile_spec(plan_map, requested_count=request.requested_count, hard_cap_eur=request.budget_eur)
         strategies = self.plan(spec)
+        hypothesis_contracts = hypothesis_contracts_for_spec(spec)
+        retrieval_validator = HypothesisRetrievalValidator()
         allow_da = bool(set(spec.required_signals).intersection(_DA_SIGNALS))
 
         prefilter_accepted = 0
@@ -372,6 +386,7 @@ class UniversalSignalDiscoveryEngine:
         batches_run = 0
         accumulated_rejections: Dict[str, int] = {}
         accumulated_raw = 0
+        strategy_validation_failures = 0
 
         while batches_run < self.max_strategy_batches:
             if remaining <= 0:
@@ -387,6 +402,23 @@ class UniversalSignalDiscoveryEngine:
 
             strategy = schedule[0]
             stats = stats_map[strategy.strategy_id]
+            validation = retrieval_validator.validate(strategy, hypothesis_contracts)
+            if not validation.accepted:
+                stats.aborted = True
+                strategy_validation_failures += 1
+                accumulated_rejections[validation.code] = accumulated_rejections.get(validation.code, 0) + 1
+                notes.append(
+                    f"{validation.code}:{strategy.strategy_id}:{'|'.join(validation.reasons)}"
+                )
+                # Deliberately no orchestrator/provider call here.
+                continue
+            active_hypothesis = next(
+                (
+                    item for item in hypothesis_contracts
+                    if str(item.get("hypothesis_id") or item.get("id") or "") == strategy.hypothesis_id
+                ),
+                {},
+            )
             # Prefer live affinity map over planner hints so generic evidence signals
             # actually hit generic_web_research_v1 (planner may still list growth).
             inferred = adapters_for_signals((strategy.signal_type,), allow_digital_audit=allow_da)
@@ -451,6 +483,7 @@ class UniversalSignalDiscoveryEngine:
                     "universal_strategy_id": strategy.strategy_id,
                     "universal_strategies": [item.to_dict() for item in strategies],
                     "universal_active_strategies": [strategy.to_dict()],
+                    "active_commercial_hypothesis": dict(active_hypothesis),
                     "universal_search_queries": (strategy.search_query,),
                     "universal_seed_companies": seeded_companies,
                     "universal_prefilter_telemetry": telemetry_bucket,
@@ -501,6 +534,11 @@ class UniversalSignalDiscoveryEngine:
             stats.prefilter_accepted += int(telemetry_bucket.get("prefilter_accepted") or 0)
             stats.pages_opened += int(telemetry_bucket.get("pages_opened_after_prefilter") or 0)
             stats.candidates += int(result.progress.unique_entity_count or 0)
+            stats.company_associated += int(result.progress.unique_entity_count or 0)
+            stats.event_grounded += int(result.progress.evidence_verified_count or 0)
+            stats.identity_valid += int(result.progress.resolved_count or 0)
+            stats.market_scope_valid += len(result.qualified_leads)
+            stats.contactable += sum(1 for lead in result.qualified_leads if lead.candidate.contacts)
             stats.qualified += gained
             prefilter_accepted += int(telemetry_bucket.get("prefilter_accepted") or 0)
             prefilter_rejected += int(telemetry_bucket.get("prefilter_rejected") or 0)
@@ -543,7 +581,37 @@ class UniversalSignalDiscoveryEngine:
                 # previously stopped at 1/3 after the first drained URL wave).
                 continue
 
-        if last_result is None:
+        if last_result is None and strategy_validation_failures:
+            now = datetime.now(timezone.utc).isoformat()
+            coverage = self.registry.resolve(
+                request,
+                required_source_classes=required_source_classes,
+                allow_generic_fallback=True,
+            )
+            last_result = OrchestrationResult(
+                status="failed_terminal",
+                coverage=coverage,
+                qualified_leads=(),
+                progress=SearchProgress(
+                    requested_count=spec.requested_count,
+                    discovered_count=0,
+                    raw_candidate_count=0,
+                    unique_entity_count=0,
+                    resolved_count=0,
+                    audited_count=0,
+                    evidence_verified_count=0,
+                    qualified_count=0,
+                    rejected_count=strategy_validation_failures,
+                    cost_eur=0.0,
+                ),
+                rejection_codes={"STRATEGY_INTENT_LEAKAGE": strategy_validation_failures},
+                adapter_progress=(),
+                cost_eur=0.0,
+                started_at=now,
+                completed_at=now,
+                limitations=tuple(notes),
+            )
+        elif last_result is None:
             empty_request = replace(
                 request,
                 budget_eur=request.budget_eur,

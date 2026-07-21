@@ -7,52 +7,6 @@ from typing import Any, Dict, List
 from contracts.commercial_intent import CommercialHypothesis, ensure_market_scope_policy
 
 
-GENERIC_WHY_NOW = [
-    {
-        "event": "new facility or production site opening",
-        "problem": "capital project triggers compliance, equipment and vendor selection",
-        "relationship": "company_opening_or_expanding_facility",
-        "sources": ["official_company_website", "recognized_local_news", "public_registry"],
-        "risks": ["real-estate listing as buyer", "construction vendor as target"],
-    },
-    {
-        "event": "public tender or regulatory compliance deadline",
-        "problem": "mandated upgrade or certification window creates time-bound demand",
-        "relationship": "company_subject_to_public_or_regulatory_requirement",
-        "sources": ["public_procurement_portal", "official_company_website"],
-        "risks": ["contracting authority as buyer", "advisor blog as evidence"],
-    },
-    {
-        "event": "operational pain or downtime disclosed publicly",
-        "problem": "observable performance gap aligned with seller outcome",
-        "relationship": "company_experiencing_operational_gap",
-        "sources": ["official_company_website", "industry_publication"],
-        "risks": ["generic thought leadership", "hypothetical future need"],
-    },
-    {
-        "event": "leadership or ownership transition",
-        "problem": "new decision makers re-evaluate suppliers and processes",
-        "relationship": "company_under_management_or_ownership_change",
-        "sources": ["official_company_website", "public_registry", "recognized_local_news"],
-        "risks": ["registry page without operating company", "advisor as target"],
-    },
-    {
-        "event": "hiring for roles tied to the seller outcome",
-        "problem": "workforce investment signals budget and priority for the problem space",
-        "relationship": "employer_investing_in_relevant_capability",
-        "sources": ["official_company_website", "verified_job_posting"],
-        "risks": ["recruiter or job board as employer", "stale vacancy"],
-    },
-    {
-        "event": "supplier change or contract end",
-        "problem": "incumbent displacement creates replacement demand",
-        "relationship": "company_ending_incumbent_supplier_relationship",
-        "sources": ["official_company_website", "recognized_local_news"],
-        "risks": ["former supplier page as buyer", "rumor without evidence"],
-    },
-]
-
-
 def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "hypothesis"
 
@@ -75,14 +29,44 @@ class OfferToBuyerNeedPlanner:
         is_explicit = intent.get("request_mode") == "explicit_demand"
         strength = "direct" if is_explicit else "strong_inferred"
         hypotheses: List[CommercialHypothesis] = []
-
-        for index, template in enumerate(GENERIC_WHY_NOW):
-            if len(hypotheses) >= 6:
-                break
+        events = [item for item in intent.get("observable_events") or [] if isinstance(item, dict)]
+        signals = list(dict.fromkeys([
+            *[str(item) for item in intent.get("direct_demand_signals") or [] if str(item)],
+            *[str(item) for item in intent.get("inferred_fit_signals") or [] if str(item)],
+            *[
+                str(signal)
+                for event in events
+                for signal in event.get("signals") or []
+                if str(signal)
+            ],
+        ]))
+        relationships = [str(item) for item in intent.get("required_relationships") or [] if str(item)]
+        # No evidence-bearing event/relation means no hypothesis.  Returning an
+        # empty plan is safer than inventing unrelated generic plays.
+        if not events and not signals and not relationships:
+            return []
+        sources = list(
+            (intent.get("source_requirements") or {}).get("allowed_source_classes")
+            or ["official_company_website", "recognized_news"]
+        )
+        seeds = events or [{
+            "id": signals[0] if signals else relationships[0],
+            "description": intent.get("buyer_need") or problems[0],
+            "signals": signals,
+        }]
+        for index, event in enumerate(seeds[:6]):
+            event_signals = [str(item) for item in event.get("signals") or signals if str(item)]
+            relationship = relationships[min(index, len(relationships) - 1)] if relationships else (
+                f"company_has_{event_signals[0]}" if event_signals else "company_has_observed_event"
+            )
+            event_description = str(event.get("description") or event.get("id") or relationship)
             problem = problems[index % len(problems)]
+            hypothesis_id = f"hyp-{_slug(str(event.get('id') or relationship))}-{index + 1}"
             hypotheses.append(
                 CommercialHypothesis(
-                    id=f"hyp-{_slug(template['relationship'])}-{index + 1}",
+                    id=hypothesis_id,
+                    hypothesis_id=hypothesis_id,
+                    buyer_archetype=str(intent.get("buyer_need") or "target operating company"),
                     target_company_profile={
                         **base_profile,
                         "required_attributes": [
@@ -92,12 +76,23 @@ class OfferToBuyerNeedPlanner:
                     },
                     target_role=str(intent.get("target_role") or "commercial decision maker"),
                     buyer_problem=problem,
-                    observable_event=template["event"],
-                    required_relationship=template["relationship"],
-                    sources=list(template["sources"]),
-                    false_positive_risks=list(template["risks"]),
-                    expected_yield="high" if index < 2 else "medium",
-                    expected_cost="low" if index < 3 else "medium",
+                    expected_outcome=str(offer),
+                    observable_event=event_description,
+                    observable_event_types=event_signals or [str(event.get("id") or relationship)],
+                    required_relationship=relationship,
+                    required_relationships=[relationship],
+                    allowed_signal_families=event_signals,
+                    excluded_signal_families=[str(item) for item in intent.get("excluded_signals") or []],
+                    sources=sources,
+                    source_classes=sources,
+                    evidence_claim_type="DIRECT_DEMAND" if is_explicit else "OBSERVED_EVENT",
+                    query_templates=[event_description],
+                    false_positive_risks=[
+                        "publisher or intermediary selected as target",
+                        "commercial inference presented as explicit demand",
+                    ],
+                    expected_yield="high" if is_explicit else "medium",
+                    expected_cost="low",
                     intent_strength=strength,
                 )
             )

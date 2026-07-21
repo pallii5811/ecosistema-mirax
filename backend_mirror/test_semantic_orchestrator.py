@@ -118,7 +118,8 @@ def test_deferred_news_domain_applies_semantic_enrichment_before_requalify(tmp_p
     def fake_identity(candidate: OpportunityCandidate, request, *, semantic_matched: bool):
         assert semantic_matched is True
         assert candidate.buyer_fit == 0.95
-        assert candidate.why_now == "fresh resources"
+        assert "Sirius Game chiude un round" in (candidate.why_now or "")
+        assert "Inferenza commerciale, non domanda esplicita" in (candidate.why_now or "")
         verified = replace(
             candidate,
             official_domain="siriusgame.it",
@@ -164,7 +165,9 @@ def test_common_semantic_gate_qualifies_grounded_recipient(tmp_path: Path) -> No
     assert grounding["accepted"] is True
     assert grounding["target_role"] == "recipient"
     assert result.qualified_leads[0].candidate.buyer_fit == 0.95
-    assert result.qualified_leads[0].candidate.why_now == "fresh resources"
+    why_now = result.qualified_leads[0].candidate.why_now or ""
+    assert "Beta Srl prova esplicita funding" in why_now
+    assert "Inferenza commerciale, non domanda esplicita" in why_now
     assert result.qualified_leads[0].candidate.confidence == 0.95
     assert result.semantic_telemetry["semantic_calls"] == 1
 

@@ -13,6 +13,7 @@ from contracts.commercial_intent import (
     ensure_market_scope_policy,
     normalize_commercial_intent,
 )
+from contracts.signal_ontology import load_signal_ontology, match_query_signals
 
 _EXPLICIT_DEMAND_RE = re.compile(
     r"\b(cercano|stanno\s+cercando|in\s+cerca\s+di|assumono|raccogliendo|bando\s+per|rfp\b)\b",
@@ -115,17 +116,41 @@ class CommercialIntentCompiler:
         if _ENTERPRISE_OPT_IN_RE.search(query):
             profile["market_scope_policy"]["enterprise_opt_in"] = True
 
-        direct_signals: List[str] = []
-        inferred_signals: List[str] = []
-        required_relationships: List[str] = []
-        if re.search(r"\bcrm\b", query, re.I):
-            direct_signals.append("crm_detected")
-            required_relationships.append("target_company_seeking_crm_solution")
-        if re.search(r"\b(assum|hiring|ingegner|sviluppat)\b", query, re.I):
-            direct_signals.append("hiring_technology")
-        if re.search(r"\b(funding|finanz|round|seed)\b", query, re.I):
-            direct_signals.append("funding_received")
-            required_relationships.append("startup_raising_or_receiving_investment")
+        explicit_signals = match_query_signals(query)
+        direct_signals: List[str] = list(explicit_signals) if request_mode in {
+            "explicit_demand", "procurement_discovery", "digital_audit",
+        } else []
+        inferred_signals: List[str] = list(explicit_signals) if request_mode not in {
+            "explicit_demand", "procurement_discovery", "digital_audit",
+        } else []
+        relationship_aliases = {
+            "production_expansion": "company_opening_or_expanding_facility",
+            "supplier_search": "target_company_seeking_supplier",
+            "funding": "startup_raising_or_receiving_investment",
+        }
+        if "technology_adoption" in explicit_signals and re.search(r"\bcrm\b", query, re.I):
+            relationship_aliases["technology_adoption"] = "target_company_seeking_crm_solution"
+        required_relationships = [relationship_aliases.get(signal, f"company_has_{signal}") for signal in explicit_signals]
+        ontology = load_signal_ontology()["signals"]
+        observable_events = [
+            {
+                "id": f"event-{signal}",
+                "description": str(ontology[signal]["description"]),
+                "triggering_phrases": [],
+                "signals": [signal],
+                "implied_need": seller_offer,
+            }
+            for signal in explicit_signals
+        ]
+        allowed_sources = list(dict.fromkeys(
+            source
+            for signal in explicit_signals
+            for source in (
+                ontology[signal].get("preferred_source_classes")
+                or ontology[signal].get("likely_source_classes")
+                or ()
+            )
+        )) or ["official_company_website"]
 
         confidence = 0.88 if request_mode != "company_filter" else 0.72
         if not seller_offer and request_mode == "seller_driven_lead_discovery":
@@ -151,11 +176,11 @@ class CommercialIntentCompiler:
             "freshness": {"maximum_age_days": 120},
             "direct_demand_signals": direct_signals,
             "inferred_fit_signals": inferred_signals,
-            "observable_events": [],
+            "observable_events": observable_events,
             "required_relationships": required_relationships,
             "excluded_roles": ["publisher", "recruiter", "vendor", "investor"],
             "evidence_policy": {"minimum_evidence_confidence": 0.7},
-            "source_requirements": {"allowed_source_classes": ["official_company_website", "company_careers"]},
+            "source_requirements": {"allowed_source_classes": allowed_sources},
             "intent_strength_required": "direct" if request_mode == "explicit_demand" else "strong_inferred",
             "capability_status": "supported",
             "confidence": confidence,

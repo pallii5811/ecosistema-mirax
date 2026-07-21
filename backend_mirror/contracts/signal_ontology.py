@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -14,6 +15,30 @@ _ONTOLOGY_CANDIDATES = [
     _HERE.parents[1] / "contracts" / "signal-ontology.v1.json",
 ]
 ONTOLOGY_PATH = next((path for path in _ONTOLOGY_CANDIDATES if path.is_file()), _ONTOLOGY_CANDIDATES[0])
+
+# Event language only: these patterns identify observable commercial facts,
+# never professions or seller-specific offers.  Values are existing ontology
+# IDs and therefore cannot create parallel signals.
+_QUERY_SIGNAL_PATTERNS = (
+    ("production_expansion", r"\b(nuov[oi]\s+(?:stabiliment[oi]|impiant[oi]|line[ae]\s+produttiv[ae])|ampliament\w*\s+produttiv\w*|capacita\s+produttiva|production\s+expansion)\b"),
+    ("new_location", r"\b(nuov[ae]\s+(?:sed[ei]|filial[ei]|uffic[io]|magazzin\w*|stabiliment\w*)|apert\w+\s+(?:sed[ei]|filial[ei])|new\s+(?:office|site|facility|location))\b"),
+    ("geographic_expansion", r"\b(espansion\w+\s+(?:geografic\w*|all.estero)|entra\w*\s+nel\s+mercato|expanding\s+abroad|new\s+market)\b"),
+    ("hiring_sales", r"\b(assum\w*|cerca\w*|ricerca\w*)\b.{0,70}\b(commercial\w*|sales|business\s+developer|account\s+manager|sdr|bdr)\b"),
+    ("hiring_marketing", r"\b(assum\w*|cerca\w*|ricerca\w*)\b.{0,70}\b(marketing|social\s+media|performance\s+marketer|media\s+buyer|growth)\b"),
+    ("hiring_technology", r"\b(assum\w*|cerca\w*|ricerca\w*)\b.{0,70}\b(programmator\w*|sviluppator\w*|software|it\b|cyber|data\s+engineer)\b"),
+    ("funding", r"\b(round|funding|seed|pre[- ]?seed|ha\s+raccolto|finanziat\w+\s+da)\b"),
+    ("supplier_search", r"\b(cerca\w*|ricerca\w*|selezion\w*)\b.{0,50}\b(fornitor\w*|supplier|proposte|rfp)\b"),
+    ("product_launch", r"\b(lancia\w*|nuov[oi]\s+prodott\w*|product\s+launch)\b"),
+    ("internationalization", r"\b(export|internazionalizz\w*|espansion\w+\s+all.estero|expanding\s+abroad)\b"),
+    ("new_equipment", r"\b(nuov[oi]\s+macchinar\w*|automatizz\w+\s+line\w*|equipment\s+purchase)\b"),
+    ("technology_adoption", r"\b(adott\w*|implement\w*|nuov[ae]\s+piattaform\w*|trasformazion\w+\s+digital\w*|(?:valut\w*|scegli\w*|cerca\w*)\s+(?:un\s+)?(?:nuov\w+\s+)?(?:crm|erp|software|piattaforma))\b"),
+    ("technology_migration", r"\b(migrazion\w*|sostituzion\w+\s+(?:crm|erp|piattaform\w*|sistem\w*))\b"),
+    ("website_weakness", r"\b(criticita\s+seo|problemi\s+seo|sito\s+(?:vecchio|lento|debole)|online\s+(?:mess[oa]\s+male|debole))\b"),
+    ("missing_analytics", r"\b(senza\s+(?:analytics|gtm)|assenza\s+(?:di\s+)?(?:analytics|gtm)|missing\s+(?:analytics|gtm))\b"),
+    ("missing_advertising_pixel", r"\b(senza\s+(?:pixel|tracciamento\s+pubblicitario)|assenza\s+(?:di\s+)?(?:pixel|tracking)|missing\s+(?:pixel|tracking))\b"),
+    ("regulatory_change", r"\b(adeguament\w+\s+(?:normativ\w*|documentat\w*)|nuov\w+\s+normativ\w*|regulatory\s+change)\b"),
+    ("certification", r"\b(ottien\w*|rinnov\w*|cerca\w*|necessita\w*|scadenz\w*)\b.{0,50}\b(certificazion\w*|iso\s*(?:9001|14001|27001))\b"),
+)
 
 
 @lru_cache(maxsize=1)
@@ -59,6 +84,13 @@ def canonical_signal_id(value: str) -> Optional[str]:
     ontology = load_signal_ontology()
     canonical = ontology["aliases"].get(normalized, normalized)
     return canonical if canonical in ontology["signals"] else None
+
+
+def match_query_signals(query: str) -> list[str]:
+    """Extract explicit observable events while preserving ontology IDs."""
+    normalized = str(query or "").casefold().replace("à", "a")
+    matched = [signal for signal, pattern in _QUERY_SIGNAL_PATTERNS if re.search(pattern, normalized, re.I)]
+    return list(dict.fromkeys(signal for signal in matched if canonical_signal_id(signal)))
 
 
 def validate_plan_signals(plan: Dict[str, Any]) -> None:

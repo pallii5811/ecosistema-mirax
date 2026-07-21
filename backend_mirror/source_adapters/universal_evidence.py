@@ -39,6 +39,16 @@ _EVENT_PATTERNS: Tuple[Tuple[str, re.Pattern[str]], ...] = (
     ("certification", re.compile(r"\b(certificazion\w+|ISO\s?\d+)\b", re.I)),
 )
 
+_EVENT_SIGNAL_FAMILIES = {
+    "active_advertising": {"active_advertising", "investing_marketing", "rebranding"},
+    "funding": {"funding", "financing", "capital_investment"},
+    "technology_adoption": {"technology_adoption", "technology_migration"},
+    "regulatory_change": {"regulatory_change", "compliance_gap", "certification"},
+    "production_expansion": {"production_expansion", "new_location", "geographic_expansion", "expansion"},
+    "new_location": {"new_location", "production_expansion", "geographic_expansion", "expansion"},
+    "geographic_expansion": {"geographic_expansion", "production_expansion", "new_location", "expansion"},
+}
+
 
 @dataclass(frozen=True)
 class ExtractedEvidence:
@@ -115,8 +125,16 @@ def extract_evidence_from_text(
     found: list[ExtractedEvidence] = []
     seen: set[tuple[str, str, str]] = set()
 
-    for event_type, pattern in _EVENT_PATTERNS:
-        if wanted and event_type not in wanted and not any(event_type.startswith(w) or w.startswith(event_type) for w in wanted):
+    # Exact requested signal patterns win over compatible aliases.  A page may
+    # mention both "inaugurato" and "stabilimento": for a production-expansion
+    # query the canonical primary event must remain production_expansion.
+    ordered_patterns = sorted(
+        _EVENT_PATTERNS,
+        key=lambda item: (0 if item[0] in wanted else 1),
+    )
+    for event_type, pattern in ordered_patterns:
+        compatible = _EVENT_SIGNAL_FAMILIES.get(event_type, {event_type})
+        if wanted and not compatible.intersection(wanted) and not any(event_type.startswith(w) or w.startswith(event_type) for w in wanted):
             # Still allow if alias family overlaps loosely via substring.
             if not any(token in event_type for token in wanted):
                 continue
