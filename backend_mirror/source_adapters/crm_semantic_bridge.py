@@ -42,6 +42,8 @@ _CRM_SEEKING_RE = re.compile(
     r"|(?:scegli\w*|adott\w*|scelt\w*|implement\w*)\s+(?:la\s+)?(?:piattaforma\s+)?"
     r"(?:crm|salesforce|dynamics|hubspot|veeva|vtecrm|sugarcrm|\w*crm)\b"
     r"|(?:scegli\w*|adott\w*)\s+.{0,50}\bcrm\b"
+    # Rollout / go-live style announcements that still prove in-market CRM demand.
+    r"|(?:avvio|kickoff|go[-\s]?live|rollout)\s+(?:del\s+|di\s+)?(?:nuovo\s+|)?crm\b"
     r"|(?:scegli\w*|adott\w*)\s+.{0,50}\b(?:sistema|soluzione|piattaforma)\s+crm\b"
     r"|\bcrm\b.{0,20}(?:project\s+manager|specialist|owner|responsabile)"
     r")",

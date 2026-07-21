@@ -57,6 +57,12 @@ def test_find_crm_seeking_adoption_span() -> None:
     assert excerpt and start >= 0 and text[start:end] == excerpt
     assert "crm" in excerpt.casefold()
 
+def test_rollout_like_language_matches() -> None:
+    text = "Kickoff CRM previsto: avvio del CRM aziendale nel Q3 2026 con rollout su rete vendita."
+    excerpt, start, end = find_crm_seeking_evidence(text)
+    assert excerpt and start >= 0
+    assert "crm" in excerpt.casefold()
+
 
 def test_guide_rejected() -> None:
     text = "Come si sceglie un CRM: guida completa per le PMI italiane."

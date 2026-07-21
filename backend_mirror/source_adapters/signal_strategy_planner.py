@@ -348,6 +348,8 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
             f'"ha scelto" OR "ha adottato" OR "sceglie la piattaforma" CRM Italia (Spa OR Srl) {crm_guide_exclude}',
             # Broader open-web: keep ("adotta" OR "sceglie" OR "implementa") CRM for Phase-A.
             f'Italia ("adotta" OR "sceglie" OR "implementa") CRM (Spa OR Srl OR Group OR "comunicato stampa") {crm_guide_exclude}',
+            # Rollout / go-live announcements (often explicitly "avvio del CRM").
+            f'("avvio del CRM" OR "go-live CRM" OR "go live CRM" OR rollout CRM) Italia (Spa OR Srl) {crm_guide_exclude}',
             f'"migrazione CRM" OR "sostituzione CRM" OR "progetto CRM" (avvio OR "in corso" OR kickoff OR annuncia) Italia azienda {crm_guide_exclude}',
         )
         for idx, query in enumerate(crm_queries):
