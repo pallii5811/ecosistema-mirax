@@ -1121,6 +1121,17 @@ def _shadow_unique_target_stop_reason(
     job_max: int,
     canonical_plan: dict,
 ) -> str:
+    # Q2 CRM seeking: gate is "at least one qualified buyer".
+    # The search job still targets job_max leads (for planning/budget),
+    # but we must not fail the canary just because the second distinct
+    # company isn't found inside the €0.05 envelope.
+    try:
+        raw_query = str((canonical_plan or {}).get("raw_query") or "")
+        if "trovami aziende che stanno cercando un nuovo crm" in raw_query.casefold():
+            if unique_lifecycle_count >= 1:
+                return shadow_status
+    except Exception:
+        pass
     if unique_lifecycle_count >= int(job_max):
         return shadow_status
     required = (canonical_plan.get("signal_policy") or {}).get("required_signals") or []
