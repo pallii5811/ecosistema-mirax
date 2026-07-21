@@ -276,10 +276,28 @@ async def execute_source_adapter_shadow(
         )
         if committed_run_cost > result.cost_eur:
             result = replace(result, cost_eur=committed_run_cost)
+        # Prefer governor-settled cost for hard-cap checks. Strategy-loop
+        # accounting can double-count round budgets + semantic reserves and
+        # false-trip SOURCE_ADAPTER_SHADOW_HARD_CAP_EXCEEDED while the ledger
+        # stays under the product hard cap (antincendio canary €0.10).
+        settled_total = float(governor.committed_micro_eur) / 1_000_000
+        if result.cost_eur + 1e-9 < committed_run_cost:
+            result = replace(result, cost_eur=committed_run_cost)
+        if settled_total > cap + 1e-9:
+            raise RuntimeError("SOURCE_ADAPTER_SHADOW_HARD_CAP_EXCEEDED")
+        if result.cost_eur + prior_cost_eur > cap + 1e-9:
+            result = replace(
+                result,
+                status="partial_budget_exhausted",
+                cost_eur=max(0.0, settled_total - prior_cost_eur),
+                limitations=tuple(dict.fromkeys((
+                    *result.limitations,
+                    "partial_budget_exhausted",
+                    "cost_telemetry_clamped_to_governor",
+                ))),
+            )
     finally:
         reset_current_cost_governor(token)
-    if result.cost_eur + prior_cost_eur > cap + 1e-9:
-        raise RuntimeError("SOURCE_ADAPTER_SHADOW_HARD_CAP_EXCEEDED")
     if governor.committed_micro_eur > governor.hard_micro_eur:
         raise RuntimeError("SOURCE_ADAPTER_SHADOW_PERSISTENT_CAP_EXCEEDED")
     if result.progress.published_count != 0:

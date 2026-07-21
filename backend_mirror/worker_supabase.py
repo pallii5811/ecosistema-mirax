@@ -5898,6 +5898,7 @@ def main() -> None:
                     budget_like = (
                         err_name == "ResearchBudgetExceeded"
                         or "HARD_COST_CAP" in err_text
+                        or "HARD_CAP" in err_text
                         or "BUDGET" in err_text.upper()
                     )
                     budget_after_runtime = budget_like and runtime_started

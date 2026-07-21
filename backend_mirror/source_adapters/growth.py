@@ -405,6 +405,10 @@ async def _default_growth_provider(request: AdapterDiscoveryRequest, offset: int
     # Deduplicate while preserving order.
     queries = list(dict.fromkeys(q for q in queries if str(q).strip()))
     max_queries = min(len(queries), math.floor((request.budget_eur + 1e-9) / _QUERY_COST_EUR))
+    # Open-world expansion: growth URL-only SERPs are low-yield after generic_web.
+    # Cap to one query so residual budget stays with semantic/identity on generic.
+    if bool((request.technical_filters or {}).get("universal_engine")) and set(request.signal_ids) & _EXPANSION_SIGNALS:
+        max_queries = min(max_queries, 1)
     if max_queries <= 0:
         return GrowthProviderResult((), False, 0.0, ("BUDGET_TOO_LOW_FOR_SEARCH",))
     scope = hashlib.sha256(f"{request.query}|{request.signal_ids}|{request.geographies}".encode()).hexdigest()[:20]
