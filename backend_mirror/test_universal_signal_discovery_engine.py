@@ -263,3 +263,42 @@ def test_engine_does_not_force_digital_audit_for_non_seo_query():
     result = asyncio.run(engine.run(request, plan=plan))
     assert "legacy_digital_audit_v1" not in result.adapters_composed
     assert result.qualified_count >= 1
+
+
+def test_legacy_cursor_with_followups_binds_to_unrelated_strategy_query() -> None:
+    """Queued recoveries must not be stranded when resume rotates to a virgin strategy."""
+    from backend_mirror.source_adapters.contracts import DiscoveryCursor
+    from backend_mirror.source_adapters.generic_web_budget import (
+        GenericWebDiscoveryState,
+        encode_generic_web_cursor,
+    )
+    from backend_mirror.source_adapters.signal_strategy_planner import DiscoveryStrategy
+    from backend_mirror.source_adapters.universal_signal_discovery_engine import (
+        _legacy_cursor_belongs_to_strategy,
+    )
+
+    state = GenericWebDiscoveryState(
+        pages_fetched=12,
+        provider_calls=2,
+        executed_query_keys=('\"sceglie\" CRM OR \"adotta\" CRM Italia',),
+        followup_queries=('\"Opinel\" (CRM) (sceglie OR adotta)',),
+    )
+    cursor = encode_generic_web_cursor(state)
+    other = DiscoveryStrategy(
+        strategy_id="technology_adoption:crm_hypothesis_0",
+        signal_type="technology_adoption",
+        source_class="recognized_news",
+        search_query='azienda Italia ("adotta" OR "sceglie") CRM',
+        preferred_domains=(),
+        excluded_domains=(),
+        freshness_days=365,
+        expected_evidence=("company_name",),
+        estimated_cost=0.005,
+        priority=1,
+        fallback_level=0,
+        adapter_affinity=("generic_web_research_v1",),
+    )
+    assert _legacy_cursor_belongs_to_strategy(cursor, other) is True
+
+    empty = encode_generic_web_cursor(GenericWebDiscoveryState())
+    assert _legacy_cursor_belongs_to_strategy(empty, other) is False

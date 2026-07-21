@@ -180,12 +180,35 @@ def _cursor_store_key(adapter_id: str, strategy_id: str) -> str:
 
 
 def _legacy_cursor_belongs_to_strategy(cursor: DiscoveryCursor, strategy: DiscoveryStrategy) -> bool:
-    """Do not transplant a prior strategy's SERP state onto a different query."""
+    """Attach resume state without stranding followups on virgin strategy rotation.
+
+    Strict match (strategy query ∈ executed) avoids transplanting SERP pagination
+    onto a different query. Pending followups / unfetched url_meta must still bind
+    to the next batch — otherwise resume prefers never-run strategies, burns SERP
+    on empty cursors, and never executes queued recoveries (Q2 Opinel strand).
+    """
     from .generic_web_budget import decode_generic_web_v2_payload
 
     payload = decode_generic_web_v2_payload(cursor.value)
     if not isinstance(payload, Mapping):
         return False
+    if payload.get("followup_queries") or payload.get("pending_urls"):
+        return True
+    processed = {
+        str(item).strip().lower().rstrip("/")
+        for item in (payload.get("processed_terminal_urls") or ())
+        if str(item).strip()
+    }
+    unprocessed_meta = False
+    for meta in payload.get("url_meta") or ():
+        if not isinstance(meta, Mapping):
+            continue
+        key = str(meta.get("url") or "").strip().lower().rstrip("/")
+        if key and key not in processed:
+            unprocessed_meta = True
+            break
+    if unprocessed_meta and int(payload.get("pages_fetched") or 0) > 0:
+        return True
     executed = {str(item) for item in (payload.get("executed_query_keys") or ()) if str(item).strip()}
     return bool(strategy.search_query) and strategy.search_query in executed
 
