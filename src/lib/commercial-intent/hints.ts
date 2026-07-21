@@ -33,7 +33,7 @@ export function extractCommercialIntentHints(query: string): CommercialIntentHin
     possible_explicit_demand: EXPLICIT_DEMAND_RE.test(q),
     possible_digital_audit: DIGITAL_AUDIT_RE.test(q),
     possible_procurement: PROCUREMENT_RE.test(q),
-    location_hint: heuristic.location,
+    location_hint: heuristic.location ?? null,
     sector_keywords: heuristic.sector_keywords,
   }
 }

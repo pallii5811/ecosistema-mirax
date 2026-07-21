@@ -102,7 +102,7 @@ function targetRoleForSignals(signals: MiraxSignalRequirement[]): string | null 
   if (signals.some((s) => FUNDING_SIGNALS.has(s) || s === 'funding_received')) return 'recipient'
   if (signals.some((s) => HIRING_SIGNALS.has(s))) return 'employer'
   if (signals.includes('tender_won') || signals.includes('seeking_supplier')) return 'buyer'
-  if (signals.some((s) => s.startsWith('crm') || s === 'technology_migration')) return 'buyer'
+  if (signals.some((s) => s.startsWith('crm') || s === 'tech_migration')) return 'buyer'
   return 'target_company'
 }
 

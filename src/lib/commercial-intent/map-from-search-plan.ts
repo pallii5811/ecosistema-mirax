@@ -9,9 +9,9 @@ import { DEFAULT_MIRAX_MARKET_SCOPE_POLICY } from './types'
 function requestModeFromPlan(plan: CommercialSearchPlan): CommercialRequestMode {
   const hints = plan.semantic_query_contract?.canonical_signal_hints ?? []
   const rels = plan.semantic_query_contract?.required_relationships ?? []
-  const goal = `${plan.raw_query} ${plan.intent_summary}`.toLowerCase()
+  const goal = `${plan.raw_query} ${plan.semantic_query_contract?.query_goal ?? ''}`.toLowerCase()
   const sellerDesc = plan.seller?.offer_description || ''
-  if (sellerDesc && plan.search_strategy === 'organic_web_search') {
+  if (sellerDesc.trim().length >= 8) {
     return 'seller_driven_lead_discovery'
   }
   if (hints.some((h) => /missing_|digital|pixel|analytics|gtm|ssl/.test(h)) || /digital audit|senza pixel|senza gtm/i.test(goal)) {
@@ -62,11 +62,11 @@ export function commercialIntentSpecFromSearchPlan(plan: CommercialSearchPlan): 
   const contract: SemanticQueryContract | undefined = plan.semantic_query_contract
   const mode = requestModeFromPlan(plan)
   const offerDescription = plan.seller?.offer_description || null
-  const buyerNeed = contract?.query_goal || plan.intent_summary || null
+  const buyerNeed = contract?.query_goal || null
 
   return {
     original_query: plan.raw_query,
-    normalized_goal: contract?.query_goal || plan.intent_summary || plan.raw_query,
+    normalized_goal: contract?.query_goal || plan.raw_query,
     request_mode: mode,
     seller_profile: {
       offer_category: plan.seller?.offer_category ?? null,
