@@ -181,6 +181,58 @@ SPECS = {
 }
 
 
+def close_terminal_search(search_id: str, *, stop_reason: str = "partial_budget_exhausted") -> None:
+    row = sb.table("searches").select("progress").eq("id", search_id).single().execute().data or {}
+    progress = dict(row.get("progress") or {})
+    progress["stop_reason"] = stop_reason
+    progress["stage"] = "source_adapter_shadow_terminal"
+    sb.table("searches").update({
+        "status": "error",
+        "progress": progress,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", search_id).execute()
+
+
+def load_seed_bundle(seed_search_id: str) -> dict | None:
+    row = sb.table("searches").select("progress,results").eq("id", seed_search_id).single().execute().data
+    if not row:
+        return None
+    progress = row.get("progress") if isinstance(row.get("progress"), dict) else {}
+    shadow = dict(progress.get("shadow_resume") or {})
+    payloads = [
+        dict(item)
+        for item in (shadow.get("qualified_lead_payloads") or row.get("results") or [])
+        if isinstance(item, dict)
+    ]
+    if not payloads:
+        return None
+    cache_keys = (
+        "resume_cursors", "url_meta", "seen_urls", "processed_terminal_urls",
+        "executed_query_keys", "query_stats", "processed_employer_keys",
+        "processed_domains", "acquisition",
+    )
+    seeded_shadow = {
+        key: shadow[key]
+        for key in cache_keys
+        if key in shadow
+    }
+    seeded_shadow.update({
+        "qualified_lead_payloads": payloads,
+        "prior_cost_eur": 0.0,
+        "resumable": True,
+        "seed_from_search_id": seed_search_id,
+        "cumulative_orchestrator_qualified": len(payloads),
+    })
+    return {
+        "shadow_resume": seeded_shadow,
+        "results": payloads,
+        "qualified": len(payloads),
+        "lifecycle_qualified": len(payloads),
+        "found": len(payloads),
+        "published": len(payloads),
+    }
+
+
 def clear_actives() -> None:
     for c in sb.table("canary_runs").select("id").in_("status", ["created", "running"]).execute().data or []:
         sb.table("canary_runs").update({
@@ -299,7 +351,9 @@ def build_plan(spec_id: str, hard: float = 0.05) -> tuple[dict, dict]:
     return validated, spec
 
 
-def prepare_and_run(spec_id: str) -> dict:
+def prepare_and_run(spec_id: str, *, seed_from: str | None = None) -> dict:
+    if seed_from:
+        close_terminal_search(seed_from, stop_reason="partial_budget_exhausted")
     clear_actives()
     plan, spec = build_plan(spec_id)
     max_leads = 2
@@ -307,6 +361,7 @@ def prepare_and_run(spec_id: str) -> dict:
     search_id = str(uuid.uuid4())
     run_id = str(uuid.uuid4())
     canary_id = str(uuid.uuid4())
+    seed_bundle = load_seed_bundle(seed_from) if seed_from else None
     source_plan = [{
         "lane_id": f"{spec_id}_web",
         "source_types": spec["sources_pref"],
@@ -350,20 +405,29 @@ def prepare_and_run(spec_id: str) -> dict:
         "prepare_only": False,
         "execution_authorized": True,
     }
+    initial_progress = {
+        "prepare_complete": True,
+        "execution_authorized": True,
+        "target": max_leads,
+        "cost_eur": 0.0,
+    }
+    initial_results: list = []
+    if seed_bundle:
+        initial_progress.update({
+            key: seed_bundle[key]
+            for key in ("qualified", "lifecycle_qualified", "found", "published", "shadow_resume")
+            if key in seed_bundle
+        })
+        initial_results = list(seed_bundle.get("results") or [])
     sb.table("searches").insert({
         "id": search_id,
         "category": f"Matrix {spec_id}",
         "location": "Italia",
         "zone": str(max_leads),
         "status": "pending",
-        "results": [],
+        "results": initial_results,
         "intent": intent,
-        "progress": {
-            "prepare_complete": True,
-            "execution_authorized": True,
-            "target": max_leads,
-            "cost_eur": 0.0,
-        },
+        "progress": initial_progress,
     }).execute()
     sb.table("evaluation_runs").insert({
         "id": run_id,
@@ -411,6 +475,7 @@ def prepare_and_run(spec_id: str) -> dict:
         "adapters": spec["adapters"],
         "target_role": spec["role"],
         "relationships": spec["relationships"],
+        "seed_from": seed_from,
     }
     print(json.dumps(meta, ensure_ascii=False))
     Path("/tmp/mirax_matrix_last_ids.json").write_text(json.dumps(meta), encoding="utf-8")
@@ -421,7 +486,8 @@ def prepare_and_run(spec_id: str) -> dict:
         "MIRAX_SEARCH_DISABLED": "0",
         "MIRAX_SOURCE_ADAPTER_SHADOW_ENABLED": "1",
         "MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR": "0.05",
-        "MIRAX_ORCHESTRATOR_MAX_SECONDS": "300",
+        "MIRAX_ORCHESTRATOR_MAX_SECONDS": "600" if spec_id == "q4" else "300",
+        "MIRAX_ORCHESTRATOR_MAX_ROUNDS": "40" if spec_id == "q4" else "20",
         "PYTHONUNBUFFERED": "1",
         "PYTHONPATH": str(ROOT),
     })
@@ -444,4 +510,6 @@ def prepare_and_run(spec_id: str) -> dict:
 
 
 if __name__ == "__main__":
-    prepare_and_run(sys.argv[1] if len(sys.argv) > 1 else "q2")
+    spec = sys.argv[1] if len(sys.argv) > 1 else "q2"
+    seed = sys.argv[2] if len(sys.argv) > 2 else None
+    prepare_and_run(spec, seed_from=seed)
