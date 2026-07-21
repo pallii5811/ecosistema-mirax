@@ -50,7 +50,7 @@ def _contract() -> SemanticQueryContract:
 
 def test_expansion_proxy_sets_query_match_without_seller_offer_on_page() -> None:
     source = (
-        "Modena, 30 maggio 2025 — Elettromeccanica Tironi Spa ha inaugurato il nuovo stabilimento "
+        "Modena, 1 marzo 2026 — Elettromeccanica Tironi Spa ha inaugurato il nuovo stabilimento "
         "logistico a Modena, ampliando la capacità produttiva del gruppo."
     )
     interpretation = SemanticEventInterpretation.from_model(
