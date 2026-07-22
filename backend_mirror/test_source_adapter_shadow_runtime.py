@@ -215,7 +215,27 @@ def test_shadow_hard_cap_is_clamped_to_absolute_maximum():
             _intent(), requested_count=1, registry=SourceCapabilityRegistry((adapter,)), environ=env,
         )
     )
-    assert adapter.budgets == [pytest.approx(0.125)]
+    assert adapter.budgets == [pytest.approx(0.25)]
+
+
+def test_shadow_env_hard_cap_overrides_lower_plan_ceiling():
+    """Resume must not strand when prior_cost already ate the baked plan hard_cost."""
+    adapter = _FakeHiringAdapter()
+    env = dict(AUTHORIZED_ENV)
+    env["MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR"] = "0.20"
+    intent = _intent()
+    plan = dict(intent["uqe_plan"]["canonical_plan"])
+    budget = dict(plan.get("budget_policy") or {})
+    budget["hard_cost_eur"] = 0.10
+    budget["target_cost_eur"] = 0.08
+    plan["budget_policy"] = budget
+    intent["uqe_plan"] = {"canonical_plan": plan}
+    asyncio.run(
+        execute_source_adapter_shadow(
+            intent, requested_count=1, registry=SourceCapabilityRegistry((adapter,)), environ=env,
+        )
+    )
+    assert adapter.budgets == [pytest.approx(0.20)]
 
 
 def test_shadow_runtime_restores_cost_context_after_execution():

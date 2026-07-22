@@ -20,7 +20,8 @@ from .hiring_qualification import (
 from .orchestrator import OrchestrationResult, ProgressCallback, request_from_plan
 
 
-_MAX_SHADOW_CAP_EUR = 0.125
+# Controlled one-shot canaries may need ~€0.05/lead; 3 leads + resume headroom.
+_MAX_SHADOW_CAP_EUR = 0.25
 
 
 def revalidate_hiring_payload_geographies(
@@ -132,8 +133,25 @@ def _canonical_plan(intent: Mapping[str, Any]) -> Mapping[str, Any]:
 def _hard_cap(plan: Mapping[str, Any], environ: Mapping[str, str]) -> float:
     budget = plan.get("budget_policy") if isinstance(plan.get("budget_policy"), Mapping) else {}
     plan_cap = float(budget.get("hard_cost_eur") or _MAX_SHADOW_CAP_EUR)
-    configured = float(environ.get("MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR") or _MAX_SHADOW_CAP_EUR)
-    return max(0.0, min(_MAX_SHADOW_CAP_EUR, plan_cap, configured))
+    raw_env = str(environ.get("MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR") or "").strip()
+    # Explicit operator ENV overrides the baked plan ceiling (up or down) so
+    # resumes are not stranded when prior_cost already consumed the original
+    # plan hard_cost_eur. Absolute product max still applies.
+    if raw_env:
+        return max(0.0, min(_MAX_SHADOW_CAP_EUR, float(raw_env)))
+    return max(0.0, min(_MAX_SHADOW_CAP_EUR, plan_cap))
+
+
+def _plan_with_hard_cap(plan: Mapping[str, Any], hard_cap_eur: float) -> dict[str, Any]:
+    """Keep governor hard_cost aligned with the effective shadow ceiling."""
+    out = dict(plan)
+    budget = dict(out.get("budget_policy") or {}) if isinstance(out.get("budget_policy"), Mapping) else {}
+    hard = float(hard_cap_eur)
+    budget["hard_cost_eur"] = hard
+    target = float(budget.get("target_cost_eur") or hard)
+    budget["target_cost_eur"] = min(target, hard)
+    out["budget_policy"] = budget
+    return out
 
 
 def _mandatory_adapter_ids(intent: Mapping[str, Any], plan: Mapping[str, Any]) -> Tuple[str, ...]:
@@ -190,6 +208,7 @@ async def execute_source_adapter_shadow(
     cap = _hard_cap(plan, env)
     if cap <= 0:
         raise PermissionError("SOURCE_ADAPTER_SHADOW_ZERO_BUDGET")
+    plan = _plan_with_hard_cap(plan, cap)
     if (persistent_client is None) != (search_id is None):
         raise ValueError("persistent_client and search_id must be provided together")
     resume = dict(resume_state or intent.get("shadow_resume") or {})
