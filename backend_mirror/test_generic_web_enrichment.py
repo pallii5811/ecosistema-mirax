@@ -166,6 +166,21 @@ def test_primary_page_text_excludes_related_and_navigation_signals() -> None:
     assert "Lombardia" not in text
 
 
+def test_primary_page_text_survives_nested_noisy_containers() -> None:
+    """Regression for live pages whose decomposed parent clears child attrs."""
+    html = """
+    <html><body>
+      <main><article><h1>Beta Srl inaugura un nuovo stabilimento</h1>
+        <p>Il nuovo sito produttivo è stato inaugurato a Brescia il 20 giugno 2026.</p>
+      </article></main>
+      <section class="latest-news"><div><span>Articolo correlato</span></div></section>
+    </body></html>
+    """
+    text = _primary_page_text(html)
+    assert "Beta Srl inaugura" in text
+    assert "Articolo correlato" not in text
+
+
 def test_specific_geography_missing_is_rejected_before_semantic_cost() -> None:
     request = _northern_expansion_request()
     valid, code = _valid_record(

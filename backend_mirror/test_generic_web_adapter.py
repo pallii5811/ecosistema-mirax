@@ -249,6 +249,7 @@ def test_open_world_acquisition_uses_structured_target_not_publisher() -> None:
     html = (
         f'<script type="application/ld+json">{json.dumps(article)}</script>'
         '<article>A Beta Srl sono state destinate nuove risorse per ampliare la produzione.</article>'
+        '<section class="latest-news"><div><span>Contenuto correlato</span></div></section>'
     )
     semantic_request = AdapterDiscoveryRequest(
         intent="commercial_search", signal_ids=(relationship,), signal_match_mode="all",

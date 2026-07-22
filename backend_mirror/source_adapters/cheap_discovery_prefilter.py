@@ -43,6 +43,23 @@ _EVENT_HINT_RE = re.compile(
 )
 _STALE_YEAR_RE = re.compile(r"\b(20(?:0\d|1\d|2[0-2]))\b")
 
+# Static descriptions such as "capacità produttiva annuale" are not evidence
+# that a facility changed recently. This stricter check is applied only to
+# canonical expansion/location signals before any page fetch.
+_CONCRETE_EXPANSION_EVENT_RE = re.compile(
+    r"\b(?:inaugur\w*|apre\s+(?:un|il)\s+nuov\w*|ha\s+aperto\s+(?:un|il)\s+nuov\w*|"
+    r"nuov[oa]\s+(?:stabilimento|impianto|unit[aà]\s+produttiva|sede\s+produttiva|linea\s+di\s+produzione)|"
+    r"ampliament\w*\s+(?:produttiv\w*|dello\s+stabilimento|dell['’]impianto|della\s+sede)|"
+    r"espansion\w*\s+(?:produttiv\w*|dello\s+stabilimento)|"
+    r"increment\w*\s+(?:la\s+)?capacit[aà]\s+produttiva)\b",
+    re.I,
+)
+
+
+def has_concrete_expansion_event(*values: str) -> bool:
+    """Return true only for a literal facility/capacity change event."""
+    return bool(_CONCRETE_EXPANSION_EVENT_RE.search(" ".join(str(value or "") for value in values)))
+
 
 @dataclass(frozen=True)
 class DiscoveryHit:

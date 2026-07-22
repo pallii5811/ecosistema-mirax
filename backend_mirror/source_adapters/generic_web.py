@@ -179,6 +179,11 @@ def _primary_page_text(html: str) -> str:
         re.I,
     )
     for node in list(soup.find_all(True)):
+        # ``decompose()`` clears descendant attributes. Because this loop walks
+        # a snapshot, a child of a removed noisy container can still be visited
+        # with ``attrs=None``; calling Tag.get would then reject the whole page.
+        if getattr(node, "attrs", None) is None:
+            continue
         marker = " ".join(
             [str(node.get("id") or ""), *[str(item) for item in (node.get("class") or ())]]
         )
@@ -703,7 +708,11 @@ def _gate_serp_hits(
     *,
     provider_query: str,
 ) -> List[DiscoveryHit]:
-    from .cheap_discovery_prefilter import DiscoveryHit, prefilter_discovery_hit
+    from .cheap_discovery_prefilter import (
+        DiscoveryHit,
+        has_concrete_expansion_event,
+        prefilter_discovery_hit,
+    )
 
     accepted: List[DiscoveryHit] = []
     semantic_open_world = request.technical_filters.get("semantic_authority_required") is True
@@ -720,6 +729,16 @@ def _gate_serp_hits(
             snippet=str(item.get("snippet") or item.get("description") or ""),
             publisher=str(item.get("publisher") or ""),
         )
+        expansion_signals = {
+            "production_expansion", "new_location", "geographic_expansion", "expansion",
+        }
+        if expansion_signals.intersection(
+            str(signal).strip() for signal in request.signal_ids
+        ) and not has_concrete_expansion_event(hit.title, hit.snippet):
+            codes["no_concrete_expansion_event"] = codes.get(
+                "no_concrete_expansion_event", 0
+            ) + 1
+            continue
         decision = prefilter_discovery_hit(
             hit,
             # Keep event-hint gating even on semantic open-world — without it
@@ -1094,7 +1113,8 @@ def _looks_like_company_name(value: str) -> bool:
     if _GENERIC_TITLE_RE.search(text):
         return False
     if re.match(
-        r"^(Le|La|Lo|Gli|I|Un|Una|Uno|Più|Molte|Tutte|Tutti|Press|News|Blog|Home|"
+        r"^(Le|La|Lo|Gli|I|Un|Una|Uno|Più|Molte|Tutte|Tutti|Press|News|Blog|Home|Forum|"
+        r"Lavoro\s+Urgente|"
         r"Our|The|This|Just|Pubblicit[aà])\b",
         text,
         re.I,
@@ -1128,6 +1148,10 @@ def _looks_like_company_name(value: str) -> bool:
         text,
         re.I,
     ):
+        return False
+    # Codes, stock symbols and isolated initials (I845, HB) are not stable
+    # operating-company identities. Compact names such as IBM remain valid.
+    if not re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]{3,}", text):
         return False
     return bool(re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", text))
 

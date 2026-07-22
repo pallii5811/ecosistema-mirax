@@ -1,14 +1,16 @@
 # MIRAX Master Implementation State
 
-Ultimo aggiornamento verificato: 2026-07-22 02:00 Europe/Rome.
+Ultimo aggiornamento verificato: 2026-07-22 04:10 Europe/Rome.
 
 ## Checkpoint corrente
 - Repository `pallii5811/ecosistema-mirax`; branch `safety/mirax-v5-11-codex-checkpoint`.
-- Ultimo SHA immutabile verificato su local/remote/worker/frontend: `e647af8237d3d91d670fd1371a50e3250ec443ae`.
-- Worker release `20260722_011527`; preview `dpl_8DbFegzpkP9ASzG9LLV7Fy8ui574`.
+- Ultimo SHA Market Scope verificato su local/remote/worker/frontend: `de253445737d2615f4beab9da574f3991a436e2c`.
+- Worker release `20260722_020817`; preview `dpl_GaqFYw3J9Ltf5d2rntfZq585R5DZ`.
 - Worker persistenti `inactive/disabled`; produzione intatta; zero pubblicazioni/addebiti cliente.
 - Canary pre-correzione Market Scope: search `de2ae913-4327-4005-a045-47e437f9863d`, canary `d11134e4-6562-4749-989f-7116ac436820`, `0/3`, costo `EUR 0,109358`, termination `partial_budget_exhausted`, reservation zero.
 - Costo live cumulativo missione: `EUR 0,240802` su hard ceiling `EUR 2,70`.
+- Canary post-Market-Scope `c1ca7cb4-c082-4ef2-bc99-b721baca8089`: `0/3`, costo `EUR 0,100000`, quarantinato; cumulativo `EUR 0,340802`.
+- Primo loss point: 40 pagine acquisite, 0 persistite; `BeautifulSoup Tag.attrs=None` causava `PAGE_FETCH_FAILED:AttributeError` dopo la decompose di contenitori rumorosi.
 
 ## Correzione Market Scope in validazione
 - Nuovi stati: `CONFIRMED_SME`, `LIKELY_SME`, `ENTERPRISE`, `AMBIGUOUS_CORPORATE`.
@@ -27,5 +29,5 @@ Ultimo aggiornamento verificato: 2026-07-22 02:00 Europe/Rome.
 - Trenord, PwC e Abbott restano respinti anche senza headcount.
 
 ## Prossimo passo sicuro
-- Diff/secret scan, commit/push atomico e deploy worker/frontend sul nuovo SHA.
-- Solo dopo SHA immutabile e runtime pulito: un nuovo canary antincendio identico, max `EUR 0,20`, riusando cache e candidati precedenti.
+- Commit/push/deploy della correzione fetch e del pre-filtro expansion-event zero-cost.
+- Solo dopo SHA immutabile e runtime pulito: un canary antincendio identico, max `EUR 0,20`.

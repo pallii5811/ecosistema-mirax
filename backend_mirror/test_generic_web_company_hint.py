@@ -288,6 +288,10 @@ def test_looks_like_company_rejects_job_titles() -> None:
     assert not _looks_like_company_name("Our Admissions Process")
     assert not _looks_like_company_name("Digital biotech")
     assert not _looks_like_company_name("Pubblicità Borsa Italiana Spa")
+    assert not _looks_like_company_name("I845")
+    assert not _looks_like_company_name("HB")
+    assert not _looks_like_company_name("Forum SMA Solar Technology AG")
+    assert not _looks_like_company_name("Lavoro Urgente")
 
 
 def test_title_extracts_genomeup_not_digital_biotech() -> None:
@@ -351,4 +355,3 @@ def test_diversified_funding_queries_skip_raw_nl_and_market_roundups() -> None:
     assert queries
     assert all("Trovami startup" not in q for q in queries)
     assert all("comunicato OR news OR aggiornamento" not in q for q in queries)
-

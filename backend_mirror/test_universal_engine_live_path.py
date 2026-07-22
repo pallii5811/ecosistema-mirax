@@ -221,6 +221,36 @@ def test_gate_serp_hits_reduces_fetch_set():
     assert telemetry["pages_opened_after_prefilter"] == 0
 
 
+def test_expansion_gate_requires_literal_change_not_static_capacity() -> None:
+    request = AdapterDiscoveryRequest(
+        intent="commercial_search",
+        signal_ids=("production_expansion",),
+        signal_match_mode="any",
+        geographies=("Nord Italia",),
+        freshness_max_age_days=180,
+        requested_count=3,
+        budget_eur=0.05,
+        query="aziende con nuovi stabilimenti",
+        technical_filters={"universal_engine": True, "universal_prefilter_telemetry": {}},
+    )
+    hits = [
+        {
+            "title": "Scheda azienda Tra.sma",
+            "url": "https://directory.test/tra-sma",
+            "snippet": "Produce fili di rame con elevata capacità produttiva.",
+        },
+        {
+            "title": "Beta Srl inaugura un nuovo stabilimento",
+            "url": "https://news.test/beta-stabilimento",
+            "snippet": "Il nuovo stabilimento di Brescia è stato inaugurato nel 2026.",
+        },
+    ]
+    accepted = _gate_serp_hits(request, hits, provider_query="nuovo stabilimento Lombardia")
+    assert [item.url for item in accepted] == ["https://news.test/beta-stabilimento"]
+    telemetry = request.technical_filters["universal_prefilter_telemetry"]
+    assert telemetry["prefilter_rejection_codes"]["no_concrete_expansion_event"] == 1
+
+
 def test_live_generic_prefilter_uses_real_snippet_not_query(monkeypatch):
     fetches: list[str] = []
     monkeypatch.setattr(
