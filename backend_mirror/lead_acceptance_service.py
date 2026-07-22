@@ -26,7 +26,7 @@ class MarketScopePolicy:
     max_employees: int = 249
     max_revenue_eur: int = 50_000_000
     enterprise_opt_in: bool = False
-    require_verified_size: bool = True
+    require_verified_size: bool = False
     reject_listed: bool = True
     reject_global_brand: bool = True
     reject_public_majority_owned: bool = True
@@ -71,15 +71,16 @@ def _adapt_decision(decision) -> LeadAcceptanceDecision:
     gate = decision.publication_gate or {}
     entity = gate.get("entity_classification") or {}
     contact = decision.candidate_payload.get("contatti") if isinstance(decision.candidate_payload.get("contatti"), dict) else {}
-    phones = contact.get("telefoni") or contact.get("phones") or []
-    emails = contact.get("email") or contact.get("emails") or []
+    phones = (
+        contact.get("telefoni") or contact.get("phones")
+        or decision.candidate_payload.get("telefono") or decision.candidate_payload.get("phone") or []
+    )
+    emails = (
+        contact.get("email") or contact.get("emails")
+        or decision.candidate_payload.get("email") or decision.candidate_payload.get("mail") or []
+    )
 
-    market_scope_status = "IN_SCOPE"
-    if not decision.market_scope.passed:
-        if "SIZE_UNVERIFIED" in decision.rejection_codes:
-            market_scope_status = "UNVERIFIED"
-        else:
-            market_scope_status = "OUT_OF_SCOPE"
+    market_scope_status = decision.market_scope_status.value
 
     return LeadAcceptanceDecision(
         accepted=decision.accepted,

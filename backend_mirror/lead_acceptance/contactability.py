@@ -41,11 +41,22 @@ def evaluate_contactability(
     require_contact: bool,
 ) -> Tuple[GateResult, ContactabilityStatus, Optional[str]]:
     contacts = candidate.get("contatti") if isinstance(candidate.get("contatti"), dict) else {}
-    phones = contacts.get("telefoni") or contacts.get("phones") or []
-    emails = contacts.get("email") or contacts.get("emails") or []
+    phones = (
+        contacts.get("telefoni") or contacts.get("phones") or contacts.get("telefono") or contacts.get("phone")
+        or candidate.get("telefono") or candidate.get("phone") or []
+    )
+    emails = contacts.get("email") or contacts.get("emails") or candidate.get("email") or candidate.get("mail") or []
+    if isinstance(phones, str):
+        phones = [phones]
     if isinstance(emails, str):
         emails = [emails]
     linkedin = str(candidate.get("linkedin") or contacts.get("linkedin") or "").strip()
+    contact_page = str(
+        candidate.get("contact_page_url")
+        or candidate.get("contact_form_url")
+        or contacts.get("contact_page_url")
+        or ""
+    ).strip()
 
     person_name = str(
         candidate.get("decision_maker")
@@ -60,7 +71,7 @@ def evaluate_contactability(
         status = ContactabilityStatus.DIRECT_PERSON_CONTACT
     elif role:
         status = ContactabilityStatus.ROLE_CONTACT
-    elif emails or phones or linkedin or re.search(r"mailto:|tel:", str(candidate.get("sito") or ""), re.I):
+    elif emails or phones or linkedin or contact_page or re.search(r"mailto:|tel:", str(candidate.get("sito") or ""), re.I):
         status = ContactabilityStatus.COMPANY_CONTACT
 
     recommended = _recommended_role(intent) if not role else None

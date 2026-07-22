@@ -424,7 +424,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Alfa Impianti Fixture seleziona un tecnico manutentore. Invia la candidatura.",
         "why_now": "Alfa Impianti Fixture seleziona un tecnico manutentore. Invia la candidatura.",
-        "evidence_date": "2026-07-19T10:00:00Z",
+        "evidence_date": "2026-07-20T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -442,9 +442,9 @@
             "source_url": "https://alfa-impianti-fixture.test/lavora-con-noi/tecnico-manutentore",
             "source_class": "company_careers",
             "evidence": "Alfa Impianti Fixture seleziona un tecnico manutentore. Invia la candidatura.",
-            "observed_at": "2026-07-19T10:00:00Z",
-            "published_at": "2026-07-19",
-            "date": "2026-07-19T10:00:00Z"
+            "observed_at": "2026-07-20T10:00:00Z",
+            "published_at": "2026-07-20",
+            "date": "2026-07-20T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -455,7 +455,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-19T10:00:00Z",
+          "resolved_at": "2026-07-20T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -474,7 +474,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-19T10:00:00Z",
+        "last_audited_at": "2026-07-20T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -665,7 +665,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Beta Logistica Fixture assume un magazziniere. Candidati ora.",
         "why_now": "Beta Logistica Fixture assume un magazziniere. Candidati ora.",
-        "evidence_date": "2026-07-18T10:00:00Z",
+        "evidence_date": "2026-07-19T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -683,9 +683,9 @@
             "source_url": "https://beta-logistica-fixture.test/jobs/magazziniere-novara",
             "source_class": "company_careers",
             "evidence": "Beta Logistica Fixture assume un magazziniere. Candidati ora.",
-            "observed_at": "2026-07-18T10:00:00Z",
-            "published_at": "2026-07-18",
-            "date": "2026-07-18T10:00:00Z"
+            "observed_at": "2026-07-19T10:00:00Z",
+            "published_at": "2026-07-19",
+            "date": "2026-07-19T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -696,7 +696,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-18T10:00:00Z",
+          "resolved_at": "2026-07-19T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -715,7 +715,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-18T10:00:00Z",
+        "last_audited_at": "2026-07-19T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -906,7 +906,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Posizione aperta: ricerchiamo un operaio di produzione. Invia la candidatura.",
         "why_now": "Posizione aperta: ricerchiamo un operaio di produzione. Invia la candidatura.",
-        "evidence_date": "2026-07-17T10:00:00Z",
+        "evidence_date": "2026-07-18T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -924,9 +924,9 @@
             "source_url": "https://gamma-produzione-fixture.test/careers/operaio-produzione",
             "source_class": "company_careers",
             "evidence": "Posizione aperta: ricerchiamo un operaio di produzione. Invia la candidatura.",
-            "observed_at": "2026-07-17T10:00:00Z",
-            "published_at": "2026-07-17",
-            "date": "2026-07-17T10:00:00Z"
+            "observed_at": "2026-07-18T10:00:00Z",
+            "published_at": "2026-07-18",
+            "date": "2026-07-18T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -937,7 +937,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-17T10:00:00Z",
+          "resolved_at": "2026-07-18T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -956,7 +956,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-17T10:00:00Z",
+        "last_audited_at": "2026-07-18T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -1147,7 +1147,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Delta Trasporti Fixture cerca un autista con patente C. Candidati.",
         "why_now": "Delta Trasporti Fixture cerca un autista con patente C. Candidati.",
-        "evidence_date": "2026-07-16T10:00:00Z",
+        "evidence_date": "2026-07-17T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -1165,9 +1165,9 @@
             "source_url": "https://delta-trasporti-fixture.test/posizioni/autista-patente-c",
             "source_class": "company_careers",
             "evidence": "Delta Trasporti Fixture cerca un autista con patente C. Candidati.",
-            "observed_at": "2026-07-16T10:00:00Z",
-            "published_at": "2026-07-16",
-            "date": "2026-07-16T10:00:00Z"
+            "observed_at": "2026-07-17T10:00:00Z",
+            "published_at": "2026-07-17",
+            "date": "2026-07-17T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -1178,7 +1178,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-16T10:00:00Z",
+          "resolved_at": "2026-07-17T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -1197,7 +1197,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-16T10:00:00Z",
+        "last_audited_at": "2026-07-17T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -1388,7 +1388,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Selezione aperta per addetto alle pulizie. Invia la candidatura.",
         "why_now": "Selezione aperta per addetto alle pulizie. Invia la candidatura.",
-        "evidence_date": "2026-07-15T10:00:00Z",
+        "evidence_date": "2026-07-16T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -1406,9 +1406,9 @@
             "source_url": "https://epsilon-service-fixture.test/lavora-con-noi/addetto-pulizie",
             "source_class": "company_careers",
             "evidence": "Selezione aperta per addetto alle pulizie. Invia la candidatura.",
-            "observed_at": "2026-07-15T10:00:00Z",
-            "published_at": "2026-07-15",
-            "date": "2026-07-15T10:00:00Z"
+            "observed_at": "2026-07-16T10:00:00Z",
+            "published_at": "2026-07-16",
+            "date": "2026-07-16T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -1419,7 +1419,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-15T10:00:00Z",
+          "resolved_at": "2026-07-16T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -1438,7 +1438,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-15T10:00:00Z",
+        "last_audited_at": "2026-07-16T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -1629,7 +1629,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Zeta Meccanica Fixture assume un meccanico industriale. Candidati ora.",
         "why_now": "Zeta Meccanica Fixture assume un meccanico industriale. Candidati ora.",
-        "evidence_date": "2026-07-14T10:00:00Z",
+        "evidence_date": "2026-07-15T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -1647,9 +1647,9 @@
             "source_url": "https://zeta-meccanica-fixture.test/jobs/meccanico-industriale",
             "source_class": "company_careers",
             "evidence": "Zeta Meccanica Fixture assume un meccanico industriale. Candidati ora.",
-            "observed_at": "2026-07-14T10:00:00Z",
-            "published_at": "2026-07-14",
-            "date": "2026-07-14T10:00:00Z"
+            "observed_at": "2026-07-15T10:00:00Z",
+            "published_at": "2026-07-15",
+            "date": "2026-07-15T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -1660,7 +1660,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-14T10:00:00Z",
+          "resolved_at": "2026-07-15T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -1679,7 +1679,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-14T10:00:00Z",
+        "last_audited_at": "2026-07-15T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -1870,7 +1870,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Eta Cantieri Fixture ricerca un operaio di cantiere. Invia la candidatura.",
         "why_now": "Eta Cantieri Fixture ricerca un operaio di cantiere. Invia la candidatura.",
-        "evidence_date": "2026-07-13T10:00:00Z",
+        "evidence_date": "2026-07-14T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -1888,9 +1888,9 @@
             "source_url": "https://eta-cantieri-fixture.test/careers/operaio-cantiere",
             "source_class": "company_careers",
             "evidence": "Eta Cantieri Fixture ricerca un operaio di cantiere. Invia la candidatura.",
-            "observed_at": "2026-07-13T10:00:00Z",
-            "published_at": "2026-07-13",
-            "date": "2026-07-13T10:00:00Z"
+            "observed_at": "2026-07-14T10:00:00Z",
+            "published_at": "2026-07-14",
+            "date": "2026-07-14T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -1901,7 +1901,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-13T10:00:00Z",
+          "resolved_at": "2026-07-14T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -1920,7 +1920,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-13T10:00:00Z",
+        "last_audited_at": "2026-07-14T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -2111,7 +2111,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Theta Energia Fixture seleziona un installatore elettrico. Candidati.",
         "why_now": "Theta Energia Fixture seleziona un installatore elettrico. Candidati.",
-        "evidence_date": "2026-07-12T10:00:00Z",
+        "evidence_date": "2026-07-13T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -2129,9 +2129,9 @@
             "source_url": "https://theta-energia-fixture.test/posizioni/installatore-elettrico",
             "source_class": "company_careers",
             "evidence": "Theta Energia Fixture seleziona un installatore elettrico. Candidati.",
-            "observed_at": "2026-07-12T10:00:00Z",
-            "published_at": "2026-07-12",
-            "date": "2026-07-12T10:00:00Z"
+            "observed_at": "2026-07-13T10:00:00Z",
+            "published_at": "2026-07-13",
+            "date": "2026-07-13T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -2142,7 +2142,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-12T10:00:00Z",
+          "resolved_at": "2026-07-13T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -2161,7 +2161,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-12T10:00:00Z",
+        "last_audited_at": "2026-07-13T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -2352,7 +2352,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Posizione aperta per operaio agricolo. Invia la candidatura.",
         "why_now": "Posizione aperta per operaio agricolo. Invia la candidatura.",
-        "evidence_date": "2026-07-11T10:00:00Z",
+        "evidence_date": "2026-07-12T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -2370,9 +2370,9 @@
             "source_url": "https://iota-agricola-fixture.test/lavora-con-noi/operaio-agricolo",
             "source_class": "company_careers",
             "evidence": "Posizione aperta per operaio agricolo. Invia la candidatura.",
-            "observed_at": "2026-07-11T10:00:00Z",
-            "published_at": "2026-07-11",
-            "date": "2026-07-11T10:00:00Z"
+            "observed_at": "2026-07-12T10:00:00Z",
+            "published_at": "2026-07-12",
+            "date": "2026-07-12T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -2383,7 +2383,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-11T10:00:00Z",
+          "resolved_at": "2026-07-12T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -2402,7 +2402,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-11T10:00:00Z",
+        "last_audited_at": "2026-07-12T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -2593,7 +2593,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Kappa Saldature Fixture assume un saldatore TIG. Candidati ora.",
         "why_now": "Kappa Saldature Fixture assume un saldatore TIG. Candidati ora.",
-        "evidence_date": "2026-07-10T10:00:00Z",
+        "evidence_date": "2026-07-11T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -2611,9 +2611,9 @@
             "source_url": "https://kappa-saldature-fixture.test/jobs/saldatore-tig",
             "source_class": "company_careers",
             "evidence": "Kappa Saldature Fixture assume un saldatore TIG. Candidati ora.",
-            "observed_at": "2026-07-10T10:00:00Z",
-            "published_at": "2026-07-10",
-            "date": "2026-07-10T10:00:00Z"
+            "observed_at": "2026-07-11T10:00:00Z",
+            "published_at": "2026-07-11",
+            "date": "2026-07-11T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -2624,7 +2624,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-10T10:00:00Z",
+          "resolved_at": "2026-07-11T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -2643,7 +2643,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-10T10:00:00Z",
+        "last_audited_at": "2026-07-11T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -2834,7 +2834,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Lambda Facility Fixture cerca un manutentore impianti. Apply now.",
         "why_now": "Lambda Facility Fixture cerca un manutentore impianti. Apply now.",
-        "evidence_date": "2026-07-19T10:00:00Z",
+        "evidence_date": "2026-07-20T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -2852,9 +2852,9 @@
             "source_url": "https://jobs.lever.co/lambda-fixture/manutentore-impianti",
             "source_class": "company_careers",
             "evidence": "Lambda Facility Fixture cerca un manutentore impianti. Apply now.",
-            "observed_at": "2026-07-19T10:00:00Z",
-            "published_at": "2026-07-19",
-            "date": "2026-07-19T10:00:00Z"
+            "observed_at": "2026-07-20T10:00:00Z",
+            "published_at": "2026-07-20",
+            "date": "2026-07-20T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -2865,7 +2865,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-19T10:00:00Z",
+          "resolved_at": "2026-07-20T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -2884,7 +2884,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-19T10:00:00Z",
+        "last_audited_at": "2026-07-20T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -3075,7 +3075,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Mu Packaging Fixture seleziona un operatore di linea. Submit application.",
         "why_now": "Mu Packaging Fixture seleziona un operatore di linea. Submit application.",
-        "evidence_date": "2026-07-18T10:00:00Z",
+        "evidence_date": "2026-07-19T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -3093,9 +3093,9 @@
             "source_url": "https://boards.greenhouse.io/mufixture/jobs/1001",
             "source_class": "company_careers",
             "evidence": "Mu Packaging Fixture seleziona un operatore di linea. Submit application.",
-            "observed_at": "2026-07-18T10:00:00Z",
-            "published_at": "2026-07-18",
-            "date": "2026-07-18T10:00:00Z"
+            "observed_at": "2026-07-19T10:00:00Z",
+            "published_at": "2026-07-19",
+            "date": "2026-07-19T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -3106,7 +3106,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-18T10:00:00Z",
+          "resolved_at": "2026-07-19T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -3125,7 +3125,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-18T10:00:00Z",
+        "last_audited_at": "2026-07-19T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -3316,7 +3316,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Nu Refrigerazione Fixture ricerca un tecnico frigorista. Candidati.",
         "why_now": "Nu Refrigerazione Fixture ricerca un tecnico frigorista. Candidati.",
-        "evidence_date": "2026-07-17T10:00:00Z",
+        "evidence_date": "2026-07-18T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -3334,9 +3334,9 @@
             "source_url": "https://jobs.smartrecruiters.com/nufixture/tecnico-frigorista",
             "source_class": "company_careers",
             "evidence": "Nu Refrigerazione Fixture ricerca un tecnico frigorista. Candidati.",
-            "observed_at": "2026-07-17T10:00:00Z",
-            "published_at": "2026-07-17",
-            "date": "2026-07-17T10:00:00Z"
+            "observed_at": "2026-07-18T10:00:00Z",
+            "published_at": "2026-07-18",
+            "date": "2026-07-18T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -3347,7 +3347,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-17T10:00:00Z",
+          "resolved_at": "2026-07-18T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -3366,7 +3366,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-17T10:00:00Z",
+        "last_audited_at": "2026-07-18T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -3557,7 +3557,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Xi Componenti Fixture assume un addetto assemblaggio. Apply now.",
         "why_now": "Xi Componenti Fixture assume un addetto assemblaggio. Apply now.",
-        "evidence_date": "2026-07-16T10:00:00Z",
+        "evidence_date": "2026-07-17T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -3575,9 +3575,9 @@
             "source_url": "https://xi-fixture.teamtailor.com/jobs/1002-addetto-assemblaggio",
             "source_class": "company_careers",
             "evidence": "Xi Componenti Fixture assume un addetto assemblaggio. Apply now.",
-            "observed_at": "2026-07-16T10:00:00Z",
-            "published_at": "2026-07-16",
-            "date": "2026-07-16T10:00:00Z"
+            "observed_at": "2026-07-17T10:00:00Z",
+            "published_at": "2026-07-17",
+            "date": "2026-07-17T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -3588,7 +3588,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-16T10:00:00Z",
+          "resolved_at": "2026-07-17T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -3607,7 +3607,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-16T10:00:00Z",
+        "last_audited_at": "2026-07-17T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -3798,7 +3798,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Omicron Edilizia Fixture seleziona un operaio edile. Submit application.",
         "why_now": "Omicron Edilizia Fixture seleziona un operaio edile. Submit application.",
-        "evidence_date": "2026-07-15T10:00:00Z",
+        "evidence_date": "2026-07-16T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -3816,9 +3816,9 @@
             "source_url": "https://apply.workable.com/omicron-fixture/j/OP1003",
             "source_class": "company_careers",
             "evidence": "Omicron Edilizia Fixture seleziona un operaio edile. Submit application.",
-            "observed_at": "2026-07-15T10:00:00Z",
-            "published_at": "2026-07-15",
-            "date": "2026-07-15T10:00:00Z"
+            "observed_at": "2026-07-16T10:00:00Z",
+            "published_at": "2026-07-16",
+            "date": "2026-07-16T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -3829,7 +3829,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-15T10:00:00Z",
+          "resolved_at": "2026-07-16T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -3848,7 +3848,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-15T10:00:00Z",
+        "last_audited_at": "2026-07-16T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -4039,7 +4039,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Pi Tessile Fixture cerca un operatore tessile. Candidati ora.",
         "why_now": "Pi Tessile Fixture cerca un operatore tessile. Candidati ora.",
-        "evidence_date": "2026-07-14T10:00:00Z",
+        "evidence_date": "2026-07-15T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -4057,9 +4057,9 @@
             "source_url": "https://pi-fixture.recruitee.com/o/operatore-tessile",
             "source_class": "company_careers",
             "evidence": "Pi Tessile Fixture cerca un operatore tessile. Candidati ora.",
-            "observed_at": "2026-07-14T10:00:00Z",
-            "published_at": "2026-07-14",
-            "date": "2026-07-14T10:00:00Z"
+            "observed_at": "2026-07-15T10:00:00Z",
+            "published_at": "2026-07-15",
+            "date": "2026-07-15T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -4070,7 +4070,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-14T10:00:00Z",
+          "resolved_at": "2026-07-15T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -4089,7 +4089,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-14T10:00:00Z",
+        "last_audited_at": "2026-07-15T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -4280,7 +4280,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Rho Serramenti Fixture ricerca un installatore di serramenti. Candidati.",
         "why_now": "Rho Serramenti Fixture ricerca un installatore di serramenti. Candidati.",
-        "evidence_date": "2026-07-13T10:00:00Z",
+        "evidence_date": "2026-07-14T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -4298,9 +4298,9 @@
             "source_url": "https://rho-fixture.jobs.personio.de/job/1004",
             "source_class": "company_careers",
             "evidence": "Rho Serramenti Fixture ricerca un installatore di serramenti. Candidati.",
-            "observed_at": "2026-07-13T10:00:00Z",
-            "published_at": "2026-07-13",
-            "date": "2026-07-13T10:00:00Z"
+            "observed_at": "2026-07-14T10:00:00Z",
+            "published_at": "2026-07-14",
+            "date": "2026-07-14T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -4311,7 +4311,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-13T10:00:00Z",
+          "resolved_at": "2026-07-14T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -4330,7 +4330,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-13T10:00:00Z",
+        "last_audited_at": "2026-07-14T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -4521,7 +4521,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Sigma Plastica Fixture assume un operaio addetto allo stampaggio. Apply now.",
         "why_now": "Sigma Plastica Fixture assume un operaio addetto allo stampaggio. Apply now.",
-        "evidence_date": "2026-07-12T10:00:00Z",
+        "evidence_date": "2026-07-13T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -4539,9 +4539,9 @@
             "source_url": "https://sigma-fixture.myworkdayjobs.com/jobs/operaio-stampaggio",
             "source_class": "company_careers",
             "evidence": "Sigma Plastica Fixture assume un operaio addetto allo stampaggio. Apply now.",
-            "observed_at": "2026-07-12T10:00:00Z",
-            "published_at": "2026-07-12",
-            "date": "2026-07-12T10:00:00Z"
+            "observed_at": "2026-07-13T10:00:00Z",
+            "published_at": "2026-07-13",
+            "date": "2026-07-13T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -4552,7 +4552,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-12T10:00:00Z",
+          "resolved_at": "2026-07-13T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -4571,7 +4571,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-12T10:00:00Z",
+        "last_audited_at": "2026-07-13T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -7955,7 +7955,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Rho Serramenti Fixture ricerca un installatore di serramenti. Candidati.",
         "why_now": "Rho Serramenti Fixture ricerca un installatore di serramenti. Candidati.",
-        "evidence_date": "2026-07-13T10:00:00Z",
+        "evidence_date": "2026-07-14T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -7973,9 +7973,9 @@
             "source_url": "https://rho-fixture.jobs.personio.de/job/1004",
             "source_class": "company_careers",
             "evidence": "Rho Serramenti Fixture ricerca un installatore di serramenti. Candidati.",
-            "observed_at": "2026-07-13T10:00:00Z",
-            "published_at": "2026-07-13",
-            "date": "2026-07-13T10:00:00Z"
+            "observed_at": "2026-07-14T10:00:00Z",
+            "published_at": "2026-07-14",
+            "date": "2026-07-14T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -7986,7 +7986,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-13T10:00:00Z",
+          "resolved_at": "2026-07-14T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -8005,7 +8005,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-13T10:00:00Z",
+        "last_audited_at": "2026-07-14T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -8196,7 +8196,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Sigma Plastica Fixture assume un operaio addetto allo stampaggio. Apply now.",
         "why_now": "Sigma Plastica Fixture assume un operaio addetto allo stampaggio. Apply now.",
-        "evidence_date": "2026-07-12T10:00:00Z",
+        "evidence_date": "2026-07-13T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -8214,9 +8214,9 @@
             "source_url": "https://sigma-fixture.myworkdayjobs.com/jobs/operaio-stampaggio",
             "source_class": "company_careers",
             "evidence": "Sigma Plastica Fixture assume un operaio addetto allo stampaggio. Apply now.",
-            "observed_at": "2026-07-12T10:00:00Z",
-            "published_at": "2026-07-12",
-            "date": "2026-07-12T10:00:00Z"
+            "observed_at": "2026-07-13T10:00:00Z",
+            "published_at": "2026-07-13",
+            "date": "2026-07-13T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -8227,7 +8227,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-12T10:00:00Z",
+          "resolved_at": "2026-07-13T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -8246,7 +8246,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-12T10:00:00Z",
+        "last_audited_at": "2026-07-13T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -8437,7 +8437,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Tau Impiantistica Fixture seleziona un elettricista industriale. Invia la candidatura.",
         "why_now": "Tau Impiantistica Fixture seleziona un elettricista industriale. Invia la candidatura.",
-        "evidence_date": "2026-07-11T10:00:00Z",
+        "evidence_date": "2026-07-12T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -8455,9 +8455,9 @@
             "source_url": "https://tau-fixture-replay38.test/careers/elettricista-industriale",
             "source_class": "company_careers",
             "evidence": "Tau Impiantistica Fixture seleziona un elettricista industriale. Invia la candidatura.",
-            "observed_at": "2026-07-11T10:00:00Z",
-            "published_at": "2026-07-11",
-            "date": "2026-07-11T10:00:00Z"
+            "observed_at": "2026-07-12T10:00:00Z",
+            "published_at": "2026-07-12",
+            "date": "2026-07-12T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -8468,7 +8468,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-11T10:00:00Z",
+          "resolved_at": "2026-07-12T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -8487,7 +8487,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-11T10:00:00Z",
+        "last_audited_at": "2026-07-12T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -8678,7 +8678,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Upsilon Traslochi Fixture cerca un autista magazziniere. Candidati ora.",
         "why_now": "Upsilon Traslochi Fixture cerca un autista magazziniere. Candidati ora.",
-        "evidence_date": "2026-07-10T10:00:00Z",
+        "evidence_date": "2026-07-11T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -8696,9 +8696,9 @@
             "source_url": "https://upsilon-traslochi-fixture-replay39.test/jobs/autista-magazziniere",
             "source_class": "company_careers",
             "evidence": "Upsilon Traslochi Fixture cerca un autista magazziniere. Candidati ora.",
-            "observed_at": "2026-07-10T10:00:00Z",
-            "published_at": "2026-07-10",
-            "date": "2026-07-10T10:00:00Z"
+            "observed_at": "2026-07-11T10:00:00Z",
+            "published_at": "2026-07-11",
+            "date": "2026-07-11T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -8709,7 +8709,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-10T10:00:00Z",
+          "resolved_at": "2026-07-11T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -8728,7 +8728,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-10T10:00:00Z",
+        "last_audited_at": "2026-07-11T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -8919,7 +8919,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Alfa Impianti Fixture seleziona un tecnico manutentore. Invia la candidatura.",
         "why_now": "Alfa Impianti Fixture seleziona un tecnico manutentore. Invia la candidatura.",
-        "evidence_date": "2026-07-19T10:00:00Z",
+        "evidence_date": "2026-07-20T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -8937,9 +8937,9 @@
             "source_url": "https://alfa-impianti-fixture-replay40.test/lavora-con-noi/tecnico-manutentore",
             "source_class": "company_careers",
             "evidence": "Alfa Impianti Fixture seleziona un tecnico manutentore. Invia la candidatura.",
-            "observed_at": "2026-07-19T10:00:00Z",
-            "published_at": "2026-07-19",
-            "date": "2026-07-19T10:00:00Z"
+            "observed_at": "2026-07-20T10:00:00Z",
+            "published_at": "2026-07-20",
+            "date": "2026-07-20T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -8950,7 +8950,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-19T10:00:00Z",
+          "resolved_at": "2026-07-20T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -8969,7 +8969,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-19T10:00:00Z",
+        "last_audited_at": "2026-07-20T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -9160,7 +9160,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Beta Logistica Fixture assume un magazziniere. Candidati ora.",
         "why_now": "Beta Logistica Fixture assume un magazziniere. Candidati ora.",
-        "evidence_date": "2026-07-18T10:00:00Z",
+        "evidence_date": "2026-07-19T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -9178,9 +9178,9 @@
             "source_url": "https://beta-logistica-fixture-replay41.test/jobs/magazziniere-novara",
             "source_class": "company_careers",
             "evidence": "Beta Logistica Fixture assume un magazziniere. Candidati ora.",
-            "observed_at": "2026-07-18T10:00:00Z",
-            "published_at": "2026-07-18",
-            "date": "2026-07-18T10:00:00Z"
+            "observed_at": "2026-07-19T10:00:00Z",
+            "published_at": "2026-07-19",
+            "date": "2026-07-19T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -9191,7 +9191,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-18T10:00:00Z",
+          "resolved_at": "2026-07-19T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -9210,7 +9210,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-18T10:00:00Z",
+        "last_audited_at": "2026-07-19T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -9401,7 +9401,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Posizione aperta: ricerchiamo un operaio di produzione. Invia la candidatura.",
         "why_now": "Posizione aperta: ricerchiamo un operaio di produzione. Invia la candidatura.",
-        "evidence_date": "2026-07-17T10:00:00Z",
+        "evidence_date": "2026-07-18T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -9419,9 +9419,9 @@
             "source_url": "https://gamma-produzione-fixture-replay42.test/careers/operaio-produzione",
             "source_class": "company_careers",
             "evidence": "Posizione aperta: ricerchiamo un operaio di produzione. Invia la candidatura.",
-            "observed_at": "2026-07-17T10:00:00Z",
-            "published_at": "2026-07-17",
-            "date": "2026-07-17T10:00:00Z"
+            "observed_at": "2026-07-18T10:00:00Z",
+            "published_at": "2026-07-18",
+            "date": "2026-07-18T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -9432,7 +9432,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-17T10:00:00Z",
+          "resolved_at": "2026-07-18T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -9451,7 +9451,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-17T10:00:00Z",
+        "last_audited_at": "2026-07-18T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -9642,7 +9642,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Delta Trasporti Fixture cerca un autista con patente C. Candidati.",
         "why_now": "Delta Trasporti Fixture cerca un autista con patente C. Candidati.",
-        "evidence_date": "2026-07-16T10:00:00Z",
+        "evidence_date": "2026-07-17T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -9660,9 +9660,9 @@
             "source_url": "https://delta-trasporti-fixture-replay43.test/posizioni/autista-patente-c",
             "source_class": "company_careers",
             "evidence": "Delta Trasporti Fixture cerca un autista con patente C. Candidati.",
-            "observed_at": "2026-07-16T10:00:00Z",
-            "published_at": "2026-07-16",
-            "date": "2026-07-16T10:00:00Z"
+            "observed_at": "2026-07-17T10:00:00Z",
+            "published_at": "2026-07-17",
+            "date": "2026-07-17T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -9673,7 +9673,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-16T10:00:00Z",
+          "resolved_at": "2026-07-17T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -9692,7 +9692,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-16T10:00:00Z",
+        "last_audited_at": "2026-07-17T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -9883,7 +9883,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Selezione aperta per addetto alle pulizie. Invia la candidatura.",
         "why_now": "Selezione aperta per addetto alle pulizie. Invia la candidatura.",
-        "evidence_date": "2026-07-15T10:00:00Z",
+        "evidence_date": "2026-07-16T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -9901,9 +9901,9 @@
             "source_url": "https://epsilon-service-fixture-replay44.test/lavora-con-noi/addetto-pulizie",
             "source_class": "company_careers",
             "evidence": "Selezione aperta per addetto alle pulizie. Invia la candidatura.",
-            "observed_at": "2026-07-15T10:00:00Z",
-            "published_at": "2026-07-15",
-            "date": "2026-07-15T10:00:00Z"
+            "observed_at": "2026-07-16T10:00:00Z",
+            "published_at": "2026-07-16",
+            "date": "2026-07-16T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -9914,7 +9914,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-15T10:00:00Z",
+          "resolved_at": "2026-07-16T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -9933,7 +9933,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-15T10:00:00Z",
+        "last_audited_at": "2026-07-16T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -10124,7 +10124,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Zeta Meccanica Fixture assume un meccanico industriale. Candidati ora.",
         "why_now": "Zeta Meccanica Fixture assume un meccanico industriale. Candidati ora.",
-        "evidence_date": "2026-07-14T10:00:00Z",
+        "evidence_date": "2026-07-15T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -10142,9 +10142,9 @@
             "source_url": "https://zeta-meccanica-fixture-replay45.test/jobs/meccanico-industriale",
             "source_class": "company_careers",
             "evidence": "Zeta Meccanica Fixture assume un meccanico industriale. Candidati ora.",
-            "observed_at": "2026-07-14T10:00:00Z",
-            "published_at": "2026-07-14",
-            "date": "2026-07-14T10:00:00Z"
+            "observed_at": "2026-07-15T10:00:00Z",
+            "published_at": "2026-07-15",
+            "date": "2026-07-15T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -10155,7 +10155,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-14T10:00:00Z",
+          "resolved_at": "2026-07-15T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -10174,7 +10174,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-14T10:00:00Z",
+        "last_audited_at": "2026-07-15T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -10365,7 +10365,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Eta Cantieri Fixture ricerca un operaio di cantiere. Invia la candidatura.",
         "why_now": "Eta Cantieri Fixture ricerca un operaio di cantiere. Invia la candidatura.",
-        "evidence_date": "2026-07-13T10:00:00Z",
+        "evidence_date": "2026-07-14T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -10383,9 +10383,9 @@
             "source_url": "https://eta-cantieri-fixture-replay46.test/careers/operaio-cantiere",
             "source_class": "company_careers",
             "evidence": "Eta Cantieri Fixture ricerca un operaio di cantiere. Invia la candidatura.",
-            "observed_at": "2026-07-13T10:00:00Z",
-            "published_at": "2026-07-13",
-            "date": "2026-07-13T10:00:00Z"
+            "observed_at": "2026-07-14T10:00:00Z",
+            "published_at": "2026-07-14",
+            "date": "2026-07-14T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -10396,7 +10396,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-13T10:00:00Z",
+          "resolved_at": "2026-07-14T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -10415,7 +10415,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-13T10:00:00Z",
+        "last_audited_at": "2026-07-14T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -10606,7 +10606,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Theta Energia Fixture seleziona un installatore elettrico. Candidati.",
         "why_now": "Theta Energia Fixture seleziona un installatore elettrico. Candidati.",
-        "evidence_date": "2026-07-12T10:00:00Z",
+        "evidence_date": "2026-07-13T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -10624,9 +10624,9 @@
             "source_url": "https://theta-energia-fixture-replay47.test/posizioni/installatore-elettrico",
             "source_class": "company_careers",
             "evidence": "Theta Energia Fixture seleziona un installatore elettrico. Candidati.",
-            "observed_at": "2026-07-12T10:00:00Z",
-            "published_at": "2026-07-12",
-            "date": "2026-07-12T10:00:00Z"
+            "observed_at": "2026-07-13T10:00:00Z",
+            "published_at": "2026-07-13",
+            "date": "2026-07-13T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -10637,7 +10637,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-12T10:00:00Z",
+          "resolved_at": "2026-07-13T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -10656,7 +10656,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-12T10:00:00Z",
+        "last_audited_at": "2026-07-13T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -10847,7 +10847,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Posizione aperta per operaio agricolo. Invia la candidatura.",
         "why_now": "Posizione aperta per operaio agricolo. Invia la candidatura.",
-        "evidence_date": "2026-07-11T10:00:00Z",
+        "evidence_date": "2026-07-12T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -10865,9 +10865,9 @@
             "source_url": "https://iota-agricola-fixture-replay48.test/lavora-con-noi/operaio-agricolo",
             "source_class": "company_careers",
             "evidence": "Posizione aperta per operaio agricolo. Invia la candidatura.",
-            "observed_at": "2026-07-11T10:00:00Z",
-            "published_at": "2026-07-11",
-            "date": "2026-07-11T10:00:00Z"
+            "observed_at": "2026-07-12T10:00:00Z",
+            "published_at": "2026-07-12",
+            "date": "2026-07-12T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -10878,7 +10878,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-11T10:00:00Z",
+          "resolved_at": "2026-07-12T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -10897,7 +10897,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-11T10:00:00Z",
+        "last_audited_at": "2026-07-12T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -11088,7 +11088,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Kappa Saldature Fixture assume un saldatore TIG. Candidati ora.",
         "why_now": "Kappa Saldature Fixture assume un saldatore TIG. Candidati ora.",
-        "evidence_date": "2026-07-10T10:00:00Z",
+        "evidence_date": "2026-07-11T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -11106,9 +11106,9 @@
             "source_url": "https://kappa-saldature-fixture-replay49.test/jobs/saldatore-tig",
             "source_class": "company_careers",
             "evidence": "Kappa Saldature Fixture assume un saldatore TIG. Candidati ora.",
-            "observed_at": "2026-07-10T10:00:00Z",
-            "published_at": "2026-07-10",
-            "date": "2026-07-10T10:00:00Z"
+            "observed_at": "2026-07-11T10:00:00Z",
+            "published_at": "2026-07-11",
+            "date": "2026-07-11T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -11119,7 +11119,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-10T10:00:00Z",
+          "resolved_at": "2026-07-11T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -11138,7 +11138,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-10T10:00:00Z",
+        "last_audited_at": "2026-07-11T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -11329,7 +11329,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Lambda Facility Fixture cerca un manutentore impianti. Apply now.",
         "why_now": "Lambda Facility Fixture cerca un manutentore impianti. Apply now.",
-        "evidence_date": "2026-07-19T10:00:00Z",
+        "evidence_date": "2026-07-20T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -11347,9 +11347,9 @@
             "source_url": "https://jobs.lever.co/lambda-fixture/manutentore-impianti",
             "source_class": "company_careers",
             "evidence": "Lambda Facility Fixture cerca un manutentore impianti. Apply now.",
-            "observed_at": "2026-07-19T10:00:00Z",
-            "published_at": "2026-07-19",
-            "date": "2026-07-19T10:00:00Z"
+            "observed_at": "2026-07-20T10:00:00Z",
+            "published_at": "2026-07-20",
+            "date": "2026-07-20T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -11360,7 +11360,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-19T10:00:00Z",
+          "resolved_at": "2026-07-20T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -11379,7 +11379,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-19T10:00:00Z",
+        "last_audited_at": "2026-07-20T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -14717,7 +14717,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Lavora con noi",
         "why_now": "Lavora con noi",
-        "evidence_date": "2026-07-19T10:00:00Z",
+        "evidence_date": "2026-07-20T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -14735,9 +14735,9 @@
             "source_url": "https://generic-careers-fixture.test/lavora-con-noi",
             "source_class": "company_careers",
             "evidence": "Lavora con noi",
-            "observed_at": "2026-07-19T10:00:00Z",
-            "published_at": "2026-07-19",
-            "date": "2026-07-19T10:00:00Z"
+            "observed_at": "2026-07-20T10:00:00Z",
+            "published_at": "2026-07-20",
+            "date": "2026-07-20T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -14748,7 +14748,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-19T10:00:00Z",
+          "resolved_at": "2026-07-20T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -14767,7 +14767,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-19T10:00:00Z",
+        "last_audited_at": "2026-07-20T10:00:00Z",
         "hotness_score": 86
       },
       "source": "hiring_adapter_replay_v1.json",
@@ -14978,7 +14978,7 @@
             "evidence": "Assume un magazziniere. Candidati.",
             "observed_at": "2020-01-10T00:00:00Z",
             "published_at": "2020-01-01",
-            "date": "2026-07-16T10:00:00Z",
+            "date": "2026-07-17T10:00:00Z",
             "valid_through": "2020-01-01"
           }
         ],
@@ -14990,7 +14990,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-16T10:00:00Z",
+          "resolved_at": "2026-07-17T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -15009,7 +15009,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-16T10:00:00Z",
+        "last_audited_at": "2026-07-17T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -15203,7 +15203,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Assume un operaio di produzione. Candidati.",
         "why_now": "Assume un operaio di produzione. Candidati.",
-        "evidence_date": "2026-07-18T10:00:00Z",
+        "evidence_date": "2026-07-19T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -15221,9 +15221,9 @@
             "source_url": "https://enterprise-fixture.test/jobs/operaio-produzione",
             "source_class": "company_careers",
             "evidence": "Assume un operaio di produzione. Candidati.",
-            "observed_at": "2026-07-18T10:00:00Z",
-            "published_at": "2026-07-18",
-            "date": "2026-07-18T10:00:00Z"
+            "observed_at": "2026-07-19T10:00:00Z",
+            "published_at": "2026-07-19",
+            "date": "2026-07-19T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -15234,7 +15234,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-18T10:00:00Z",
+          "resolved_at": "2026-07-19T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -15253,7 +15253,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-18T10:00:00Z",
+        "last_audited_at": "2026-07-19T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -15448,7 +15448,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Ricerca un tecnico manutentore. Candidati.",
         "why_now": "Ricerca un tecnico manutentore. Candidati.",
-        "evidence_date": "2026-07-21T10:00:00Z",
+        "evidence_date": "2026-07-22T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -15466,9 +15466,9 @@
             "source_url": "https://undated-fixture.test/jobs/tecnico-manutentore",
             "source_class": "company_careers",
             "evidence": "Ricerca un tecnico manutentore. Candidati.",
-            "observed_at": "2026-07-21T10:00:00Z",
+            "observed_at": "2026-07-22T10:00:00Z",
             "published_at": "",
-            "date": "2026-07-21T10:00:00Z"
+            "date": "2026-07-22T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -15479,7 +15479,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-21T10:00:00Z",
+          "resolved_at": "2026-07-22T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -15498,7 +15498,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-21T10:00:00Z",
+        "last_audited_at": "2026-07-22T10:00:00Z",
         "hotness_score": 86
       },
       "source": "hiring_adapter_replay_v1.json",
@@ -15689,7 +15689,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Ricerca un marketing manager. Candidati.",
         "why_now": "Ricerca un marketing manager. Candidati.",
-        "evidence_date": "2026-07-19T10:00:00Z",
+        "evidence_date": "2026-07-20T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -15707,9 +15707,9 @@
             "source_url": "https://marketing-role-fixture.test/jobs/marketing-manager",
             "source_class": "company_careers",
             "evidence": "Ricerca un marketing manager. Candidati.",
-            "observed_at": "2026-07-19T10:00:00Z",
-            "published_at": "2026-07-19",
-            "date": "2026-07-19T10:00:00Z"
+            "observed_at": "2026-07-20T10:00:00Z",
+            "published_at": "2026-07-20",
+            "date": "2026-07-20T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -15720,7 +15720,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-19T10:00:00Z",
+          "resolved_at": "2026-07-20T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -15739,7 +15739,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-19T10:00:00Z",
+        "last_audited_at": "2026-07-20T10:00:00Z",
         "hotness_score": 86
       },
       "source": "hiring_adapter_replay_v1.json",
@@ -15930,7 +15930,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Board Only Fixture assume un operaio. Candidati.",
         "why_now": "Board Only Fixture assume un operaio. Candidati.",
-        "evidence_date": "2026-07-19T10:00:00Z",
+        "evidence_date": "2026-07-20T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -15948,9 +15948,9 @@
             "source_url": "https://infojobs.example/offerta/1005",
             "source_class": "job_board",
             "evidence": "Board Only Fixture assume un operaio. Candidati.",
-            "observed_at": "2026-07-19T10:00:00Z",
-            "published_at": "2026-07-19",
-            "date": "2026-07-19T10:00:00Z"
+            "observed_at": "2026-07-20T10:00:00Z",
+            "published_at": "2026-07-20",
+            "date": "2026-07-20T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -15961,7 +15961,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-19T10:00:00Z",
+          "resolved_at": "2026-07-20T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -15980,7 +15980,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-19T10:00:00Z",
+        "last_audited_at": "2026-07-20T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -16174,7 +16174,7 @@
         "source_adapter_id": "structured_hiring_v1",
         "evidence": "Seleziona un operaio. Candidati.",
         "why_now": "Seleziona un operaio. Candidati.",
-        "evidence_date": "2026-07-19T10:00:00Z",
+        "evidence_date": "2026-07-20T10:00:00Z",
         "matched_signals": [
           "hiring_operational"
         ],
@@ -16192,9 +16192,9 @@
             "source_url": "https://recruiter-proxy-fixture.test/jobs/operaio",
             "source_class": "company_careers",
             "evidence": "Seleziona un operaio. Candidati.",
-            "observed_at": "2026-07-19T10:00:00Z",
-            "published_at": "2026-07-19",
-            "date": "2026-07-19T10:00:00Z"
+            "observed_at": "2026-07-20T10:00:00Z",
+            "published_at": "2026-07-20",
+            "date": "2026-07-20T10:00:00Z"
           }
         ],
         "domain_verification": {
@@ -16205,7 +16205,7 @@
           "resolution_method": "verified_source_adapter",
           "resolution_source": "source_adapter",
           "adapter_id": "structured_hiring_v1",
-          "resolved_at": "2026-07-19T10:00:00Z",
+          "resolved_at": "2026-07-20T10:00:00Z",
           "evidence": [
             "schema_org_identity_match"
           ]
@@ -16224,7 +16224,7 @@
             "+390212345678"
           ]
         },
-        "last_audited_at": "2026-07-19T10:00:00Z",
+        "last_audited_at": "2026-07-20T10:00:00Z",
         "lead_quality_contract": {
           "score": 91
         },
@@ -19052,241 +19052,6 @@
       "human_reason": "Procurement negative role=aggiudicatario"
     },
     {
-      "id": "reject-size-unverified",
-      "expected": "REJECT",
-      "expected_codes": [
-        "SIZE_UNVERIFIED"
-      ],
-      "original_query": "Sono un broker assicurativo: trovami PMI lombarde con rischio operativo in aumento",
-      "intent": {
-        "schema_version": "1.0.0",
-        "search_id": "contract-fixture-001",
-        "raw_query": "Sono un broker assicurativo: trovami PMI lombarde con rischio operativo in aumento",
-        "language": "it",
-        "seller": {
-          "offer_category": "insurance_brokerage",
-          "offer_description": "Coperture assicurative per rischi operativi delle PMI",
-          "products_or_services": [
-            "assicurazione aziendale",
-            "risk assessment"
-          ],
-          "problems_solved": [
-            "esposizione operativa non coperta",
-            "crescita del rischio"
-          ],
-          "sales_motion": "consultative_outbound",
-          "preferred_buyer_roles": [
-            "titolare",
-            "CFO",
-            "responsabile operations"
-          ]
-        },
-        "target": {
-          "entity_types": [
-            "company"
-          ],
-          "industries": [
-            "logistica",
-            "edilizia",
-            "produzione"
-          ],
-          "company_sizes": [
-            "micro",
-            "small",
-            "medium"
-          ],
-          "employee_range": {
-            "min": 5,
-            "max": 249
-          },
-          "revenue_range": {
-            "max": 50000000,
-            "currency": "EUR"
-          },
-          "geographies": [
-            "Lombardia"
-          ],
-          "local_business_preference": true,
-          "required_attributes": [
-            "attività operativa"
-          ],
-          "excluded_attributes": [
-            "grande impresa",
-            "brand globale"
-          ],
-          "excluded_entities": []
-        },
-        "commercial_hypotheses": [
-          {
-            "id": "risk-growth",
-            "buyer_problem": "L'espansione operativa può aver reso obsolete le coperture esistenti",
-            "triggering_events": [
-              "assunzioni operative",
-              "nuovo cantiere",
-              "appalto aggiudicato"
-            ],
-            "signals": [
-              "hiring_operational",
-              "tender_won",
-              "fleet_expansion"
-            ],
-            "implied_need": "Revisione delle coperture e dei massimali",
-            "relevance_to_offer": "Il broker può riallineare le coperture al rischio osservato",
-            "confidence": 0.84
-          }
-        ],
-        "signal_policy": {
-          "required_signals": [
-            "hiring_operational"
-          ],
-          "optional_signals": [
-            "tender_won",
-            "fleet_expansion"
-          ],
-          "negative_signals": [
-            "business_closed"
-          ],
-          "maximum_age_days_by_signal": {
-            "hiring_operational": 120,
-            "tender_won": 365,
-            "fleet_expansion": 365
-          },
-          "minimum_signal_confidence": 0.75
-        },
-        "source_policy": {
-          "preferred_source_classes": [
-            "company_careers",
-            "public_procurement_portal"
-          ],
-          "allowed_source_classes": [
-            "official_company_website",
-            "company_careers",
-            "public_procurement_portal",
-            "recognized_local_news"
-          ],
-          "excluded_source_classes": [
-            "generic_blog",
-            "directory",
-            "search_snippet"
-          ],
-          "minimum_independent_sources": 1,
-          "primary_source_required_for": [
-            "tender_won"
-          ]
-        },
-        "evidence_policy": {
-          "require_official_domain": true,
-          "require_source_url": true,
-          "require_observed_at": true,
-          "minimum_evidence_confidence": 0.75,
-          "corroboration_required_above_risk": 0.65
-        },
-        "audit_policy": {
-          "modules": [
-            "contacts",
-            "social_profiles",
-            "company_identity",
-            "commercial_signals"
-          ],
-          "crawl_depth": 1,
-          "maximum_pages": 8,
-          "collect_contacts": true,
-          "collect_social_profiles": true,
-          "detect_technologies": false,
-          "detect_commercial_signals": true
-        },
-        "ranking_policy": {
-          "weight_buyer_fit": 0.25,
-          "weight_signal_strength": 0.25,
-          "weight_freshness": 0.15,
-          "weight_evidence_confidence": 0.2,
-          "weight_contactability": 0.1,
-          "weight_need_gap": 0.05
-        },
-        "budget_policy": {
-          "target_cost_eur": 0.105,
-          "hard_cost_eur": 0.125,
-          "maximum_search_calls": 8,
-          "maximum_pages_opened": 25,
-          "maximum_llm_evaluations": 3
-        },
-        "ambiguity": {
-          "score": 0.12,
-          "assumptions": [
-            "PMI interpretata come meno di 250 dipendenti"
-          ],
-          "unresolved_fields": []
-        },
-        "planner_metadata": {
-          "planner": "llm",
-          "prompt_version": "commercial-intent-v1",
-          "model": "fixture-model",
-          "generated_at": "2026-07-11T00:00:00Z"
-        }
-      },
-      "candidate": {
-        "azienda": "Alfa Logistica Srl",
-        "sito": "https://www.alfalogistica.example/",
-        "employee_count": null,
-        "company_size_class": "unknown",
-        "source_url": "https://www.alfalogistica.example/lavora-con-noi",
-        "evidence": "Alfa Logistica cerca nuovi autisti per la sede lombarda",
-        "why_now": "L'apertura di nuove posizioni operative aumenta oggi l'esposizione assicurativa della PMI.",
-        "evidence_date": "2026-07-10T00:00:00Z",
-        "matched_signals": [
-          "hiring_operational"
-        ],
-        "business_signals": [
-          {
-            "type": "hiring_operational",
-            "status": "verified",
-            "confidence": 0.9,
-            "source_url": "https://www.alfalogistica.example/lavora-con-noi",
-            "evidence": "Alfa Logistica cerca nuovi autisti per la sede lombarda",
-            "observed_at": "2026-07-10T00:00:00Z",
-            "published_at": "2026-07-10",
-            "source_class": "official_company_website",
-            "source_publisher": "alfalogistica.example",
-            "date": "2026-07-10T00:00:00Z"
-          }
-        ],
-        "domain_verification": {
-          "url": "https://www.alfalogistica.example/",
-          "status": "verified",
-          "confidence": 0.9,
-          "score": 90,
-          "resolution_method": "positive_page_identity",
-          "resolution_source": "extracted_website",
-          "evidence": [
-            "company_tokens_in_host",
-            "schema_org_identity_match"
-          ]
-        },
-        "lead_quality_contract": {
-          "score": 88
-        },
-        "last_audited_at": "2026-07-10T00:00:00Z",
-        "technical_report": {
-          "audit_status": "complete"
-        },
-        "semantic_grounding": {
-          "accepted": true,
-          "confidence": 0.9,
-          "target_entity_role": "employer"
-        },
-        "contatti": {
-          "email": "hr@alfalogistica.example",
-          "telefoni": [
-            "+390212345678"
-          ]
-        }
-      },
-      "source": "SIZE_UNVERIFIED",
-      "source_url": "https://www.alfalogistica.example/lavora-con-noi",
-      "source_excerpt": "Alfa Logistica cerca nuovi autisti per la sede lombarda",
-      "human_reason": "Dimensione aziendale non verificabile."
-    },
-    {
       "id": "reject-growth-01",
       "expected": "REJECT",
       "expected_codes": [],
@@ -21681,7 +21446,7 @@
       "expected": "REJECT",
       "expected_codes": [
         "COMPANY_OUT_OF_MARKET_SCOPE",
-        "SIZE_UNVERIFIED"
+        "EVIDENCE_MISMATCH"
       ],
       "original_query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili",
       "intent": {
@@ -21909,14 +21674,14 @@
       "source": "stage1-hiring-trace-replay-v5.json#resolved_candidate_replay",
       "source_url": "https://www.brt.it/lavora-con-noi",
       "source_excerpt": "BRT careers page indexed during shadow hiring trace.",
-      "human_reason": "Large/unverified company from resolved identity trace."
+      "human_reason": "Large company or generic careers evidence from resolved identity trace."
     },
     {
       "id": "reject-resolved-trace-02",
       "expected": "REJECT",
       "expected_codes": [
         "COMPANY_OUT_OF_MARKET_SCOPE",
-        "SIZE_UNVERIFIED"
+        "EVIDENCE_MISMATCH"
       ],
       "original_query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili",
       "intent": {
@@ -22144,14 +21909,14 @@
       "source": "stage1-hiring-trace-replay-v5.json#resolved_candidate_replay",
       "source_url": "https://www.fmach.it/lavora-con-noi",
       "source_excerpt": "Fondazione Edmund Mach careers page indexed during shadow hiring trace.",
-      "human_reason": "Large/unverified company from resolved identity trace."
+      "human_reason": "Large company or generic careers evidence from resolved identity trace."
     },
     {
       "id": "reject-resolved-trace-03",
       "expected": "REJECT",
       "expected_codes": [
         "COMPANY_OUT_OF_MARKET_SCOPE",
-        "SIZE_UNVERIFIED"
+        "EVIDENCE_MISMATCH"
       ],
       "original_query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili",
       "intent": {
@@ -22379,14 +22144,14 @@
       "source": "stage1-hiring-trace-replay-v5.json#resolved_candidate_replay",
       "source_url": "https://www.gruppoveritas.it/lavora-con-noi",
       "source_excerpt": "Gruppo Veritas careers page indexed during shadow hiring trace.",
-      "human_reason": "Large/unverified company from resolved identity trace."
+      "human_reason": "Large company or generic careers evidence from resolved identity trace."
     },
     {
       "id": "reject-resolved-trace-04",
       "expected": "REJECT",
       "expected_codes": [
         "COMPANY_OUT_OF_MARKET_SCOPE",
-        "SIZE_UNVERIFIED"
+        "EVIDENCE_MISMATCH"
       ],
       "original_query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili",
       "intent": {
@@ -22614,14 +22379,14 @@
       "source": "stage1-hiring-trace-replay-v5.json#resolved_candidate_replay",
       "source_url": "https://www.hoval.it/lavora-con-noi",
       "source_excerpt": "Hoval careers page indexed during shadow hiring trace.",
-      "human_reason": "Large/unverified company from resolved identity trace."
+      "human_reason": "Large company or generic careers evidence from resolved identity trace."
     },
     {
       "id": "reject-resolved-trace-05",
       "expected": "REJECT",
       "expected_codes": [
         "COMPANY_OUT_OF_MARKET_SCOPE",
-        "SIZE_UNVERIFIED"
+        "EVIDENCE_MISMATCH"
       ],
       "original_query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili",
       "intent": {
@@ -22849,14 +22614,14 @@
       "source": "stage1-hiring-trace-replay-v5.json#resolved_candidate_replay",
       "source_url": "https://www.ifm.com/lavora-con-noi",
       "source_excerpt": "ifm careers page indexed during shadow hiring trace.",
-      "human_reason": "Large/unverified company from resolved identity trace."
+      "human_reason": "Large company or generic careers evidence from resolved identity trace."
     },
     {
       "id": "reject-resolved-trace-06",
       "expected": "REJECT",
       "expected_codes": [
         "COMPANY_OUT_OF_MARKET_SCOPE",
-        "SIZE_UNVERIFIED"
+        "EVIDENCE_MISMATCH"
       ],
       "original_query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili",
       "intent": {
@@ -23084,14 +22849,14 @@
       "source": "stage1-hiring-trace-replay-v5.json#resolved_candidate_replay",
       "source_url": "https://www.monge.it/lavora-con-noi",
       "source_excerpt": "Monge careers page indexed during shadow hiring trace.",
-      "human_reason": "Large/unverified company from resolved identity trace."
+      "human_reason": "Large company or generic careers evidence from resolved identity trace."
     },
     {
       "id": "reject-resolved-trace-07",
       "expected": "REJECT",
       "expected_codes": [
         "COMPANY_OUT_OF_MARKET_SCOPE",
-        "SIZE_UNVERIFIED"
+        "EVIDENCE_MISMATCH"
       ],
       "original_query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili",
       "intent": {
@@ -23319,7 +23084,242 @@
       "source": "stage1-hiring-trace-replay-v5.json#resolved_candidate_replay",
       "source_url": "https://www.oniverse.it/lavora-con-noi",
       "source_excerpt": "Oniverse careers page indexed during shadow hiring trace.",
-      "human_reason": "Large/unverified company from resolved identity trace."
+      "human_reason": "Large company or generic careers evidence from resolved identity trace."
+    },
+    {
+      "id": "reject-resolved-trace-08",
+      "expected": "REJECT",
+      "expected_codes": [
+        "COMPANY_OUT_OF_MARKET_SCOPE",
+        "EVIDENCE_MISMATCH"
+      ],
+      "original_query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili",
+      "intent": {
+        "schema_version": "1.0.0",
+        "search_id": "contract-fixture-001",
+        "raw_query": "Sono un consulente sicurezza sul lavoro: trovami PMI italiane che stanno assumendo personale operativo tramite careers o posizioni aperte verificabili",
+        "language": "it",
+        "seller": {
+          "offer_category": "insurance_brokerage",
+          "offer_description": "Coperture assicurative per rischi operativi delle PMI",
+          "products_or_services": [
+            "assicurazione aziendale",
+            "risk assessment"
+          ],
+          "problems_solved": [
+            "esposizione operativa non coperta",
+            "crescita del rischio"
+          ],
+          "sales_motion": "consultative_outbound",
+          "preferred_buyer_roles": [
+            "titolare",
+            "CFO",
+            "responsabile operations"
+          ]
+        },
+        "target": {
+          "entity_types": [
+            "company"
+          ],
+          "industries": [
+            "logistica",
+            "edilizia",
+            "produzione"
+          ],
+          "company_sizes": [
+            "micro",
+            "small",
+            "medium"
+          ],
+          "employee_range": {
+            "min": 5,
+            "max": 249
+          },
+          "revenue_range": {
+            "max": 50000000,
+            "currency": "EUR"
+          },
+          "geographies": [
+            "Italia"
+          ],
+          "local_business_preference": true,
+          "required_attributes": [
+            "attività operativa"
+          ],
+          "excluded_attributes": [
+            "grande impresa",
+            "brand globale"
+          ],
+          "excluded_entities": []
+        },
+        "commercial_hypotheses": [
+          {
+            "id": "risk-growth",
+            "buyer_problem": "L'espansione operativa può aver reso obsolete le coperture esistenti",
+            "triggering_events": [
+              "assunzioni operative",
+              "nuovo cantiere",
+              "appalto aggiudicato"
+            ],
+            "signals": [
+              "hiring_operational",
+              "tender_won",
+              "fleet_expansion"
+            ],
+            "implied_need": "Revisione delle coperture e dei massimali",
+            "relevance_to_offer": "Il broker può riallineare le coperture al rischio osservato",
+            "confidence": 0.84
+          }
+        ],
+        "signal_policy": {
+          "required_signals": [
+            "hiring_operational"
+          ],
+          "optional_signals": [
+            "tender_won",
+            "fleet_expansion"
+          ],
+          "negative_signals": [
+            "business_closed"
+          ],
+          "maximum_age_days_by_signal": {
+            "hiring_operational": 60
+          },
+          "minimum_signal_confidence": 0.75
+        },
+        "source_policy": {
+          "preferred_source_classes": [
+            "company_careers",
+            "public_procurement_portal"
+          ],
+          "allowed_source_classes": [
+            "official_company_website",
+            "company_careers",
+            "public_procurement_portal",
+            "recognized_local_news"
+          ],
+          "excluded_source_classes": [
+            "generic_blog",
+            "directory",
+            "search_snippet"
+          ],
+          "minimum_independent_sources": 1,
+          "primary_source_required_for": [
+            "tender_won"
+          ]
+        },
+        "evidence_policy": {
+          "require_official_domain": true,
+          "require_source_url": true,
+          "require_observed_at": true,
+          "minimum_evidence_confidence": 0.75,
+          "corroboration_required_above_risk": 0.65
+        },
+        "audit_policy": {
+          "modules": [
+            "contacts",
+            "social_profiles",
+            "company_identity",
+            "commercial_signals"
+          ],
+          "crawl_depth": 1,
+          "maximum_pages": 8,
+          "collect_contacts": true,
+          "collect_social_profiles": true,
+          "detect_technologies": false,
+          "detect_commercial_signals": true
+        },
+        "ranking_policy": {
+          "weight_buyer_fit": 0.25,
+          "weight_signal_strength": 0.25,
+          "weight_freshness": 0.15,
+          "weight_evidence_confidence": 0.2,
+          "weight_contactability": 0.1,
+          "weight_need_gap": 0.05
+        },
+        "budget_policy": {
+          "target_cost_eur": 0.105,
+          "hard_cost_eur": 0.125,
+          "maximum_search_calls": 8,
+          "maximum_pages_opened": 25,
+          "maximum_llm_evaluations": 3
+        },
+        "ambiguity": {
+          "score": 0.12,
+          "assumptions": [
+            "PMI interpretata come meno di 250 dipendenti"
+          ],
+          "unresolved_fields": []
+        },
+        "planner_metadata": {
+          "planner": "llm",
+          "prompt_version": "commercial-intent-v1",
+          "model": "fixture-model",
+          "generated_at": "2026-07-11T00:00:00Z"
+        }
+      },
+      "candidate": {
+        "azienda": "Woehler",
+        "sito": "https://www.woehler.it/",
+        "employee_count": null,
+        "company_size_class": "unknown",
+        "source_url": "https://www.woehler.it/lavora-con-noi",
+        "evidence": "Woehler careers page indexed during shadow hiring trace.",
+        "why_now": "Woehler indexed in hiring trace but fails SME/evidence gate.",
+        "evidence_date": "2026-07-10T00:00:00Z",
+        "matched_signals": [
+          "hiring"
+        ],
+        "business_signals": [
+          {
+            "type": "hiring_operational",
+            "status": "verified",
+            "confidence": 0.9,
+            "source_url": "https://www.alfalogistica.example/lavora-con-noi",
+            "evidence": "Alfa Logistica cerca nuovi autisti per la sede lombarda",
+            "observed_at": "2026-07-10T00:00:00Z",
+            "published_at": "2026-07-10",
+            "source_class": "official_company_website",
+            "source_publisher": "alfalogistica.example",
+            "date": "2026-07-10T00:00:00Z"
+          }
+        ],
+        "domain_verification": {
+          "url": "https://www.alfalogistica.example/",
+          "status": "verified",
+          "confidence": 0.9,
+          "score": 90,
+          "resolution_method": "positive_page_identity",
+          "resolution_source": "extracted_website",
+          "evidence": [
+            "company_tokens_in_host",
+            "schema_org_identity_match"
+          ]
+        },
+        "lead_quality_contract": {
+          "score": 88
+        },
+        "last_audited_at": "2026-07-10T00:00:00Z",
+        "technical_report": {
+          "audit_status": "complete"
+        },
+        "semantic_grounding": {
+          "accepted": true,
+          "confidence": 0.9,
+          "target_entity_role": "employer"
+        },
+        "contatti": {
+          "email": "hr@alfalogistica.example",
+          "telefoni": [
+            "+390212345678"
+          ]
+        },
+        "enterprise_excluded": false
+      },
+      "source": "stage1-hiring-trace-replay-v5.json#resolved_candidate_replay",
+      "source_url": "https://www.woehler.it/lavora-con-noi",
+      "source_excerpt": "Woehler careers page indexed during shadow hiring trace.",
+      "human_reason": "Large company or generic careers evidence from resolved identity trace."
     }
   ]
 }

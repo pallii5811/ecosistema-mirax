@@ -810,12 +810,11 @@ def build_replay_dataset() -> List[dict]:
         ))
 
     cases.append(_case(
-        "reject-size-unverified", expected="REJECT",
+        "accept-likely-sme-without-headcount", expected="ACCEPT",
         candidate=_valid_lead_base(employee_count=None, company_size_class="unknown"),
         intent=copy.deepcopy(plan),
-        original_query=plan["raw_query"], source="SIZE_UNVERIFIED",
-        human_reason="Dimensione aziendale non verificabile.",
-        expected_codes=["SIZE_UNVERIFIED"],
+        original_query=plan["raw_query"], source="LIKELY_SME",
+        human_reason="Azienda reale, dominio e contatto verificati, senza indicatori enterprise.",
     ))
 
     growth = _load_json(BM / "growth_signals_replay_v1.json")
@@ -876,8 +875,8 @@ def build_replay_dataset() -> List[dict]:
             candidate=lead, intent=copy.deepcopy(hiring_plan),
             original_query=stage1["query"],
             source="stage1-hiring-trace-replay-v5.json#resolved_candidate_replay",
-            human_reason="Large/unverified company from resolved identity trace.",
-            expected_codes=["COMPANY_OUT_OF_MARKET_SCOPE", "SIZE_UNVERIFIED"],
+            human_reason="Large company or generic careers evidence from resolved identity trace.",
+            expected_codes=["COMPANY_OUT_OF_MARKET_SCOPE", "EVIDENCE_MISMATCH"],
         ))
 
     # Trim/pad to exactly 50+50

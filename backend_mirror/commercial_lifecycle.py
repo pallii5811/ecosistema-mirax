@@ -429,16 +429,11 @@ def positive_entity_classification(
         size_class = "micro" if employee_count < 10 else "small" if employee_count < 50 else "medium" if employee_count < 250 else "large"
     else:
         size_class = "unknown"
-    size_constraint_required = plan_requires_explicit_size_constraint(canonical_plan)
-    allowed_sme = {"micro", "small", "medium", "microimpresa", "piccola", "media", "pmi", "sme"}
-    if not size_constraint_required:
-        size_ok = True
-    elif size_class in {"enterprise", "large"}:
-        size_ok = False
-    elif size_class == "unknown":
-        size_ok = False
-    else:
-        size_ok = size_class in allowed_sme
+    # Operating-company identity and market scope are separate gates. Missing
+    # size evidence must not turn a verified operating company into a
+    # non-operating entity; MarketScopeResolver classifies it as LIKELY_SME or
+    # AMBIGUOUS_CORPORATE using positive corporate evidence.
+    size_ok = size_class not in {"enterprise", "large", "multinational", "global_enterprise"}
     disqualifying = any(flags.values())
     operating_probability = float(lead.get("operating_company_probability") or (0.9 if identity_positive and not disqualifying else 0.0))
     is_operating_buyer = bool(identity_positive and operating_probability >= 0.75 and not disqualifying and entity_type not in {"person", "publisher"})
@@ -455,7 +450,7 @@ def positive_entity_classification(
             "verified": bool(lead.get("citta") or lead.get("city") or lead.get("indirizzo") or lead.get("address")),
         },
         "is_operating_buyer": is_operating_buyer,
-        "classification_verified": is_operating_buyer and size_ok,
+        "classification_verified": is_operating_buyer,
         "size_policy_passed": size_ok,
         "name": name,
     }
@@ -940,12 +935,14 @@ def _persist_gated_lead(
         stamped = dict(lead)
         stamped["_lead_acceptance"] = gate.get("lead_acceptance")
         stamped["_lead_acceptance_authority"] = "LeadAcceptanceService"
+        stamped["market_scope_status"] = gate.get("market_scope_status")
         return stamped
     try:
         supabase.rpc("publish_search_candidate", {"p_candidate_id": candidate_id}).execute()
         stamped = dict(lead)
         stamped["_lead_acceptance"] = gate.get("lead_acceptance")
         stamped["_lead_acceptance_authority"] = "LeadAcceptanceService"
+        stamped["market_scope_status"] = gate.get("market_scope_status")
         return stamped
     except Exception:
         return None

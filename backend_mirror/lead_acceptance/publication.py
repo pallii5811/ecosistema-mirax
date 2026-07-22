@@ -16,6 +16,7 @@ def stamp_accepted_candidate(
     stamped = dict(candidate)
     stamped["_lead_acceptance"] = decision.to_dict()
     stamped["_lead_acceptance_authority"] = "LeadAcceptanceService"
+    stamped["market_scope_status"] = decision.market_scope_status.value
     return stamped
 
 

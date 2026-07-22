@@ -18,9 +18,10 @@ class OpportunityState(str, Enum):
 
 
 class MarketScopeStatus(str, Enum):
-    IN_SCOPE = "IN_SCOPE"
-    OUT_OF_SCOPE = "OUT_OF_SCOPE"
-    UNVERIFIED = "UNVERIFIED"
+    CONFIRMED_SME = "CONFIRMED_SME"
+    LIKELY_SME = "LIKELY_SME"
+    ENTERPRISE = "ENTERPRISE"
+    AMBIGUOUS_CORPORATE = "AMBIGUOUS_CORPORATE"
 
 
 class ContactabilityStatus(str, Enum):
@@ -79,6 +80,7 @@ class LeadAcceptanceDecision:
 
     query_fit: GateResult
     market_scope: GateResult
+    market_scope_status: MarketScopeStatus
     opportunity_state: OpportunityState
     opportunity_detail: OpportunityClassification
     evidence_gate: GateResult
@@ -110,6 +112,7 @@ class LeadAcceptanceDecision:
             "rejection_codes": self.rejection_codes,
             "query_fit": self.query_fit.to_dict(),
             "market_scope": self.market_scope.to_dict(),
+            "market_scope_status": self.market_scope_status.value,
             "opportunity_state": self.opportunity_state.value,
             "opportunity_detail": self.opportunity_detail.to_dict(),
             "evidence_gate": self.evidence_gate.to_dict(),

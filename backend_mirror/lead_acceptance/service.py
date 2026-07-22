@@ -25,7 +25,6 @@ _PUBLISHER_ROLES = {
     "seller", "provider", "job_board", "directory", "advisor", "authority",
 }
 
-
 def _map_market_rejection(reasons: List[str]) -> List[str]:
     mapped: List[str] = []
     for reason in reasons:
@@ -36,9 +35,18 @@ def _map_market_rejection(reasons: List[str]) -> List[str]:
         elif reason in {
             "STATE_CONTROLLED_OPERATOR", "EMPLOYEES_ABOVE_MAXIMUM", "EMPLOYEES_BELOW_MINIMUM",
             "REVENUE_ABOVE_MAXIMUM", "SIZE_CLASS_OUT_OF_SCOPE", "PUBLIC_COMPANY",
-            "LARGE_CORPORATE_GROUP", "NON_OPERATING_ENTITY",
+            "LARGE_CORPORATE_GROUP", "NON_OPERATING_ENTITY", "EMPLOYEES_ENTERPRISE_SCALE",
+            "REVENUE_ENTERPRISE_SCALE", "SIZE_CLASS_ENTERPRISE",
         }:
             mapped.append("COMPANY_OUT_OF_MARKET_SCOPE")
+        elif reason in {
+            "MARKET_SCOPE_AMBIGUOUS", "EMPLOYEE_COUNT_CORPORATE_BOUNDARY",
+            "REVENUE_CORPORATE_BOUNDARY", "SIZE_CLASS_LARGE_UNRESOLVED",
+            "PARENT_GROUP_UNRESOLVED", "CORPORATE_SIGNALS_CONTRADICTORY",
+            "COMPANY_NAME_REQUIRED_FOR_LIKELY_SME", "OFFICIAL_DOMAIN_REQUIRED_FOR_LIKELY_SME",
+            "PUBLIC_CONTACT_REQUIRED_FOR_LIKELY_SME",
+        }:
+            mapped.append("AMBIGUOUS_CORPORATE")
         else:
             mapped.append(reason)
     return list(dict.fromkeys(mapped))
@@ -74,7 +82,7 @@ class LeadAcceptanceService:
             rejection_codes.extend(identity_gate.reasons)
 
         market_status, market_gate, employees, revenue = resolve_market_scope(candidate, intent)
-        if market_status != MarketScopeStatus.IN_SCOPE:
+        if not market_gate.passed:
             rejection_codes.extend(_map_market_rejection(market_gate.reasons))
 
         opportunity_detail = classify_opportunity(candidate, intent)
@@ -119,7 +127,7 @@ class LeadAcceptanceService:
             rejection_codes.append("COMPANY_OUT_OF_MARKET_SCOPE")
 
         mandatory_gates = [identity_gate, market_gate, evidence_gate, contact_gate]
-        market_ok = market_status == MarketScopeStatus.IN_SCOPE
+        market_ok = market_gate.passed
         opportunity_ok = opportunity_accepted(opportunity_state, intent)
 
         rejection_codes = list(dict.fromkeys(code for code in rejection_codes if code))
@@ -144,6 +152,7 @@ class LeadAcceptanceService:
             rejection_codes=rejection_codes,
             query_fit=query_fit,
             market_scope=market_gate,
+            market_scope_status=market_status,
             opportunity_state=opportunity_state,
             opportunity_detail=opportunity_detail,
             evidence_gate=evidence_gate,

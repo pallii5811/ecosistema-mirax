@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from lead_acceptance.models import EvaluationContext
+from lead_acceptance.service import LeadAcceptanceService
 from lead_acceptance_service import (
     COMMERCIAL_EVENT_IMPLEMENTATION_ACTIVE,
     evaluate_lead,
@@ -99,6 +101,7 @@ def _base_lead(**overrides):
         "last_audited_at": "2026-07-10T00:00:00Z",
         "technical_report": {"audit_status": "completed"},
         "semantic_grounding": {"accepted": True, "confidence": 0.9, "target_entity_role": "employer"},
+        "contatti": {"email": "info@alfalogistica.example", "telefoni": ["+390212345678"]},
     }
     lead.update(overrides)
     return lead
@@ -206,17 +209,123 @@ def test_pmi_accept_fixture_passes_when_fully_verified():
     lead = _base_lead()
     decision = evaluate_lead(lead, PLAN, cost_within_budget=True)
     assert decision.accepted is True
-    assert decision.market_scope_status == "IN_SCOPE"
+    assert decision.market_scope_status == "CONFIRMED_SME"
     assert not decision.rejection_codes
 
 
-def test_size_unverified_rejects():
+def test_local_srl_without_employee_count_is_publishable_likely_sme():
     lead = _base_lead()
     lead.pop("employee_count", None)
     lead["company_size_class"] = "unknown"
     decision = evaluate_lead(lead, PLAN, cost_within_budget=True)
+    assert decision.accepted is True
+    assert decision.market_scope_status == "LIKELY_SME"
+    assert "SIZE_UNVERIFIED" not in decision.rejection_codes
+
+
+def test_non_famous_manufacturer_with_relevant_event_accepts_without_headcount():
+    plan = copy.deepcopy(PLAN)
+    plan["raw_query"] = "PMI manifatturiere con ampliamenti produttivi recenti e contatto pubblico"
+    plan["signal_policy"]["required_signals"] = ["production_expansion"]
+    plan["commercial_hypotheses"] = [{
+        "id": "industrial-expansion",
+        "buyer_problem": "Il nuovo reparto produttivo richiede servizi industriali aggiornati.",
+        "triggering_events": ["nuovo reparto produttivo documentato"],
+        "signals": ["production_expansion"],
+        "implied_need": "Verifica degli impianti e dei servizi del nuovo reparto.",
+        "relevance_to_offer": "L'espansione rende attuale la verifica degli impianti industriali.",
+        "confidence": 0.9,
+    }]
+    lead = _base_lead(
+        azienda="Officine Lombarde Srl",
+        sito="https://officinelombarde.example/",
+        company_size_class="unknown",
+        source_url="https://officinelombarde.example/news/ampliamento-2026",
+        evidence="Officine Lombarde ha inaugurato il nuovo reparto produttivo a Brescia il 10 luglio 2026.",
+        why_now="Il nuovo reparto produttivo rende attuale una verifica degli impianti; inferenza commerciale.",
+        matched_signals=["production_expansion"],
+        business_signals=[{
+            "type": "production_expansion",
+            "status": "verified",
+            "confidence": 0.92,
+            "source_url": "https://officinelombarde.example/news/ampliamento-2026",
+            "evidence": "Officine Lombarde ha inaugurato il nuovo reparto produttivo a Brescia il 10 luglio 2026.",
+            "observed_at": "2026-07-10T00:00:00Z",
+            "published_at": "2026-07-10T00:00:00Z",
+            "source_class": "official_company_website",
+            "source_publisher": "officinelombarde.example",
+        }],
+        domain_verification={
+            "url": "https://officinelombarde.example/",
+            "status": "verified",
+            "confidence": 0.93,
+            "score": 93,
+            "resolution_method": "positive_page_identity",
+            "resolution_source": "extracted_website",
+            "evidence": ["company_tokens_in_host", "schema_org_identity_match"],
+        },
+        contatti={"email": "info@officinelombarde.example", "telefoni": ["+390301234567"]},
+        semantic_grounding={"accepted": True, "confidence": 0.9, "target_entity_role": "expanding_company"},
+    )
+    lead.pop("employee_count", None)
+    decision = evaluate_lead(lead, plan, cost_within_budget=True)
+    assert decision.accepted is True
+    assert decision.market_scope_status == "LIKELY_SME"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"azienda": "Global Operations Italia", "sito": "https://globalops.example/", "is_multinational": True},
+        {"azienda": "Controllata Locale Srl", "sito": "https://controllata.example/", "parent_group": "Worldwide Corporation"},
+        {"azienda": "Societa Mercati SpA", "sito": "https://mercati.example/", "is_listed": True},
+    ],
+)
+def test_positive_enterprise_indicators_reject_without_employee_count(overrides):
+    lead = _base_lead(**overrides, company_size_class="unknown")
+    lead.pop("employee_count", None)
+    lead["domain_verification"] = {**lead["domain_verification"], "url": lead["sito"]}
+    decision = evaluate_lead(lead, PLAN, cost_within_budget=True)
     assert decision.accepted is False
-    assert "SIZE_UNVERIFIED" in decision.rejection_codes
+    assert decision.market_scope_status == "ENTERPRISE"
+    assert "COMPANY_OUT_OF_MARKET_SCOPE" in decision.rejection_codes or "GLOBAL_ENTERPRISE" in decision.rejection_codes
+
+
+def test_conflicting_corporate_signals_are_held():
+    lead = _base_lead(company_size_class="unknown", ownership_unresolved=True)
+    lead.pop("employee_count", None)
+    decision = evaluate_lead(lead, PLAN, cost_within_budget=True)
+    assert decision.accepted is False
+    assert decision.market_scope_status == "AMBIGUOUS_CORPORATE"
+    assert "AMBIGUOUS_CORPORATE" in decision.rejection_codes
+
+
+def test_top_level_public_contact_satisfies_contact_gate_for_likely_sme():
+    lead = _base_lead(company_size_class="unknown", email="info@alfalogistica.example")
+    lead.pop("employee_count", None)
+    lead.pop("contatti", None)
+    decision = LeadAcceptanceService().evaluate(
+        lead,
+        PLAN,
+        EvaluationContext(cost_within_budget=True, require_contact=True),
+    )
+    assert decision.accepted is True
+    assert decision.market_scope_status.value == "LIKELY_SME"
+    assert decision.contactability_gate.passed is True
+
+
+@pytest.mark.parametrize("name,domain", [("Trenord", "trenord.it"), ("PwC Italy", "pwc.com"), ("Abbott", "abbott.com")])
+def test_known_large_entities_still_reject_without_headcount_via_general_indicators(name, domain):
+    lead = _base_lead(
+        azienda=name,
+        sito=f"https://{domain}/",
+        company_size_class="unknown",
+        domain_verification={**_base_lead()["domain_verification"], "url": f"https://{domain}/"},
+    )
+    lead.pop("employee_count", None)
+    decision = evaluate_lead(lead, PLAN, cost_within_budget=True)
+    assert decision.accepted is False
+    assert decision.market_scope_status == "ENTERPRISE"
 
 
 @pytest.mark.parametrize(
@@ -320,3 +429,4 @@ def test_persist_and_publish_requires_lead_acceptance_service(monkeypatch):
     )
     assert calls["evaluate"] >= 1
     assert released and released[0].get("_lead_acceptance_authority") == "LeadAcceptanceService"
+    assert released[0].get("market_scope_status") == "CONFIRMED_SME"

@@ -44,6 +44,25 @@ function readFirstString(obj: LeadRecord, keys: string[]) {
   return ''
 }
 
+function readMarketScopeStatus(obj: LeadRecord): string {
+  const direct = typeof obj.market_scope_status === 'string' ? obj.market_scope_status : ''
+  if (direct) return direct
+  const acceptance = asRecord(obj._lead_acceptance)
+  return typeof acceptance?.market_scope_status === 'string' ? acceptance.market_scope_status : ''
+}
+
+function MarketScopeBadge({ lead }: { lead: LeadRecord }) {
+  const status = readMarketScopeStatus(lead)
+  if (!status) return null
+  const label = status === 'CONFIRMED_SME' ? 'PMI verificata' : status === 'LIKELY_SME' ? 'Probabile PMI' : status
+  const tone = status === 'CONFIRMED_SME'
+    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    : status === 'LIKELY_SME'
+      ? 'bg-sky-50 text-sky-700 border-sky-200'
+      : 'bg-amber-50 text-amber-700 border-amber-200'
+  return <span className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] font-semibold ${tone}`}>{label}</span>
+}
+
 export function calcOpportunityScore(obj: Record<string, unknown>): number {
   let score = 0
   const stack = Array.isArray(obj.tech_stack)
@@ -473,6 +492,7 @@ const ResultsTable = ({
         readFirstString(obj, ['sito', 'website']),
         readFirstString(obj, ['citta', 'city']),
         readFirstString(obj, ['categoria', 'category']),
+        readMarketScopeStatus(obj),
         obj.rating ?? '',
         readFirstString(obj, ['instagram']),
         readFirstString(obj, ['facebook']),
@@ -482,7 +502,7 @@ const ResultsTable = ({
         .map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`)
         .join(',')
     })
-    const headers = ['Azienda', 'Telefono', 'Email', 'Sito', 'Città', 'Categoria', 'Rating', 'Instagram', 'Facebook', 'Opportunità', 'Score']
+    const headers = ['Azienda', 'Telefono', 'Email', 'Sito', 'Città', 'Categoria', 'Market Scope', 'Rating', 'Instagram', 'Facebook', 'Opportunità', 'Score']
     const csv = '\uFEFF' + [headers.join(','), ...rows].join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -1229,6 +1249,7 @@ const ResultsTable = ({
                       <div className="min-w-0">
                         <div className="font-bold text-slate-900 truncate">{name}</div>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                          <MarketScopeBadge lead={obj} />
                           {citta ? <span className="rounded-full bg-slate-50 border border-slate-200 px-2 py-0.5">{citta}</span> : null}
                           {categoria ? <span className="rounded-full bg-slate-50 border border-slate-200 px-2 py-0.5">{categoria}</span> : null}
                         </div>
@@ -1441,6 +1462,10 @@ const ResultsTable = ({
                                 {label}
                               </span>
                             )
+                          })()}
+                          {(() => {
+                            const obj = item && typeof item === 'object' ? (item as Record<string, unknown>) : {}
+                            return <MarketScopeBadge lead={obj} />
                           })()}
                           {(() => {
                             const obj = item && typeof item === 'object' ? (item as Record<string, unknown>) : {}
