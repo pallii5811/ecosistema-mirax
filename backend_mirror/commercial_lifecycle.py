@@ -825,9 +825,30 @@ def _candidate_stage(gate: Dict[str, Any], *, shadow_mode: bool) -> str:
     if not gate["publishable"]:
         return "rejected"
     method = str(gate["entity_resolution"].get("resolution_method") or "")
-    if shadow_mode and method in {"verified_source_adapter", "free_owned_host_verification"}:
+    # Shadow persists without publish_search_candidate RPC. These methods are
+    # already identity-positive in Python; DB check only allows
+    # positive_page_identity on stage=qualified, so park them as evidence_verified.
+    # cache_lookup is a replay of free_owned_host_verification (antincendio b179acee).
+    if shadow_mode and method in {
+        "verified_source_adapter",
+        "free_owned_host_verification",
+        "cache_lookup",
+    }:
         return "evidence_verified"
     return "qualified"
+
+
+def _db_entity_resolution_method(gate: Dict[str, Any]) -> str:
+    """Map identity-positive free/cache proofs onto the DB contract vocabulary."""
+    raw = str((gate.get("entity_resolution") or {}).get("resolution_method") or "").strip()
+    if gate.get("official_domain_verified") and raw in {
+        "positive_page_identity",
+        "free_owned_host_verification",
+        "cache_lookup",
+        "verified_source_adapter",
+    }:
+        return "positive_page_identity"
+    return raw
 
 
 def _persist_gated_lead(
@@ -859,7 +880,7 @@ def _persist_gated_lead(
         "stage": _candidate_stage(gate, shadow_mode=shadow_mode),
         "official_domain_verified": gate["official_domain_verified"],
         "legal_name": gate["entity_resolution"]["legal_name"][:300] or None,
-        "entity_resolution_method": gate["entity_resolution"]["resolution_method"],
+        "entity_resolution_method": _db_entity_resolution_method(gate),
         "entity_resolution_confidence": gate["entity_resolution"]["confidence"],
         "positive_identity_signals": gate["entity_resolution"]["positive_signals"],
         "identity_source_url": gate["entity_resolution"]["identity_source_url"],
