@@ -28,8 +28,8 @@ QUERY = (
     "ampliamenti produttivi o adeguamenti documentati, con un contatto pubblico."
 )
 REQUESTED = 3
-# 3 lifecycle-published leads need ~€0.05/lead headroom; €0.10 stranded resumes at 2/3.
-HARD_CAP = 0.20
+# 3 lifecycle-published leads need ~€0.05/lead headroom plus strategy-matrix time.
+HARD_CAP = 0.25
 ZONE_LEADS = 10  # product formula headroom; acceptance stops via lead_target=3
 SIGNALS = ["production_expansion", "geographic_expansion", "new_location"]
 
