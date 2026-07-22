@@ -1,0 +1,59 @@
+{
+  "search_id": "4fdaeaa3-4e5d-43d7-af27-9f450a930cac",
+  "first_loss": "serp_accepted_1_to_canonical_candidates_0",
+  "provider_query": "\"Nord Italia Lombardia\" (\"stabilimento\" OR \"impianto\" OR \"produzione\" OR \"ampliamento dello stabilimento\") (\"nuovo stabilimento\" OR \"ampliamento produttivo\" OR \"capacità produttiva\" OR \"nuova unità produttiva\") impresa OR azienda OR spa OR srl",
+  "funnel": {
+    "raw_provider_hits": 14,
+    "prefilter_accepted": 1,
+    "pages_fetched": 1,
+    "canonical_candidates": 0,
+    "semantic_calls": 0
+  },
+  "prefilter_rejection_histogram": {
+    "no_concrete_expansion_event": 12,
+    "stale_year": 1
+  },
+  "noise_examples": [
+    {
+      "title": "Stampi caldo o freddo in Italia: scelta 2026",
+      "url": "https://blog.teamrapidtooling.com/it/blog/hot-runner-vs-cold-runner-mold-systems-full-comparison/",
+      "gate_reason": "no_concrete_expansion_event",
+      "noise": true
+    },
+    {
+      "title": "Predari Vetri - Glass Group",
+      "url": "https://www.glassgroup.it/predari-vetri/",
+      "gate_reason": "no_concrete_expansion_event",
+      "noise": true,
+      "note": "static capacity description, not a recent expansion event"
+    }
+  ],
+  "fetched_page": {
+    "title": "Castrezzato: nuovo polo logistico Bracchi, 30 posti di lavoro",
+    "url": "https://www.bresciatoday.it/social/bracchi-castrezzato.html",
+    "snippet": "Nel nuovo stabilimento già ci lavorano 10 persone: l'obiettivo è arrivare a 30 dipendenti nei prossimi mesi (quindi ulteriori assunzioni in vista). Il nuovo ...",
+    "published_at": "2022-09-29",
+    "buggy_company_hint": "Castrezzato",
+    "expected_company_hint": "Bracchi",
+    "failure_point": "company_identity_hint treated locality prefix as company; page then SIGNAL_STALE (2022)",
+    "source_excerpt": "Inaugurato a Castrezzato il nuovo polo logistico della Bracchi, storica azienda"
+  },
+  "industrial_serp_positive_examples": [
+    {
+      "title": "Elettromeccanica Tironi inaugura il nuovo stabilimento logistico a Modena",
+      "expected_company": "Elettromeccanica Tironi"
+    },
+    {
+      "title": "Ares Line inaugura il nuovo stabilimento a Thiene grazie a un investimento",
+      "expected_company": "Ares Line"
+    },
+    {
+      "title": "Cembre: nuovo stabilimento da 15mila mq, investimento",
+      "expected_company": "Cembre"
+    },
+    {
+      "title": "TBK Srl celebra trent'anni guardando al futuro",
+      "expected_company": "TBK Srl"
+    }
+  ]
+}

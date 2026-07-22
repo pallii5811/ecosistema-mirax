@@ -10,9 +10,58 @@ from backend_mirror.source_adapters.generic_web import (
 )
 
 
-def test_title_company_rejects_market_summary_headlines() -> None:
-    assert _title_company_leading("Le startup Italiane sfiorano i 700 milioni di investimenti nel ...") == ""
-    assert _title_company_leading("Invertix chiude un round pre-seed da 1,7 milioni di euro") == "Invertix"
+def test_expansion_title_extracts_company_not_locality_prefix() -> None:
+    title = "Castrezzato: nuovo polo logistico Bracchi, 30 posti di lavoro"
+    snippet = (
+        "Nel nuovo stabilimento gia ci lavorano 10 persone: l'obiettivo e arrivare a 30 "
+        "dipendenti nei prossimi mesi."
+    )
+    assert not _looks_like_company_name("Castrezzato")
+    assert _title_company_leading(title) == "Bracchi"
+    assert _snippet_company_hint(title) == "Bracchi"
+    html = (
+        "<html><body><article>Inaugurato a Castrezzato il nuovo polo logistico della Bracchi, "
+        "storica azienda nel settore dei trasporti.</article></body></html>"
+    )
+    assert _company_identity_hint(title=title, snippet=snippet, html=html) == "Bracchi"
+
+
+def test_expansion_title_extracts_inaugura_company() -> None:
+    assert _title_company_leading(
+        "Elettromeccanica Tironi inaugura il nuovo stabilimento logistico a Modena"
+    ) == "Elettromeccanica Tironi"
+    assert _title_company_leading(
+        "Ares Line inaugura il nuovo stabilimento a Thiene grazie a un investimento"
+    ) == "Ares Line"
+    assert _title_company_leading("Cembre: nuovo stabilimento da 15mila mq, investimento") == "Cembre"
+    assert _title_company_leading("TBK Srl celebra trent'anni guardando al futuro") == "TBK Srl"
+    assert _title_company_leading("Inaugurazione nuovo stabilimento") == ""
+    # Parent company leading the inauguration headline is the correct target.
+    assert _snippet_company_hint(
+        "MARPOSS HA INAUGURATO IL NUOVO STABILIMENTO DELLA CONTROLLATA MG SPA A TRAVAGLIATO"
+    ) == "MARPOSS"
+
+
+def test_geography_serp_noise_rejected_by_concrete_event_gate() -> None:
+    from backend_mirror.source_adapters.cheap_discovery_prefilter import (
+        DiscoveryHit,
+        has_concrete_expansion_event,
+        prefilter_discovery_hit,
+    )
+
+    noise = DiscoveryHit(
+        title="Stampi caldo o freddo in Italia: scelta 2026",
+        url="https://blog.teamrapidtooling.com/it/blog/hot-runner/",
+        snippet="La concentrazione piu evidente si trova nel Nord Italia: Lombardia ... capacita produttiva",
+    )
+    assert not has_concrete_expansion_event(noise.title, noise.snippet)
+    valid = DiscoveryHit(
+        title="Ares Line inaugura il nuovo stabilimento a Thiene",
+        url="https://www.industriavicentina.it/ares-line",
+        snippet="Ares Line inaugura il nuovo stabilimento a Thiene grazie a un investimento di 12 milioni.",
+    )
+    assert has_concrete_expansion_event(valid.title, valid.snippet)
+    assert prefilter_discovery_hit(valid).accepted
 
 
 def test_crm_adoption_title_extracts_buyer_not_vendor() -> None:

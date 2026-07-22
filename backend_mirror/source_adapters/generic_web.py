@@ -82,12 +82,14 @@ _ITALY_LOCALITY_TO_REGION: Dict[str, str] = {
     **{name: "Lombardia" for name in (
         "lombardia", "lombardy", "milano", "milan", "bergamo", "brescia", "monza",
         "brianza", "varese", "como", "lecco", "pavia", "cremona", "mantova", "lodi", "sondrio",
+        "castrezzato", "travagliato", "brembate", "fara gera d adda",
     )},
     **{name: "Trentino-Alto Adige" for name in (
         "trentino alto adige", "trentino", "alto adige", "trento", "bolzano",
     )},
     **{name: "Veneto" for name in (
         "veneto", "belluno", "padova", "rovigo", "treviso", "venezia", "venice", "verona", "vicenza",
+        "thiene", "occhiobello",
     )},
     **{name: "Friuli-Venezia Giulia" for name in (
         "friuli venezia giulia", "friuli", "gorizia", "pordenone", "trieste", "udine",
@@ -1049,6 +1051,29 @@ _SNIPPET_COMPANY_PATTERNS = (
         r"(?:sceglie|adotta|implementa|migra(?:\s+a)?|passa a)\b",
         re.I,
     ),
+    # Facility expansion: "Elettromeccanica Tironi inaugura il nuovo stabilimento"
+    # Keep "ha inaugurato" before bare "inaugurato" so "MARPOSS HA INAUGURATO"
+    # does not capture "MARPOSS HA" as the company.
+    re.compile(
+        r"^(?!Inaugurazion\w*\b|Inaugurato\b|News\b|Press\b|Blog\b|Comunicato\b)"
+        r"([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,4}?)\s+"
+        r"(?:ha\s+inaugurato|ha\s+aperto|inaugura|inaugurato|apre|celebra)\b",
+        re.I,
+    ),
+    # "Cembre: nuovo stabilimento …" / "DalterFood inaugura un nuovo stabilimento"
+    re.compile(
+        r"^([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s*[,:]\s+"
+        r"(?:nuovo\s+stabilimento|nuova\s+unit[aà]|inaugur|ampliament)",
+        re.I,
+    ),
+    # "… stabilimento della CONTROLLATA MG SPA" / "polo logistico della Bracchi"
+    # Require a real capital letter for the company token (no re.I on the name).
+    re.compile(
+        r"(?i)\b(?:stabilimento|impianto|polo\s+logistico)\s+"
+        r"(?:della\s+controllata\s+|della\s+|di\s+)?"
+        r"(?-i:([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3}"
+        r"(?:\s+(?:S\.?\s?p\.?\s?A\.?|S\.?\s?r\.?\s?l\.?|Srl|Spa))?))",
+    ),
     # Prefer "la startup … Name chiude/ha/annuncia" over topical prefixes.
     re.compile(
         rf"\bla startup(?:\s+{_STARTUP_DESCRIPTOR})?\s+"
@@ -1099,9 +1124,24 @@ _COMPANY_NAME_MAX_LEN = 45
 _COMPANY_NAME_MAX_WORDS = 5
 _TITLE_ACTION_TAIL_RE = re.compile(
     r"\s+(?:chiude un|chiude il|chiude la|ha raccolto|hanno raccolto|raccoglie|annuncia|annunciano|"
-    r"sfiora|supera|porta a|sceglie|adotta|implementa|migra a|passa a)\b",
+    r"sfiora|supera|porta a|sceglie|adotta|implementa|migra a|passa a|"
+    r"inaugura|ha inaugurato|inaugurato|apre|ha aperto|celebra)\b",
     re.I,
 )
+
+
+def _is_geography_token(value: str) -> bool:
+    """True when the token is an Italian locality/region, not a company name."""
+    norm = _normalized_geography_text(value)
+    if not norm or len(norm) < 3:
+        return False
+    if norm in _ITALY_LOCALITY_TO_REGION:
+        return True
+    if norm in {_normalized_geography_text(region) for region in _ITALY_REGION_TO_MACRO}:
+        return True
+    if norm in _ITALY_COUNTRY_GEOGRAPHIES or norm in {"nord italia", "sud italia", "centro italia"}:
+        return True
+    return False
 
 
 def _looks_like_company_name(value: str) -> bool:
@@ -1114,11 +1154,14 @@ def _looks_like_company_name(value: str) -> bool:
         return False
     if re.match(
         r"^(Le|La|Lo|Gli|I|Un|Una|Uno|Più|Molte|Tutte|Tutti|Press|News|Blog|Home|Forum|"
-        r"Lavoro\s+Urgente|"
+        r"Lavoro\s+Urgente|Inaugurazione|Inaugurato|Comunicato|RSS|"
         r"Our|The|This|Just|Pubblicit[aà])\b",
         text,
         re.I,
     ):
+        return False
+    # Italian localities/regions are never the operating company in news titles.
+    if _is_geography_token(text):
         return False
     # Sector/topic labels and bot-challenge chrome are not companies.
     if re.fullmatch(
@@ -1333,6 +1376,23 @@ def _title_company_leading(title: str) -> str:
     startup_named = _snippet_company_hint(text)
     if startup_named and _looks_like_company_name(startup_named):
         return startup_named
+    # Locality-prefix news: "Castrezzato: nuovo polo logistico Bracchi …"
+    # Keep the expanding company, never the place name before the colon.
+    if ":" in text:
+        left, right = text.split(":", 1)
+        left_candidate = _trim_title_company_candidate(left)
+        right_hint = _snippet_company_hint(right.strip())
+        if (
+            right_hint
+            and _looks_like_company_name(right_hint)
+            and (
+                _is_geography_token(left_candidate)
+                or right_hint.casefold() != left_candidate.casefold()
+            )
+        ):
+            return right_hint
+        if left_candidate and _looks_like_company_name(left_candidate) and not _is_geography_token(left_candidate):
+            return left_candidate
     leading = re.split(r"\s+[|–—-]\s+|:\s+", text, maxsplit=1)[0].strip()
     # When the headline is "Topic, la startup Name …", skip the topical clause.
     if ", la startup" in leading.casefold() or ", la startup" in text.casefold():
@@ -1341,7 +1401,7 @@ def _title_company_leading(title: str) -> str:
             return startup_named
     for raw in (leading.split(",", 1)[0].strip(), leading):
         candidate = _trim_title_company_candidate(raw)
-        if _looks_like_company_name(candidate):
+        if _looks_like_company_name(candidate) and not _is_geography_token(candidate):
             return candidate
     return ""
 
