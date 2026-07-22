@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 SOURCE_PORTAL_DOMAINS = frozenset({
     "indeed.it", "indeed.com", "infojobs.it", "linkedin.com", "glassdoor.com",
     "jobeka.com", "talent.com", "monster.it", "jooble.org", "helplavoro.it",
+    "bebee.com", "bebee.it",
     "ilsole24ore.com", "repubblica.it", "corriere.it", "ansa.it", "lastampa.it",
     "startupitalia.eu", "startupitalia.it", "italian.tech", "italiantech.info",
     "wired.it", "milanofinanza.it", "forbes.it", "fortune.com", "huffingtonpost.it",
@@ -69,6 +70,7 @@ SOURCE_PORTAL_DOMAINS = frozenset({
 EVIDENCE_SOURCE_PORTAL_DOMAINS = frozenset({
     "indeed.it", "indeed.com", "infojobs.it", "linkedin.com", "glassdoor.com",
     "jobeka.com", "talent.com", "monster.it", "jooble.org", "helplavoro.it",
+    "bebee.com", "bebee.it",
     "ilsole24ore.com", "repubblica.it", "corriere.it", "ansa.it", "lastampa.it",
     "startupitalia.eu", "startupitalia.it", "italian.tech", "italiantech.info",
     "wired.it", "milanofinanza.it", "forbes.it", "fortune.com", "huffingtonpost.it",

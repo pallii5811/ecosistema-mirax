@@ -9,7 +9,14 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from .catalog import SourceCapabilityRegistry, default_source_capability_registry
 from .cheap_discovery_prefilter import DiscoveryHit, cheap_rank_hits
 from .contracts import AdapterDiscoveryRequest, DiscoveryCursor, QualifiedLead
-from .orchestrator import OrchestrationResult, ProgressCallback, SearchProgress, TerminalStatus, UniversalSourceOrchestrator
+from .orchestrator import (
+    AdapterProgress,
+    OrchestrationResult,
+    ProgressCallback,
+    SearchProgress,
+    TerminalStatus,
+    UniversalSourceOrchestrator,
+)
 from .hypothesis_retrieval_validator import HypothesisRetrievalValidator
 from .signal_strategy_planner import DiscoveryStrategy, hypothesis_contracts_for_spec, plan_strategies
 from .universal_evidence import extract_evidence_from_text
@@ -189,6 +196,61 @@ def _merge_qualified(
 
 def _cursor_store_key(adapter_id: str, strategy_id: str) -> str:
     return f"{adapter_id}::{strategy_id}"
+
+
+def _generic_web_cursor_rank(cursor: Optional[DiscoveryCursor]) -> Tuple[int, int, int, int]:
+    """Rank discovery cursors so empty late-strategy state cannot wipe productive SERP work."""
+    if cursor is None:
+        return (0, 0, 0, 0)
+    try:
+        from .generic_web_budget import decode_generic_web_v2_payload
+    except Exception:
+        return (0, 0, 0, 0)
+    payload = decode_generic_web_v2_payload(cursor.value) or {}
+    if not isinstance(payload, Mapping):
+        return (0, 0, 0, 0)
+    return (
+        int(payload.get("provider_calls") or 0),
+        int(payload.get("pages_fetched") or 0),
+        len(payload.get("executed_query_keys") or ()),
+        len(payload.get("followup_queries") or ()) + len(payload.get("pending_urls") or ()),
+    )
+
+
+def _best_cursors_by_adapter(
+    strategy_cursors: Mapping[str, DiscoveryCursor],
+) -> Dict[str, DiscoveryCursor]:
+    best: Dict[str, DiscoveryCursor] = {}
+    for key, cursor in strategy_cursors.items():
+        adapter_id = str(key).split("::", 1)[0]
+        if not adapter_id or adapter_id == "__legacy__":
+            continue
+        previous = best.get(adapter_id)
+        if previous is None or _generic_web_cursor_rank(cursor) > _generic_web_cursor_rank(previous):
+            best[adapter_id] = cursor
+    return best
+
+
+def _merge_adapter_progress_cursors(
+    adapter_progress: Sequence[AdapterProgress],
+    strategy_cursors: Mapping[str, DiscoveryCursor],
+) -> Tuple[AdapterProgress, ...]:
+    """Preserve the richest per-adapter cursor across the strategy matrix."""
+    best = _best_cursors_by_adapter(strategy_cursors)
+    merged: List[AdapterProgress] = []
+    seen: set[str] = set()
+    for item in adapter_progress:
+        seen.add(item.adapter_id)
+        candidate = best.get(item.adapter_id)
+        if candidate is not None and _generic_web_cursor_rank(candidate) > _generic_web_cursor_rank(item.next_cursor):
+            merged.append(replace(item, next_cursor=candidate, exhausted=False))
+        else:
+            merged.append(item)
+    for adapter_id, cursor in best.items():
+        if adapter_id in seen:
+            continue
+        merged.append(AdapterProgress(adapter_id=adapter_id, next_cursor=cursor))
+    return tuple(merged)
 
 
 def _legacy_cursor_belongs_to_strategy(cursor: DiscoveryCursor, strategy: DiscoveryStrategy) -> bool:
@@ -696,7 +758,10 @@ class UniversalSignalDiscoveryEngine:
             qualified_leads=leads,
             progress=progress,
             rejection_codes=merged_rejections,
-            adapter_progress=last_result.adapter_progress,
+            adapter_progress=_merge_adapter_progress_cursors(
+                last_result.adapter_progress,
+                strategy_cursors,
+            ),
             cost_eur=spent,
             started_at=last_result.started_at,
             completed_at=datetime.now(timezone.utc).isoformat(),

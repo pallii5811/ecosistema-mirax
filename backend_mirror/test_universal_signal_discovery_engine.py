@@ -335,3 +335,36 @@ def test_legacy_cursor_with_followups_binds_to_unrelated_strategy_query() -> Non
 
     empty = encode_generic_web_cursor(GenericWebDiscoveryState())
     assert _legacy_cursor_belongs_to_strategy(empty, other) is False
+
+
+def test_merge_adapter_progress_keeps_richest_generic_web_cursor() -> None:
+    from backend_mirror.source_adapters.contracts import DiscoveryCursor
+    from backend_mirror.source_adapters.generic_web_budget import (
+        GenericWebDiscoveryState,
+        encode_generic_web_cursor,
+    )
+    from backend_mirror.source_adapters.orchestrator import AdapterProgress
+    from backend_mirror.source_adapters.universal_signal_discovery_engine import (
+        _merge_adapter_progress_cursors,
+    )
+
+    rich = encode_generic_web_cursor(
+        GenericWebDiscoveryState(
+            provider_calls=2,
+            pages_fetched=11,
+            executed_query_keys=("comunicato stampa",),
+            followup_queries=('\"Thélios\" ("nuovo stabilimento")',),
+        )
+    )
+    empty = encode_generic_web_cursor(GenericWebDiscoveryState())
+    merged = _merge_adapter_progress_cursors(
+        (AdapterProgress(adapter_id="generic_web_research_v1", next_cursor=empty),),
+        {
+            "generic_web_research_v1::production_expansion:industrial_expansion_2": rich,
+            "generic_web_research_v1::production_expansion:fallback": empty,
+        },
+    )
+    assert len(merged) == 1
+    assert merged[0].next_cursor is not None
+    assert merged[0].next_cursor.value == rich.value
+    assert merged[0].exhausted is False
