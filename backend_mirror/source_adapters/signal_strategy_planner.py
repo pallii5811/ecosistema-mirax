@@ -502,7 +502,9 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
             '-site:bebeez.it -site:italianostra.org -site:paginegialle.it '
             '-site:instagram.com -site:linkedin.com -site:bandi.regione.lombardia.it '
             '-site:finlombarda.it -site:reteagevolazioni.it -site:bandosubito.it '
-            '-"richiedi informazioni" -associazione -onlus -fondazione -bando -agevolazione'
+            '-"richiedi informazioni" -associazione -onlus -fondazione -bando -agevolazione '
+            '-chiesi -"acqua vera" -nestl -orvieto -umbria -toscana -fendi -luxottica '
+            '-multinazionale -"contro il progetto" -opposizione'
         )
         expansion_year = _expansion_year_clause(spec.freshness_days)
         expansion_queries = (
