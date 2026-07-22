@@ -221,6 +221,19 @@ def test_public_contacts_from_mailto() -> None:
     assert "390212345678" in kinds["phone"] or kinds["phone"].endswith("0212345678")
 
 
+def test_public_contacts_plain_text_company_email_on_owned_page() -> None:
+    """Tecnoeka bot-light /contatti renders INFO@TECNOEKA.COM without mailto:."""
+    html = "<span>Tel. +39 049 9300344</span><span>Contact: INFO@TECNOEKA.COM</span>"
+    contacts = _public_contacts_from_html(
+        html,
+        source_url="https://tecnoeka.com/contatti",
+        prefer_domain="tecnoeka.com",
+    )
+    kinds = {item.kind: item.value for item in contacts}
+    assert kinds["email"] == "info@tecnoeka.com"
+    assert kinds["phone"].endswith("0499300344") or "499300344" in kinds["phone"]
+
+
 def test_backfill_lead_public_contacts_from_official_domain(monkeypatch) -> None:
     """Tecnoeka-style: qualified on news page without mailto, contacts live on /contatti."""
 

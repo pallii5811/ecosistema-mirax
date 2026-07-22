@@ -346,7 +346,19 @@ def _public_contacts_from_html(html: str, *, source_url: str = "", prefer_domain
             continue
         seen.add(email)
         emails.append(email)
+    # Bot-light contact pages often render the company email as plain text
+    # without a mailto: href (Tecnoeka /contatti live canary).
     if preferred_domain:
+        for match in re.finditer(
+            rf"(?<![A-Z0-9._%+\-])([A-Z0-9._%+\-]+@{re.escape(preferred_domain)})(?![A-Z0-9.\-])",
+            html or "",
+            re.I,
+        ):
+            email = match.group(1).strip().casefold()
+            if not email or email in seen or any(marker in email for marker in _FAKE_EMAIL_MARKERS):
+                continue
+            seen.add(email)
+            emails.append(email)
         company_emails = [
             value for value in emails
             if value.endswith("@" + preferred_domain) or value.endswith("." + preferred_domain)
@@ -364,6 +376,14 @@ def _public_contacts_from_html(html: str, *, source_url: str = "", prefer_domain
         seen.add(phone)
         out.append(ContactRecord(kind="phone", value=phone, source_url=source_url, verified=True))
         break
+    if phone_html and not any(item.kind == "phone" for item in out):
+        for match in re.finditer(r"\+39[\s./-]?\d{2,4}[\s./-]?\d{5,8}", phone_html):
+            phone = re.sub(r"[^\d+]", "", match.group(0) or "")
+            if len(re.sub(r"\D", "", phone)) < 8 or phone in seen:
+                continue
+            seen.add(phone)
+            out.append(ContactRecord(kind="phone", value=phone, source_url=source_url, verified=True))
+            break
     return tuple(out)
 
 
@@ -433,8 +453,14 @@ def _enrich_record_from_page(row: MutableMapping[str, Any], *, html: str = "", t
             if organization.get(key) and not row.get(key):
                 row[key] = organization[key]
     contacts = list(row.get("contacts") or [])
-    if not contacts and html:
-        contacts = [
+    contact_kinds = {
+        str(item.get("kind") or "")
+        for item in contacts
+        if isinstance(item, Mapping)
+    }
+    has_direct_contact = "email" in contact_kinds or "phone" in contact_kinds
+    if not has_direct_contact and html:
+        extracted = [
             {"kind": item.kind, "value": item.value, "source_url": item.source_url, "verified": item.verified}
             for item in _public_contacts_from_html(
                 html,
@@ -442,9 +468,11 @@ def _enrich_record_from_page(row: MutableMapping[str, Any], *, html: str = "", t
                 prefer_domain=official_domain,
             )
         ]
-        if contacts:
+        if extracted:
+            contacts = extracted
             row["contacts"] = contacts
-    if not contacts and organization:
+            has_direct_contact = True
+    if not has_direct_contact and organization:
         source = str(row.get("official_enrichment_url") or row.get("source_url") or "")
         email = str(organization.get("email") or "").removeprefix("mailto:").strip().casefold()
         phone = str(organization.get("telephone") or "").removeprefix("tel:").strip()
@@ -472,7 +500,11 @@ def _enrich_from_official_domain(row: MutableMapping[str, Any]) -> MutableMappin
     if not domain or is_blacklisted_domain(domain):
         return row
     need_size = row.get("employee_count") is None and not _text(row.get("company_size"))
-    need_contact = not (row.get("contacts") or ())
+    existing = row.get("contacts") if isinstance(row.get("contacts"), list) else []
+    need_contact = not any(
+        isinstance(item, Mapping) and str(item.get("kind") or "") in {"email", "phone"} and str(item.get("value") or "").strip()
+        for item in existing
+    )
     if not need_size and not need_contact:
         return row
     import httpx
@@ -484,7 +516,7 @@ def _enrich_from_official_domain(row: MutableMapping[str, Any]) -> MutableMappin
         ),
         "Accept": "text/html,application/xhtml+xml",
     }
-    for path in ("/", "/contatti", "/contatti/", "/contact", "/contact/", "/azienda", "/about"):
+    for path in ("/contatti", "/contatti/", "/contact", "/contact/", "/", "/azienda", "/about"):
         try:
             with httpx.Client(timeout=8.0, follow_redirects=True, headers=headers) as client:
                 response = client.get(f"https://{domain}{path}")
@@ -510,7 +542,14 @@ def _enrich_from_official_domain(row: MutableMapping[str, Any]) -> MutableMappin
             if (not need_size or row.get("employee_count") is not None or _text(row.get("company_size"))) and (
                 not need_contact or (row.get("contacts") or ())
             ):
-                break
+                # Prefer real email/phone over contact-form URL placeholders.
+                contact_kinds = {
+                    str(item.get("kind") or "")
+                    for item in (row.get("contacts") or ())
+                    if isinstance(item, Mapping)
+                }
+                if not need_contact or ("email" in contact_kinds or "phone" in contact_kinds):
+                    break
         except Exception:
             continue
     return row
