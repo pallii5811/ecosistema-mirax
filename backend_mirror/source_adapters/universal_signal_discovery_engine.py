@@ -398,6 +398,14 @@ class UniversalSignalDiscoveryEngine:
             configured_search_calls,
             max(3, int(spec.requested_count) * 2),
         )
+        industrial_priority = [item for item in strategies if "industrial_expansion" in item.strategy_id]
+        if industrial_priority:
+            # Keep paid SERP on buyer-expansion headlines first; weak generic
+            # event/geography queries burn the €0.075 discovery envelope on stale noise.
+            effective_strategy_batches = min(
+                effective_strategy_batches,
+                max(len(industrial_priority) + 1, int(spec.requested_count) + 1),
+            )
         accumulated_rejections: Dict[str, int] = {}
         accumulated_raw = 0
         strategy_validation_failures = 0

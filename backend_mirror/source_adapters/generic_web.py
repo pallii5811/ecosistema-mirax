@@ -998,6 +998,57 @@ def _structured_page_date(html: str) -> Optional[str]:
     return _iso_date(node.get("datetime") if node else None)
 
 
+def _infer_page_date(*, html: str = "", text: str = "", url: str = "", title: str = "", snippet: str = "") -> Optional[str]:
+    """Best-effort publication/event day for news pages lacking machine metadata."""
+    structured = _structured_page_date(html)
+    if structured:
+        return structured
+    from .universal_evidence import _parse_event_date
+
+    for blob in (title, snippet, text[:8000], url):
+        parsed = _parse_event_date(blob or "")
+        if parsed:
+            return parsed
+    # Corriere-style path: /24_agosto_27/… or /2025/03/15/
+    path = urlparse(_text(url) or "").path or ""
+    month_slug = re.search(
+        r"/(\d{2})_(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)_(\d{1,2})/",
+        path,
+        re.I,
+    )
+    if month_slug:
+        from .universal_evidence import _IT_MONTHS
+
+        month = _IT_MONTHS.get(month_slug.group(2).casefold())
+        if month:
+            try:
+                year = 2000 + int(month_slug.group(1))
+                return date(year, month, int(month_slug.group(3))).isoformat()
+            except ValueError:
+                pass
+    iso_path = re.search(r"/(20\d{2})/(\d{2})/(\d{2})/", path)
+    if iso_path:
+        try:
+            return date(int(iso_path.group(1)), int(iso_path.group(2)), int(iso_path.group(3))).isoformat()
+        except ValueError:
+            return None
+    return None
+
+
+def _published_date_is_fresh(published: str, request: AdapterDiscoveryRequest, today: Optional[date] = None) -> bool:
+    parsed = _iso_date(published)
+    if not parsed:
+        return False
+    day = today or date.today()
+    age = (day - date.fromisoformat(parsed)).days
+    if age < 0:
+        return False
+    max_age = request.freshness_max_age_days
+    if max_age is None:
+        return True
+    return age <= int(max_age)
+
+
 def _canonical_token(value: str) -> str:
     return "".join(char.casefold() for char in _text(value) if char.isalnum())
 
@@ -1505,12 +1556,22 @@ def _append_semantic_deferred_news_record(
     search_provider: str,
     item: Any,
 ) -> bool:
-    published = _structured_page_date(html)
+    published = _infer_page_date(
+        html=html,
+        text=visible_text,
+        url=final_url,
+        title=title,
+        snippet=snippet,
+    )
     # Semantic authority can recover event_date from page text; case-study HTML
     # often omits machine-readable dates (Q2 Erba Vita / vendor portfolios).
     if not visible_text:
         return False
     if not published and request.technical_filters.get("semantic_authority_required") is not True:
+        return False
+    # Stale pages must not become deferred semantic candidates — they burn the
+    # grounding budget and never qualify under freshness_max_age_days.
+    if published and not _published_date_is_fresh(published, request):
         return False
     excerpt = _literal_excerpt_for_hint(company_hint, visible_text, title, snippet)
     if not excerpt:
@@ -1935,7 +1996,25 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                     if isinstance(semantic_contract, Mapping):
                         identities = _structured_subject_identities(html, page_host=page_host)
                     if identities:
-                        published = _structured_page_date(html)
+                        published = _infer_page_date(
+                            html=html,
+                            text=str(fetch_provenance.get("source_text") or ""),
+                            url=final_url,
+                            title=title,
+                            snippet=snippet,
+                        )
+                        if published and not _published_date_is_fresh(published, request):
+                            filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
+                            _record_url_outcome(filters, {
+                                "url": url,
+                                "query": provider_query,
+                                "fetch_attempted": True,
+                                "status_code": 200,
+                                "parse_status": "rejected_content",
+                                "rejection_code": "SIGNAL_STALE",
+                            })
+                            state.wave_terminal_rejections += 1
+                            continue
                         visible_text = fetch_provenance["source_text"]
                         structured_before = len(records)
                         if visible_text and (
@@ -2004,7 +2083,25 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                         provider_warnings.append("COMPANY_IDENTITY_UNRESOLVED")
                         state.wave_terminal_rejections += 1
                         continue
-                    page_published = _structured_page_date(html)
+                    page_published = _infer_page_date(
+                        html=html,
+                        text=semantic_text,
+                        url=final_url,
+                        title=title,
+                        snippet=snippet,
+                    )
+                    if page_published and not _published_date_is_fresh(page_published, request):
+                        filters = request.technical_filters if isinstance(request.technical_filters, dict) else {}
+                        _record_url_outcome(filters, {
+                            "url": url,
+                            "query": provider_query,
+                            "fetch_attempted": True,
+                            "status_code": 200,
+                            "parse_status": "rejected_content",
+                            "rejection_code": "SIGNAL_STALE",
+                        })
+                        state.wave_terminal_rejections += 1
+                        continue
                     page_records_before = len(records)
                     events = extract_evidence_from_text(
                         text=semantic_text,

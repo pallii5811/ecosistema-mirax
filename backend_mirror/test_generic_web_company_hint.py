@@ -65,6 +65,77 @@ def test_institutional_actors_are_not_operating_companies() -> None:
     )
 
 
+def test_stale_news_page_is_not_deferred_for_semantic() -> None:
+    from backend_mirror.source_adapters.contracts import AdapterDiscoveryRequest
+    from backend_mirror.source_adapters.generic_web import (
+        _append_semantic_deferred_news_record,
+        _infer_page_date,
+    )
+    from backend_mirror.source_adapters.generic_web_budget import GenericWebDiscoveryState
+
+    html = (
+        "<html><head><meta property=\"article:published_time\" content=\"2022-09-29T10:00:00Z\">"
+        "</head><body><article>Bracchi nuovo polo logistico a Castrezzato.</article></body></html>"
+    )
+    assert _infer_page_date(html=html, text="Bracchi", url="", title="Castrezzato: Bracchi", snippet="") == "2022-09-29"
+    request = AdapterDiscoveryRequest(
+        intent="production_expansion",
+        signal_ids=("production_expansion",),
+        signal_match_mode="any",
+        geographies=("Nord Italia",),
+        freshness_max_age_days=180,
+        requested_count=3,
+        budget_eur=0.10,
+        query="Installiamo sistemi antincendio industriali",
+        technical_filters={"universal_engine": True, "semantic_authority_required": True},
+    )
+    records: list = []
+    ok = _append_semantic_deferred_news_record(
+        records=records,
+        request=request,
+        company_hint="Bracchi",
+        visible_text="Bracchi nuovo polo logistico a Castrezzato. " * 20,
+        title="Castrezzato: nuovo polo logistico Bracchi, 30 posti di lavoro",
+        snippet="Nel nuovo stabilimento gia ci lavorano 10 persone",
+        html=html,
+        final_url="https://www.bresciatoday.it/social/bracchi-castrezzato.html",
+        page_host="bresciatoday.it",
+        fetch_provenance={"final_url": "https://www.bresciatoday.it/social/bracchi-castrezzato.html"},
+        scope="t",
+        state=GenericWebDiscoveryState(),
+        provider_query="q",
+        search_provider="serp",
+        item={"publisher": "BresciaToday"},
+    )
+    assert ok is False
+    assert records == []
+
+
+def test_infer_page_date_from_italian_body_and_url() -> None:
+    from backend_mirror.source_adapters.generic_web import _infer_page_date
+
+    assert (
+        _infer_page_date(
+            html="",
+            text="L'azienda ha inaugurato lo stabilimento il 12 marzo 2026 a Thiene.",
+            url="https://news.example.it/story",
+            title="Ares Line inaugura",
+            snippet="",
+        )
+        == "2026-03-12"
+    )
+    assert (
+        _infer_page_date(
+            html="",
+            text="",
+            url="https://www.corriere.it/economia/aziende/24_agosto_27/prosciutto.shtml",
+            title="Prosciutto",
+            snippet="",
+        )
+        == "2024-08-27"
+    )
+
+
 def test_geography_serp_noise_rejected_by_concrete_event_gate() -> None:
     from backend_mirror.source_adapters.cheap_discovery_prefilter import (
         DiscoveryHit,
