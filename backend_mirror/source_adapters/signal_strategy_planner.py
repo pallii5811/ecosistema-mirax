@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+from datetime import date
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 from .universal_query_spec import SOURCE_CLASSES, UniversalQuerySpec
@@ -289,6 +290,20 @@ def _bind_strategy(
     )
 
 
+def _expansion_year_clause(freshness_days: int) -> str:
+    """SERP year tokens must intersect freshness_max_age_days or hits die as SIGNAL_STALE."""
+    today = date.today()
+    year = today.year
+    try:
+        window = max(1, int(freshness_days))
+    except (TypeError, ValueError):
+        window = 180
+    # Prior calendar year still overlaps a ~180d window only in Q1.
+    if window >= 300 or today.month <= 3:
+        return f"({year - 1} OR {year})"
+    return f"({year})"
+
+
 def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
     """Generate multi-strategy discovery plans for required + optional signals."""
     geo = _geo_phrase(spec)
@@ -489,14 +504,15 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
             '-site:finlombarda.it -site:reteagevolazioni.it -site:bandosubito.it '
             '-"richiedi informazioni" -associazione -onlus -fondazione -bando -agevolazione'
         )
+        expansion_year = _expansion_year_clause(spec.freshness_days)
         expansion_queries = (
             f'("inaugura" OR "ha inaugurato" OR "inaugurato") ("nuovo stabilimento" OR "nuovo impianto") '
             f'(Lombardia OR Veneto OR Emilia OR Bergamo OR Brescia OR Vicenza OR Modena OR Padova) '
-            f'(2025 OR 2026) (Spa OR Srl) {expansion_exclude}',
+            f'{expansion_year} (Spa OR Srl) {expansion_exclude}',
             f'("nuovo stabilimento" OR "nuova unità produttiva") (Bergamo OR Brescia OR Vicenza OR Padova OR Modena OR Parma OR Thiene) '
-            f'(2025 OR 2026) (Spa OR Srl) (inaugura OR inaugurato OR apre) {expansion_exclude}',
+            f'{expansion_year} (Spa OR Srl) (inaugura OR inaugurato OR apre) {expansion_exclude}',
             f'"comunicato stampa" ("nuovo stabilimento" OR "ampliamento dello stabilimento") '
-            f'(Lombardia OR Veneto OR Emilia-Romagna) (2025 OR 2026) (Spa OR Srl) {expansion_exclude}',
+            f'(Lombardia OR Veneto OR Emilia-Romagna) {expansion_year} (Spa OR Srl) {expansion_exclude}',
         )
         signal_set = set(signals)
         primary_signal = next(
