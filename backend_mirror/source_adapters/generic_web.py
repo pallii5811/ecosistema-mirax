@@ -1123,14 +1123,31 @@ def _structured_page_date(html: str) -> Optional[str]:
     return _iso_date(node.get("datetime") if node else None)
 
 
+_NEWS_INDEX_PATH_RE = re.compile(
+    r"/(?:[a-z]{2}/)?(?:news|notizie|comunicati(?:-stampa)?|press-releases?)/?$",
+    re.I,
+)
+_EXPANSION_ARTICLE_HREF_RE = re.compile(
+    r"(stabiliment|ampliament|inaugur|nuov[oa].{0,24}(?:impianto|unit)|capacit[aà].{0,12}produttiv)",
+    re.I,
+)
+
+
 def _infer_page_date(*, html: str = "", text: str = "", url: str = "", title: str = "", snippet: str = "") -> Optional[str]:
     """Best-effort publication/event day for news pages lacking machine metadata."""
+    from .universal_evidence import _parse_event_date
+
+    # Prefer SERP title/snippet over page-wide JSON-LD/meta: news hubs often expose
+    # an unrelated stale article:published_time while the matched card is recent
+    # (Divella /it/news → SIGNAL_STALE on 2023 meta despite "13 giugno 2026").
+    for blob in (title, snippet):
+        parsed = _parse_event_date(blob or "")
+        if parsed:
+            return parsed
     structured = _structured_page_date(html)
     if structured:
         return structured
-    from .universal_evidence import _parse_event_date
-
-    for blob in (title, snippet, text[:8000], url):
+    for blob in (text[:8000], url):
         parsed = _parse_event_date(blob or "")
         if parsed:
             return parsed
@@ -1571,6 +1588,69 @@ def _crm_shell_company_ok(company: str) -> bool:
     if re.fullmatch(r"(?:[A-Za-z]\.){2,}[A-Za-z]\.?", text):
         return False
     return bool(re.search(r"\b(spa|srl|s\.p\.a|s\.r\.l|group|societ|[A-Z][a-z]{3,})\b", text))
+
+
+def _enqueue_same_host_expansion_articles(
+    state: GenericWebDiscoveryState,
+    *,
+    html: str,
+    page_url: str,
+    title: str = "",
+    snippet: str = "",
+    limit: int = 3,
+) -> int:
+    """News-index SERP hits: queue same-host article URLs that look like expansions."""
+    path = urlparse(_text(page_url) or "").path or ""
+    if not _NEWS_INDEX_PATH_RE.search(path):
+        return 0
+    if not _EXPANSION_ARTICLE_HREF_RE.search(f"{title} {snippet} {html[:12000]}"):
+        return 0
+    from urllib.parse import urljoin
+
+    page_host = _host(page_url)
+    if not page_host or not html:
+        return 0
+    soup = BeautifulSoup(html, "html.parser")
+    terminal = {str(item).strip().lower().rstrip("/") for item in state.processed_terminal_urls}
+    pending = {str(item).strip().lower().rstrip("/") for item in state.pending_urls}
+    queued = 0
+    for anchor in soup.find_all("a", href=True):
+        if queued >= limit:
+            break
+        href = str(anchor.get("href") or "").strip()
+        label = " ".join(anchor.stripped_strings)[:240]
+        target = urljoin(page_url, href)
+        key = target.strip().lower().rstrip("/")
+        if not key or key in terminal or key in pending:
+            continue
+        if _host(target) != page_host:
+            continue
+        if _NEWS_INDEX_PATH_RE.search(urlparse(target).path or ""):
+            continue
+        blob = f"{label} {href}"
+        if not _EXPANSION_ARTICLE_HREF_RE.search(blob):
+            continue
+        state.pending_urls = tuple(dict.fromkeys((*state.pending_urls, target)))
+        pending.add(key)
+        meta_key = key
+        existing_meta = {
+            str(item.get("url") or "").strip().lower().rstrip("/"): dict(item)
+            for item in state.url_meta
+            if isinstance(item, Mapping) and item.get("url")
+        }
+        if meta_key not in existing_meta:
+            state.url_meta = (
+                *state.url_meta,
+                {
+                    "url": target,
+                    "title": label,
+                    "snippet": snippet,
+                    "source_type": "news_index_followup",
+                    "provider": "generic_web",
+                },
+            )
+        queued += 1
+    return queued
 
 
 def _enqueue_content_shell_followup(
@@ -2176,6 +2256,21 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 "parse_status": "rejected_content",
                                 "rejection_code": "SIGNAL_STALE",
                             })
+                            _enqueue_same_host_expansion_articles(
+                                state,
+                                html=html or "",
+                                page_url=final_url or url,
+                                title=title,
+                                snippet=snippet,
+                            )
+                            stale_hint = _serp_company_hint(title=title, snippet=snippet, url=final_url or url)
+                            if stale_hint:
+                                _enqueue_content_shell_followup(
+                                    state,
+                                    identity_hint=stale_hint,
+                                    failed_url=final_url or url,
+                                    request=request,
+                                )
                             state.wave_terminal_rejections += 1
                             continue
                         visible_text = fetch_provenance["source_text"]
@@ -2262,8 +2357,31 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             "parse_status": "rejected_content",
                             "rejection_code": "SIGNAL_STALE",
                         })
+                        _enqueue_same_host_expansion_articles(
+                            state,
+                            html=html or "",
+                            page_url=final_url or url,
+                            title=title,
+                            snippet=snippet,
+                        )
+                        if company_hint:
+                            _enqueue_content_shell_followup(
+                                state,
+                                identity_hint=company_hint,
+                                failed_url=final_url or url,
+                                request=request,
+                            )
                         state.wave_terminal_rejections += 1
                         continue
+                    # News hubs: pull concrete article URLs before spending semantic budget
+                    # on the index page itself.
+                    _enqueue_same_host_expansion_articles(
+                        state,
+                        html=html or "",
+                        page_url=final_url or url,
+                        title=title,
+                        snippet=snippet,
+                    )
                     page_records_before = len(records)
                     events = extract_evidence_from_text(
                         text=semantic_text,
@@ -2391,7 +2509,13 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             if (
                                 company_hint
                                 and len(state.followup_queries) < 2
-                                and re.search(r"\b(chiude un round|ha raccolto|seed round|pre-seed|raccoglie)\b", f"{title} {snippet}", re.I)
+                                and re.search(
+                                    r"\b(chiude un round|ha raccolto|seed round|pre-seed|raccoglie|"
+                                    r"nuovo stabilimento|ampliamento(?:\s+dello\s+stabilimento|\s+produttivo)?|"
+                                    r"inaugur\w*|nuova unit[aà] produttiva|capacit[aà]\s+produttiva)\b",
+                                    f"{title} {snippet}",
+                                    re.I,
+                                )
                             ):
                                 _enqueue_content_shell_followup(
                                     state,
@@ -2432,7 +2556,18 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
             key = url.lower().rstrip("/")
             if url and key not in terminal_end:
                 next_pending_urls.append(url)
+        # Preserve article URLs queued from news-index HTML mid-wave.
+        for url in state.pending_urls:
+            key = str(url).strip().lower().rstrip("/")
+            if url and key and key not in terminal_end:
+                next_pending_urls.append(url)
         state.pending_urls = tuple(dict.fromkeys(next_pending_urls))
+        for meta in state.url_meta:
+            if not isinstance(meta, Mapping) or not meta.get("url"):
+                continue
+            meta_key = str(meta.get("url") or "").strip().lower().rstrip("/")
+            if meta_key and meta_key not in next_url_meta:
+                next_url_meta[meta_key] = dict(meta)
         state.url_meta = tuple(next_url_meta.values())
         persist_generic_web_state(request.technical_filters, state)
     if universal:

@@ -113,6 +113,48 @@ def test_stale_news_page_is_not_deferred_for_semantic() -> None:
     assert records == []
 
 
+def test_infer_page_date_prefers_fresh_serp_snippet_over_stale_hub_meta() -> None:
+    from backend_mirror.source_adapters.generic_web import _infer_page_date
+
+    html = (
+        "<html><head><meta property=\"article:published_time\" content=\"2023-01-10T10:00:00Z\">"
+        "</head><body><a href=\"/it/news/ampliamento-stabilimento-2026\">ampliamento</a></body></html>"
+    )
+    assert (
+        _infer_page_date(
+            html=html,
+            text="elenco news",
+            url="https://www.divella.it/it/news/",
+            title="News - Divella",
+            snippet="Comunicato stampa · 13 giugno 2026. L'ampliamento dello stabilimento segna la nuova fase.",
+        )
+        == "2026-06-13"
+    )
+
+
+def test_news_index_queues_same_host_expansion_articles() -> None:
+    from backend_mirror.source_adapters.generic_web import _enqueue_same_host_expansion_articles
+    from backend_mirror.source_adapters.generic_web_budget import GenericWebDiscoveryState
+
+    html = """
+    <html><body>
+      <a href="/it/news/ampliamento-dello-stabilimento-di-rutigliano">L'ampliamento dello stabilimento</a>
+      <a href="/it/news/">News hub</a>
+      <a href="https://other.example/ampliamento-stabilimento">Alien host</a>
+    </body></html>
+    """
+    state = GenericWebDiscoveryState()
+    queued = _enqueue_same_host_expansion_articles(
+        state,
+        html=html,
+        page_url="https://www.divella.it/it/news/",
+        title="News - Divella",
+        snippet="L'ampliamento dello stabilimento segna la nuova fase",
+    )
+    assert queued == 1
+    assert any("ampliamento-dello-stabilimento" in u for u in state.pending_urls)
+
+
 def test_infer_page_date_from_italian_body_and_url() -> None:
     from backend_mirror.source_adapters.generic_web import _infer_page_date
 

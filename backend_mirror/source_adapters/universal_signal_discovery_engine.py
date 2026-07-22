@@ -400,11 +400,16 @@ class UniversalSignalDiscoveryEngine:
         )
         industrial_priority = [item for item in strategies if "industrial_expansion" in item.strategy_id]
         if industrial_priority:
-            # Keep paid SERP on buyer-expansion headlines first; weak generic
-            # event/geography queries burn the €0.075 discovery envelope on stale noise.
-            effective_strategy_batches = min(
+            # Ensure industrial SERPs can all rotate — do not shrink the small-target
+            # frontier below the default (that stranded antincendio at 2/3 after one
+            # drained comunicato wave while inaugura / city queries still had budget).
+            effective_strategy_batches = max(
                 effective_strategy_batches,
-                max(len(industrial_priority) + 1, int(spec.requested_count) + 1),
+                min(
+                    self.max_strategy_batches,
+                    configured_search_calls,
+                    len(industrial_priority) + max(1, int(spec.requested_count)),
+                ),
             )
         accumulated_rejections: Dict[str, int] = {}
         accumulated_raw = 0
