@@ -202,6 +202,24 @@ def test_geography_serp_noise_rejected_by_concrete_event_gate() -> None:
     assert prefilter_discovery_hit(valid).accepted
 
 
+def test_cdo_association_rejected_as_admin_or_association() -> None:
+    from backend_mirror.source_adapters.cheap_discovery_prefilter import (
+        DiscoveryHit,
+        prefilter_discovery_hit,
+    )
+    from backend_mirror.source_adapters.generic_web import _is_institutional_entity
+
+    hit = DiscoveryHit(
+        title="CDO Bergamo: ampliamento produttivo delle imprese associate",
+        url="https://www.cdobg.it/news/ampliamento",
+        snippet="Compagnia delle Opere Bergamo annuncia l'ampliamento produttivo.",
+    )
+    decision = prefilter_discovery_hit(hit)
+    assert decision.accepted is False
+    assert decision.reason == "admin_or_association"
+    assert _is_institutional_entity("CDO Bergamo") is True
+
+
 def test_crm_adoption_title_extracts_buyer_not_vendor() -> None:
     title = "Valsir sceglie CDM Tecnoconsulting per implementare il CRM analitico"
     assert _title_company_leading(title) == "Valsir"

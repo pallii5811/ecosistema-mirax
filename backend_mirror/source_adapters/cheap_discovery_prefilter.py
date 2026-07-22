@@ -21,6 +21,7 @@ _PUBLISHER_AS_COMPANY_RE = re.compile(
 _ADMIN_ASSOC_RE = re.compile(
     r"\b(comune di|regione |provincia di|ministero|camera di commercio|"
     r"associazione|confartigianato|confcommercio|confindustria|unindustria|"
+    r"compagnia\s+delle\s+opere|\bcdo\b|"
     r"sindacato|fondazione|italia\s+nostra|onlus|ong\b)\b",
     re.I,
 )

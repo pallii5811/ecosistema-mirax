@@ -1375,7 +1375,8 @@ def _is_institutional_entity(value: str) -> bool:
     return bool(
         re.search(
             r"\b(?:assessorato|ministero|presidenza|segreteria\s+di\s+stato|"
-            r"direzione\s+generale|ufficio\s+stampa\s+della\s+provincia)\b",
+            r"direzione\s+generale|ufficio\s+stampa\s+della\s+provincia|"
+            r"compagnia\s+delle\s+opere|\bcdo\b)\b",
             low,
         )
     )
