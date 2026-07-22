@@ -1459,6 +1459,11 @@ def _enqueue_content_shell_followup(
     company = (_text(identity_hint) or "").strip()
     if not company or not _looks_like_company_name(company) or _is_institutional_entity(company):
         return
+    if _is_geography_token(company):
+        return
+    # Section titles / publisher hubs mistaken for firms (ilqi "Logistica & Industriale").
+    if "&" in company:
+        return
     # CRM seeking recovery queries burned the €0.05 envelope on agency-page
     # shells (e.g. engage.it/agenzie/...): those pages mention CRM as a service
     # but often do not ground "operating company adopts/chooses a CRM".
@@ -1693,6 +1698,15 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
         true_hard_cap = float(request.budget_eur)
     hard_cap = true_hard_cap
     batch_budget = float(request.budget_eur)
+    # Per-strategy cursors reset discovery_spent_eur. Carry engine-wide SERP burn
+    # so industrial_1/2 cannot re-soft-cap against the same €0.10 envelope
+    # (antincendio 45acce51: 15 SERPs, pending TEXA/Mancinardi never fetched).
+    try:
+        prior_serp = float((request.technical_filters or {}).get("cumulative_serp_eur") or 0.0)
+    except (TypeError, ValueError):
+        prior_serp = 0.0
+    if prior_serp > float(state.discovery_spent_eur):
+        state.discovery_spent_eur = round(prior_serp, 6)
     # discovery_spent_eur is cumulative SERP spend for this search. Subtract it
     # from the hard discovery pool — not from the residual batch envelope alone,
     # or resume with followups strands when prior SERP already exceeds batch_budget.
@@ -1889,7 +1903,13 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
         page_fetch = (request.technical_filters or {}).get("universal_page_fetch")
         next_pending_urls: List[str] = []
         next_url_meta: Dict[str, Dict[str, Any]] = dict(raw_meta)
-        wave = sorted(accepted_hits, key=_serp_fetch_priority)[: max(3, min(limit, URLS_PER_WAVE))]
+        # Page fetches are free. After a paid SERP (or on pending-only resume),
+        # drain more hits in-wave — URLS_PER_WAVE=5 left PMI URLs stranded when
+        # the next orchestrator round could not afford estimated_cost SERP.
+        wave_cap = max(3, min(limit, URLS_PER_WAVE))
+        if universal:
+            wave_cap = max(wave_cap, min(len(accepted_hits), max(limit * 5, 20)))
+        wave = sorted(accepted_hits, key=_serp_fetch_priority)[:wave_cap]
         for item in wave:
             url = item.url if hasattr(item, "url") else str(item.get("url") or "")
             title = item.title if hasattr(item, "title") else str(item.get("title") or "")

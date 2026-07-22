@@ -1147,13 +1147,26 @@ class UniversalSourceOrchestrator:
                 adapter = self.registry.adapter(state.adapter_id)
                 remaining = max(0.0, request.budget_eur - spent)
                 min_cost = adapter.capability.estimated_cost_eur_per_operation
+                pending_free = [
+                    item
+                    for item in (state.acquisition_telemetry.get("pending_urls") or ())
+                    if str(item or "").strip()
+                ]
+                zero_cost_drain = False
                 if min_cost > remaining + 1e-9:
-                    continue
-                active_left = max(1, len([item for item in active if not item.exhausted]))
-                allocation = min(remaining, max(min_cost, remaining / active_left))
-                # Sequential mandatory: give the current adapter the residual budget.
-                if mandatory:
-                    allocation = remaining
+                    # Paid SERP blocked, but free page-fetch queue may remain.
+                    # Skipping here stranded TEXA/Mancinardi after the last €0.005
+                    # industrial SERP (antincendio canary 45acce51).
+                    if not pending_free:
+                        continue
+                    allocation = 0.0
+                    zero_cost_drain = True
+                else:
+                    active_left = max(1, len([item for item in active if not item.exhausted]))
+                    allocation = min(remaining, max(min_cost, remaining / active_left))
+                    # Sequential mandatory: give the current adapter the residual budget.
+                    if mandatory:
+                        allocation = remaining
                 signals = _signal_subset(adapter, request)
                 if not signals:
                     state.exhausted = True
@@ -1195,6 +1208,18 @@ class UniversalSourceOrchestrator:
                     cursor=state.next_cursor,
                 )
                 result = await adapter.discover(adapter_request)
+                if zero_cost_drain:
+                    acq = ((result.telemetry or {}).get("acquisition") or {}) if isinstance(result.telemetry, Mapping) else {}
+                    new_pending = [
+                        item
+                        for item in (acq.get("pending_urls") or ())
+                        if str(item or "").strip()
+                    ]
+                    if len(new_pending) >= len(pending_free) and not result.candidates:
+                        # No free-queue progress — avoid spinning until time limit.
+                        state.exhausted = True
+                        state.exhaustion_reason = "zero_cost_pending_drain_stalled"
+                        continue
                 if result.cost_eur > allocation + 1e-9 or spent + result.cost_eur > request.budget_eur + 1e-9:
                     raise RuntimeError(f"ORCHESTRATOR_HARD_COST_CAP_EXCEEDED:{state.adapter_id}")
                 progressed = True

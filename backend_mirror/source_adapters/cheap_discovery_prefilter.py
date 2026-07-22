@@ -50,7 +50,15 @@ _OPPOSITION_EXPANSION_RE = re.compile(
 )
 _FAMOUS_OR_GLOBAL_EXPANSION_RE = re.compile(
     r"\b(?:acqua\s+vera|san\s+pellegrino|nestl[eé]|ferrero|barilla\b|lavazza|"
-    r"coca[\s-]?cola|pepsi|chiesi\b|fendi\b|luxottica|essilor)\b",
+    r"coca[\s-]?cola|pepsi|chiesi\b|fendi\b|luxottica|essilor|thelios|"
+    r"bmw(?:\s+group)?|edison(?:\s+next)?|iris\s+ceramica)\b",
+    re.I,
+)
+# Centro/Sud place names in expansion SERP titles — Nord-Italia PMI canaries
+# still receive them despite -orvieto style excludes (Google soft-negatives).
+_OUT_OF_SCOPE_GEO_RE = re.compile(
+    r"\b(?:orvieto|umbria|toscana|lazio|marche|abruzzo|puglia|campania|sicilia|"
+    r"sardegna|calabria|basilicata|molise)\b",
     re.I,
 )
 
@@ -152,6 +160,8 @@ def prefilter_discovery_hit(
     # Famous / global brands are never the PMI canary target.
     if _FAMOUS_OR_GLOBAL_EXPANSION_RE.search(blob):
         return PrefilterDecision(False, "famous_or_global_brand", 0.12, False)
+    if _OUT_OF_SCOPE_GEO_RE.search(blob):
+        return PrefilterDecision(False, "out_of_scope_geography", 0.12, False)
     # Stale year without recent year nearby.
     stale = _STALE_YEAR_RE.findall(blob)
     if stale and not re.search(r"\b(202[4-6])\b", blob):

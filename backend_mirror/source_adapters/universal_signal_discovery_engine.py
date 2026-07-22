@@ -502,6 +502,9 @@ class UniversalSignalDiscoveryEngine:
                     # semantic reserve. Orchestrator must not re-add semantic cost
                     # against the reduced round budget or it false-trips the cap.
                     "hard_cost_eur": hard_budget,
+                    # Cross-strategy SERP burn so each industrial_* cursor soft-cap
+                    # cannot ignore prior batches' paid search_hits_http spend.
+                    "cumulative_serp_eur": round(float(spent), 6),
                     "universal_strategy_id": strategy.strategy_id,
                     "universal_strategies": [item.to_dict() for item in strategies],
                     "universal_active_strategies": [strategy.to_dict()],
