@@ -259,22 +259,36 @@ def test_source_adapter_identity_rejects_unknown_forged_or_incomplete_proof():
     assert evaluate_publication_gate(lead, PLAN, cost_within_budget=True)["official_domain_verified"] is False
 
 
-def test_free_owned_host_generic_web_identity_is_accepted():
+def test_positive_page_identity_from_evidence_url_is_accepted():
+    # antincendio 3cd6df77: Spring / spring-italia.com had positive_page_identity
+    # via evidence_url but publication still failed OFFICIAL_DOMAIN_UNRESOLVED.
     lead = valid_lead()
     lead["source_adapter_id"] = "generic_web_research_v1"
-    lead["sito"] = "https://trenord.it/"
+    lead["azienda"] = "Spring"
+    lead["name"] = "Spring"
+    lead["sito"] = "https://spring-italia.com/"
+    lead["official_domain"] = "spring-italia.com"
     lead["domain_verification"].update({
         "adapter_id": "generic_web_research_v1",
-        "url": "https://trenord.it/",
+        "url": "https://spring-italia.com/",
         "status": "verified",
-        "confidence": 0.85,
-        "score": 85,
-        "resolution_method": "free_owned_host_verification",
-        "resolution_source": "name_or_evidence_host_candidate",
-        "evidence": ["company_tokens_in_host", "legal_name_in_page", "free_owned_host_candidate"],
+        "confidence": 1.0,
+        "score": 100,
+        "resolution_method": "positive_page_identity",
+        "resolution_source": "evidence_url",
+        "evidence": [
+            "company_tokens_in_host",
+            "legal_name_in_page",
+            "legal_name_in_title",
+            "schema_org_identity_match",
+            "official_site_markers",
+            "company_owned_evidence_host",
+        ],
     })
     gate = evaluate_publication_gate(lead, PLAN, cost_within_budget=True)
     assert gate["official_domain_verified"] is True
+    assert gate["entity_operating_verified"] is True
+    assert "OFFICIAL_DOMAIN_UNRESOLVED" not in gate["rejection_codes"]
 
 
 def test_free_owned_host_cache_lookup_is_accepted():
