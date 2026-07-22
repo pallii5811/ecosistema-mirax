@@ -100,7 +100,12 @@ class GenericWebDiscoveryState:
         if self.provider_calls >= 1 and float(spent_eur) + 1e-9 >= QUERY_COST_EUR:
             continued_semantic = min(SEMANTIC_RESERVE_EUR, 0.014)
             continued_need = QUERY_COST_EUR + continued_semantic
-            return governor_remaining + 1e-9 >= continued_need
+            if governor_remaining + 1e-9 >= continued_need:
+                return True
+            # Late envelope: only SERP room left. Still allow it — post-semantic
+            # identity is often cache-free (antincendio 2/3 stuck at €0.095/€0.10
+            # because continued_need=€0.019 blocked the last €0.005 SERP).
+            return governor_remaining + 1e-9 >= QUERY_COST_EUR
         need = QUERY_COST_EUR + self.reserved_floor_eur()
         if governor_remaining + 1e-9 < need and spent_eur + QUERY_COST_EUR > hard_cap_eur - self.reserved_floor_eur() + 1e-9:
             return False
