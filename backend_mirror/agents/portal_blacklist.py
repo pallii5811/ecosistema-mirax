@@ -109,6 +109,9 @@ BLACKLIST_DOMAIN_ROOTS = (
     "reteimprese.", "misterimprese.", "infoimprese.", "ufficiocamerale.",
     # Public healthcare trusts (ASST/ASL) are not industrial PMI buyers.
     "asst-", "asl.", "ospedale.",
+    # Local news / TV publishers must never become the target official domain.
+    "ecodibergamo.", "bergamotv.", "corriere.", "repubblica.", "lastampa.",
+    "ilsole24ore.", "gazzetta.", "today.it",
 )
 
 BLACKLIST_NAME_PATTERNS = (
