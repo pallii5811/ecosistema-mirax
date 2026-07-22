@@ -42,6 +42,17 @@ _EVENT_HINT_RE = re.compile(
     re.I,
 )
 _STALE_YEAR_RE = re.compile(r"\b(20(?:0\d|1\d|2[0-2]))\b")
+_OPPOSITION_EXPANSION_RE = re.compile(
+    r"\b(?:contro\s+(?:il|l['’])\s+(?:discusso\s+)?progetto|opposizione\s+a|"
+    r"no\s+all['’]ampliamento|bloccato\s+l['’]ampliamento|"
+    r"vantaggi\s+(?:alle\s+)?multinazional\w*)\b",
+    re.I,
+)
+_FAMOUS_OR_GLOBAL_EXPANSION_RE = re.compile(
+    r"\b(?:acqua\s+vera|san\s+pellegrino|nestl[eé]|ferrero|barilla\b|lavazza|"
+    r"coca[\s-]?cola|pepsi|chiesi\b|fendi\b|luxottica|essilor)\b",
+    re.I,
+)
 
 # Static descriptions such as "capacità produttiva annuale" are not evidence
 # that a facility changed recently. This stricter check is applied only to
@@ -135,6 +146,12 @@ def prefilter_discovery_hit(
         return PrefilterDecision(False, "form_or_hub_page", 0.1, False)
     if require_event_hint and not _EVENT_HINT_RE.search(blob):
         return PrefilterDecision(False, "no_event_hint", 0.15, False)
+    # Protest / politics coverage about an expansion is not a buyer signal.
+    if _OPPOSITION_EXPANSION_RE.search(blob):
+        return PrefilterDecision(False, "opposition_or_protest_coverage", 0.12, False)
+    # Famous / global brands are never the PMI canary target.
+    if _FAMOUS_OR_GLOBAL_EXPANSION_RE.search(blob):
+        return PrefilterDecision(False, "famous_or_global_brand", 0.12, False)
     # Stale year without recent year nearby.
     stale = _STALE_YEAR_RE.findall(blob)
     if stale and not re.search(r"\b(202[4-6])\b", blob):
