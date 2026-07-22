@@ -308,6 +308,9 @@ def test_free_owned_host_cache_lookup_is_accepted():
     assert gate["entity_operating_verified"] is True
     assert "OFFICIAL_DOMAIN_UNRESOLVED" not in gate["rejection_codes"]
     assert "ENTITY_NOT_OPERATING" not in gate["rejection_codes"]
+    from commercial_lifecycle import _candidate_stage, _db_entity_resolution_method
+    assert _candidate_stage(gate, shadow_mode=True) == "evidence_verified"
+    assert _db_entity_resolution_method(gate) == "positive_page_identity"
 
 
 def test_publication_gate_requires_budget_and_why_now_and_causal_plan():
