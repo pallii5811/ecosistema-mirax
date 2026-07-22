@@ -69,6 +69,12 @@ def event(excerpt: str, *, company: str, role: str, query_match: bool) -> dict[s
     }
 
 
+def event_without_date(excerpt: str, *, company: str, role: str, query_match: bool) -> dict[str, Any]:
+    payload = event(excerpt, company=company, role=role, query_match=query_match)
+    payload["event_date"] = None
+    return payload
+
+
 def request(model: Model, cache_path: Path) -> AdapterDiscoveryRequest:
     return AdapterDiscoveryRequest(
         intent="commercial_search", signal_ids=("funding",), signal_match_mode="all",
@@ -170,6 +176,23 @@ def test_common_semantic_gate_qualifies_grounded_recipient(tmp_path: Path) -> No
     assert "Inferenza commerciale, non domanda esplicita" in why_now
     assert result.qualified_leads[0].candidate.confidence == 0.95
     assert result.semantic_telemetry["semantic_calls"] == 1
+
+
+def test_common_semantic_gate_uses_evidence_published_at_when_model_omits_event_date(tmp_path: Path) -> None:
+    item = replace(
+        candidate("Datafire Srl", "datafire.test", "funding", "generic"),
+        buyer_fit=None,
+        why_now=None,
+        confidence=0.55,
+    )
+    excerpt = item.evidence[0].excerpt
+    model = Model(event_without_date(excerpt, company="Datafire Srl", role="recipient", query_match=True))
+    adapter = PagedAdapter(capability("generic", ("funding",)), [[item]])
+    result = asyncio.run(UniversalSourceOrchestrator(SourceCapabilityRegistry((adapter,))).run(
+        request(model, tmp_path / "missing-event-date.sqlite"),
+    ))
+    assert result.progress.qualified_count == 1, result.rejection_codes
+    assert result.rejection_codes.get("EVENT_GROUNDING_FAILED", 0) == 0
 
 
 def test_common_semantic_gate_rejects_inverse_provider_before_scoring(tmp_path: Path) -> None:

@@ -779,6 +779,12 @@ async def semantic_authority_qualifier(
                     if item in interpretation.acceptance_rubric_passed
                 ),
             )
+            # Preserve trustworthy source publication date for temporal grounding
+            # when the semantic interpretation omits event_date.
+            verifier_structured_metadata = dict(structured_metadata or {})
+            if evidence.published_at:
+                verifier_structured_metadata.setdefault("published_at", evidence.published_at)
+                verifier_structured_metadata.setdefault("source_published_at", evidence.published_at)
             verdict = verifier.verify(
                 per_source_contract,
                 interpretation,
@@ -790,7 +796,7 @@ async def semantic_authority_qualifier(
                 entity_class=candidate.entity_class,
                 candidate_company=candidate.canonical_company_name,
                 maximum_age_days=request.freshness_max_age_days,
-                structured_metadata=structured_metadata,
+                structured_metadata=verifier_structured_metadata,
                 identity_verification_deferred=(
                     not candidate.official_domain_verified
                     and str(evidence.source_class) in {
