@@ -118,3 +118,85 @@ def test_expansion_proxy_sets_query_match_without_seller_offer_on_page() -> None
         identity_verification_deferred=False,
     )
     assert verdict.accepted, (verdict.rejection_code, verdict.reasons, verdict.checks)
+
+
+def test_expansion_proxy_does_not_promote_publisher_about_another_company() -> None:
+    """Unindustria article about Purina plant must not qualify Unindustria as expanding PMI."""
+    source = (
+        "UNINDUSTRIA — investimento di 560 mln a Mantova per nuovo stabilimento Purina "
+        "dedicato al petfood e polo logistico."
+    )
+    interpretation = SemanticEventInterpretation.from_model(
+        {
+            "entities": [],
+            "events": [],
+            "relations": [],
+            "target_company": "Unindustria",
+            "target_entity_role": "publisher",
+            "event_type": "news",
+            "open_predicate": "",
+            "actor": None,
+            "recipient": None,
+            "provider": None,
+            "beneficiary": None,
+            "investor": None,
+            "employer": None,
+            "recruiter": None,
+            "publisher": "UNINDUSTRIA",
+            "authority": None,
+            "predicate": "",
+            "direction": "",
+            "event_status": "observed",
+            "event_date": "2026-07-22",
+            "amount": None,
+            "location": "Mantova",
+            "technology": None,
+            "role": None,
+            "negated": False,
+            "hypothetical": False,
+            "conditional": False,
+            "rumor": False,
+            "historical": False,
+            "certainty": 0.9,
+            "query_match": False,
+            "query_match_reason": "",
+            "satisfied_relationships": [],
+            "acceptance_rubric_passed": [],
+            "buyer_need": "",
+            "why_now": "",
+            "evidence_excerpt": "",
+            "evidence_start": -1,
+            "evidence_end": -1,
+            "confidence": 0.9,
+            "rejection_reason": "",
+        }
+    )
+    enriched = apply_expansion_facility_proxy(
+        _contract(),
+        interpretation,
+        source_text=source,
+        candidate_company="Unindustria",
+    )
+    assert EXPANSION_FACILITY_RELATIONSHIP not in enriched.satisfied_relationships
+    assert enriched.target_entity_role == "publisher"
+
+    verdict = SemanticEvidenceGroundingVerifier().verify(
+        _contract(),
+        enriched,
+        source_text=source,
+        source_url="https://www.un-industria.it/",
+        source_publisher="UNINDUSTRIA",
+        official_domain_verified=True,
+        official_domain_confidence=0.9,
+        entity_class="operating_company",
+        candidate_company="Unindustria",
+        maximum_age_days=400,
+        identity_verification_deferred=False,
+    )
+    assert verdict.accepted is False
+    assert verdict.rejection_code in {
+        "HYPOTHESIS_COMPATIBILITY_FAILED",
+        "TARGET_ROLE_UNVERIFIED",
+        "COMPANY_GROUNDING_FAILED",
+        "EVENT_GROUNDING_FAILED",
+    }

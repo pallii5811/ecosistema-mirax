@@ -20,8 +20,8 @@ _PUBLISHER_AS_COMPANY_RE = re.compile(
 )
 _ADMIN_ASSOC_RE = re.compile(
     r"\b(comune di|regione |provincia di|ministero|camera di commercio|"
-    r"associazione|confartigianato|confcommercio|sindacato|fondazione|"
-    r"italia\s+nostra|onlus|ong\b)\b",
+    r"associazione|confartigianato|confcommercio|confindustria|unindustria|"
+    r"sindacato|fondazione|italia\s+nostra|onlus|ong\b)\b",
     re.I,
 )
 _FORM_OR_HUB_PATH_RE = re.compile(

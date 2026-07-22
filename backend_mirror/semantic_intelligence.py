@@ -1021,6 +1021,7 @@ def apply_expansion_facility_proxy(
     interpretation: SemanticEventInterpretation,
     *,
     source_text: str,
+    candidate_company: Optional[str] = None,
 ) -> SemanticEventInterpretation:
     """Seller-driven expansion: prove facility opening/expansion without requiring the seller offer on-page."""
     from dataclasses import replace as dc_replace
@@ -1043,6 +1044,11 @@ def apply_expansion_facility_proxy(
             excerpt = wider
             start = recovered_start
             end = recovered_start + len(wider)
+    # Never promote a publisher/association page about another company's plant.
+    # Unindustria/Purina canary: expansion language present, wrong subject.
+    subject = _canonical_name(candidate_company or interpretation.target_company)
+    if not subject or subject not in _canonical_name(excerpt):
+        return interpretation
     relationships = set(interpretation.satisfied_relationships)
     relationships.add(EXPANSION_FACILITY_RELATIONSHIP)
     rubric = set(interpretation.acceptance_rubric_passed)
@@ -1188,7 +1194,10 @@ class SemanticEvidenceGroundingVerifier:
         expansion_proxy = None
         if EXPANSION_FACILITY_RELATIONSHIP in required_relationships:
             interpretation = apply_expansion_facility_proxy(
-                contract, interpretation, source_text=source_text,
+                contract,
+                interpretation,
+                source_text=source_text,
+                candidate_company=candidate_company,
             )
             if EXPANSION_FACILITY_RELATIONSHIP in set(interpretation.satisfied_relationships):
                 expansion_proxy = {"proven": True}
