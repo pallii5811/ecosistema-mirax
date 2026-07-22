@@ -1309,7 +1309,7 @@ class SemanticEvidenceGroundingVerifier:
                 if identity_verification_deferred
                 else bool(official_domain_verified) and float(official_domain_confidence) >= 0.70
             ),
-            "operating_entity": entity_class == "operating_company",
+            "operating_entity": entity_class in {"operating_company", "company_group"},
             "confidence_sufficient": interpretation.confidence >= 0.70 and interpretation.certainty >= 0.70,
         }
         claim_type = str(contract.evidence_claim_type or "OBSERVED_EVENT").upper()

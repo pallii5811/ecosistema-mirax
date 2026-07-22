@@ -1500,6 +1500,15 @@ def _serp_company_hint(*, title: str, snippet: str, url: str = "") -> str:
     leading = _title_company_leading(title)
     if leading and _looks_like_company_name(leading) and not _is_institutional_entity(leading):
         return leading
+    # News headlines: "… nuovo stabilimento … di Fine Foods …"
+    owned = re.search(
+        r"\b(?:di|della|del|dello)\s+([A-Z][\w'&.-]*(?:\s+[A-Z][\w'&.-]*){0,4})\b",
+        f"{title} {snippet}".strip(),
+    )
+    if owned:
+        owned_name = owned.group(1).strip(" ,;-")
+        if owned_name and _looks_like_company_name(owned_name) and not _is_institutional_entity(owned_name):
+            return owned_name
     # Ministry-led headlines often bury the real firm later in the SERP text.
     legal = _LEGAL_ENTITY_RE.search(f"{title} {snippet}".strip())
     if legal:

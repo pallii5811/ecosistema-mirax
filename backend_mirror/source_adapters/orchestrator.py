@@ -274,6 +274,14 @@ def _candidate_key(candidate: OpportunityCandidate) -> str:
     return f"name:{candidate.canonical_company_name.strip().casefold()}"
 
 
+def _semantic_qualification_priority(candidate: OpportunityCandidate) -> Tuple[int, int, int, float]:
+    """Prefer verified operating companies before burning scarce paid semantic slots."""
+    verified = 1 if candidate.official_domain_verified else 0
+    commercial = 1 if str(candidate.entity_class or "") in {"operating_company", "company_group"} else 0
+    has_domain = 1 if str(candidate.official_domain or "").strip() else 0
+    return (verified, commercial, has_domain, float(candidate.confidence or 0.0))
+
+
 def _processed_employer_keys(request: AdapterDiscoveryRequest) -> set[str]:
     return {
         str(item).strip()
@@ -1268,7 +1276,14 @@ class UniversalSourceOrchestrator:
                 discovered += result.operations
                 raw_count += len(result.candidates)
 
-                for candidate in result.candidates:
+                # Qualify strongest operating-company hits first so paid semantic
+                # slots are not burned on directory/portal noise (antincendio 2/3).
+                ordered_candidates = sorted(
+                    result.candidates,
+                    key=_semantic_qualification_priority,
+                    reverse=True,
+                )
+                for candidate in ordered_candidates:
                     key = _candidate_key(candidate)
                     is_new = key not in accumulated
                     accumulated[key] = candidate if is_new else _merge_candidates(accumulated[key], candidate)
@@ -1297,9 +1312,36 @@ class UniversalSourceOrchestrator:
                             "rejection_code": code,
                         })
                         continue
+                    # TARGET_OPERATING_COMPANY: never burn paid semantic on
+                    # associations/publishers/directories mistaken for the buyer.
+                    entity_class = str(getattr(merged, "entity_class", "") or "").strip().casefold()
+                    if entity_class in {
+                        "association",
+                        "publisher",
+                        "directory",
+                        "public_authority",
+                        "trade_union",
+                    }:
+                        code = "NON_OPERATING_TARGET"
+                        rejection_by_entity[key] = code
+                        state.rejection_histogram[code] = state.rejection_histogram.get(code, 0) + 1
+                        state.rejected_candidates.append({
+                            "entity_hint": str(getattr(merged, "canonical_company_name", "") or "")[:120],
+                            "source_url": str(
+                                (merged.evidence[0].source_url if merged.evidence else "")
+                                or getattr(merged, "official_domain", "")
+                                or ""
+                            )[:300],
+                            "adapter": state.adapter_id,
+                            "rejection_stage": "target_operating_company",
+                            "rejection_code": code,
+                        })
+                        continue
                     if request.technical_filters.get("semantic_authority_required") is True:
                         paid_attempts = int(request.technical_filters.get("semantic_paid_attempts") or 0)
-                        max_paid = max(2, int(request.requested_count) + 1)
+                        # Antincendio 2/3: noise pages burned max(2, n+1)=4 paid slots
+                        # before verified PMI candidates (Cembre/Tironi) were qualified.
+                        max_paid = max(int(request.requested_count) * 4, int(request.requested_count) + 6)
                         if paid_attempts >= max_paid:
                             decision = QualificationDecision(
                                 False, False, False, "SEMANTIC_BUDGET_EXCEEDED",

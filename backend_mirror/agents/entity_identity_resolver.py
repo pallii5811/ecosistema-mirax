@@ -41,7 +41,9 @@ _PUBLIC_RE = re.compile(
     re.I,
 )
 _ASSOCIATION_RE = re.compile(
-    r"\b(?:associazione|aps\b|odv\b|ets\b|onlus|fondazione|circolo)\b",
+    r"\b(?:associazione|aps\b|odv\b|ets\b|onlus|fondazione|circolo|"
+    r"compagnia\s+delle\s+opere|\bcdo\b|"
+    r"confartigianato|confcommercio|confindustria|unindustria)\b",
     re.I,
 )
 _UNION_RE = re.compile(
