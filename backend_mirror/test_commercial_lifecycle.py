@@ -277,6 +277,39 @@ def test_free_owned_host_generic_web_identity_is_accepted():
     assert gate["official_domain_verified"] is True
 
 
+def test_free_owned_host_cache_lookup_is_accepted():
+    # antincendio e8ab8d94: Latterie Vicentine qualified then failed publication
+    # because verified_domain_cache replayed as cache_lookup.
+    lead = valid_lead()
+    lead["source_adapter_id"] = "generic_web_research_v1"
+    lead["azienda"] = "Latterie Vicentine"
+    lead["name"] = "Latterie Vicentine"
+    lead["sito"] = "https://latterievicentine.it/"
+    lead["official_domain"] = "latterievicentine.it"
+    lead["domain_verification"].update({
+        "adapter_id": "generic_web_research_v1",
+        "url": "https://latterievicentine.it/",
+        "status": "verified",
+        "confidence": 0.85,
+        "score": 85,
+        "resolution_method": "cache_lookup",
+        "resolution_source": "verified_domain_cache",
+        "evidence": [
+            "company_tokens_in_host",
+            "legal_name_in_page",
+            "legal_name_in_title",
+            "official_site_markers",
+            "free_owned_host_candidate",
+            "cache_hit",
+        ],
+    })
+    gate = evaluate_publication_gate(lead, PLAN, cost_within_budget=True)
+    assert gate["official_domain_verified"] is True
+    assert gate["entity_operating_verified"] is True
+    assert "OFFICIAL_DOMAIN_UNRESOLVED" not in gate["rejection_codes"]
+    assert "ENTITY_NOT_OPERATING" not in gate["rejection_codes"]
+
+
 def test_publication_gate_requires_budget_and_why_now_and_causal_plan():
     lead = valid_lead()
     assert evaluate_publication_gate(lead, PLAN)["cost_within_budget"] is False

@@ -483,7 +483,11 @@ def _free_owned_host_identity(lead: Dict[str, Any], identity: Dict[str, Any], do
         return False
     if str(identity.get("status") or "").lower() != "verified":
         return False
-    if str(identity.get("resolution_method") or "") != "free_owned_host_verification":
+    method = str(identity.get("resolution_method") or "")
+    # cache_lookup replays a prior free_owned_host_verification. Rejecting it
+    # failed Latterie Vicentine publication after orchestrator already qualified
+    # the lead (antincendio canary e8ab8d94).
+    if method not in {"free_owned_host_verification", "cache_lookup"}:
         return False
     if not domain or canonical_domain(identity.get("url")) != domain:
         return False
