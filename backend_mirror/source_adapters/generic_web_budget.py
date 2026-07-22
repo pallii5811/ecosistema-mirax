@@ -15,7 +15,9 @@ QUERY_COST_EUR = 0.005
 # exhausted the €0.05 hard budget before the second lead could interpret.
 DISCOVERY_SOFT_CAP_EUR = 0.015
 SEMANTIC_RESERVE_EUR = 0.018
-IDENTITY_RESERVE_EUR = 0.0
+# One post-semantic official-domain SERP for news-sourced expanding companies.
+# Zero here permanently raised IDENTITY_BUDGET_EXCEEDED after semantic match.
+IDENTITY_RESERVE_EUR = 0.005
 BUFFER_EUR = 0.002
 INITIAL_SERP_QUERIES = 1
 URLS_PER_WAVE = 5

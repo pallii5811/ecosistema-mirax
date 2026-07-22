@@ -136,12 +136,15 @@ def test_antincendio_expansion_strategies_are_bound_and_funding_free() -> None:
     assert all("chiude un round" not in item.search_query.casefold() for item in valid)
     industrial = [item for item in valid if "industrial_expansion" in item.strategy_id]
     assert industrial
-    # Mid-year + 180d freshness must not SERP prior-year hits that die as SIGNAL_STALE.
     from datetime import date
+    from backend_mirror.source_adapters.signal_strategy_planner import _expansion_year_clause
 
+    assert _expansion_year_clause(365) == f"({date.today().year - 1} OR {date.today().year})"
     if date.today().month > 3:
-        assert all(f"({date.today().year})" in item.search_query for item in industrial)
-        assert all(f"({date.today().year - 1} OR" not in item.search_query for item in industrial)
+        assert _expansion_year_clause(180) == f"({date.today().year})"
+    # Spec freshness_days=180 → industrial queries follow that window.
+    expected_years = _expansion_year_clause(spec.freshness_days)
+    assert all(expected_years in item.search_query for item in industrial)
 
 
 def test_content_shell_recovery_stays_on_active_expansion_hypothesis() -> None:

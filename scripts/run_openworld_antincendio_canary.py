@@ -119,7 +119,7 @@ def build_schema_valid_plan(spec: dict, hypotheses: list[dict]) -> dict:
         "required_signals": plan_signals,
         "optional_signals": [],
         "negative_signals": ["business_closed"],
-        "maximum_age_days_by_signal": {s: 180 for s in plan_signals},
+        "maximum_age_days_by_signal": {s: 365 for s in plan_signals},
         "minimum_signal_confidence": 0.7,
     }
     plan["source_policy"] = {
@@ -172,7 +172,7 @@ def build_schema_valid_plan(spec: dict, hypotheses: list[dict]) -> dict:
         "geography": ["Nord Italia", "Italia"],
         "industry": ["manifatturiero", "produzione industriale"],
         "size_constraints": {},
-        "temporal_constraints": {"maximum_age_days": 180},
+        "temporal_constraints": {"maximum_age_days": 365},
         "positive_conditions": [
             "nuovo stabilimento o ampliamento produttivo documentato",
             "contatto pubblico disponibile",
