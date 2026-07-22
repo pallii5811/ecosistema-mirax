@@ -1200,6 +1200,7 @@ _INSTITUTIONAL_ENTITY_RE = re.compile(
     r"^(?:il\s+|la\s+|lo\s+)?"
     r"(?:mimit|mise|mur|mef|ministero|assessorato|governo|prefettura|questura|"
     r"regione|provincia|comune|camera\s+di\s+commercio|consorzio\s+agrario|"
+    r"asst|asl|ospedale|azienda\s+ospedaliera|azienda\s+sanitaria|"
     r"unione\s+europea|commissione\s+europea|parlamento|senato|inps|inail|agenzia\s+delle\s+entrate)"
     r"(?:\b|$)",
     re.I,
@@ -1256,6 +1257,14 @@ def _looks_like_company_name(value: str) -> bool:
         return False
     # Ministries and public offices must never seed company follow-up SERPs.
     if _is_institutional_entity(text):
+        return False
+    # Bare Italian function/saint tokens are never a stable firm identity
+    # ("San" from "San Pellegrino", "Società", "Azienda").
+    if re.fullmatch(
+        r"san|santa|santo|societ[aà]|azienda|impresa|gruppo|studio|terme|hotel",
+        text,
+        re.I,
+    ):
         return False
     # Italian localities/regions are never the operating company in news titles.
     if _is_geography_token(text):

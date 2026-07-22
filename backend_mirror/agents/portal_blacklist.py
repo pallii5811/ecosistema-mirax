@@ -107,6 +107,8 @@ BLACKLIST_DOMAIN_ROOTS = (
     "casa.it", "ti-aiuto.", "kitlavoro.", "hackerone.",
     "fatturatoitalia.", "reportaziende.", "companyreports.", "informazione-aziende.",
     "reteimprese.", "misterimprese.", "infoimprese.", "ufficiocamerale.",
+    # Public healthcare trusts (ASST/ASL) are not industrial PMI buyers.
+    "asst-", "asl.", "ospedale.",
 )
 
 BLACKLIST_NAME_PATTERNS = (

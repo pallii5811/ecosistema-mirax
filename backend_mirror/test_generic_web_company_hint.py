@@ -47,6 +47,8 @@ def test_institutional_actors_are_not_operating_companies() -> None:
     assert not _looks_like_company_name("MIMIT")
     assert not _looks_like_company_name("Assessorato Attività produttive Industria 4.0")
     assert not _looks_like_company_name("Imprese")
+    assert not _looks_like_company_name("San")
+    assert _looks_like_company_name("San Pellegrino")
     assert _snippet_company_hint(
         "Intesa Provincia Dana per l'avvio di una nuova unità produttiva in Meccatronica"
     ) == "Dana"
