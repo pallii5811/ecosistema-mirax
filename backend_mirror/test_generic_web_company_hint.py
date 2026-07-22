@@ -42,6 +42,29 @@ def test_expansion_title_extracts_inaugura_company() -> None:
     ) == "MARPOSS"
 
 
+def test_institutional_actors_are_not_operating_companies() -> None:
+    assert not _looks_like_company_name("Il Mimit")
+    assert not _looks_like_company_name("MIMIT")
+    assert not _looks_like_company_name("Assessorato Attività produttive Industria 4.0")
+    assert not _looks_like_company_name("Imprese")
+    assert _snippet_company_hint(
+        "Intesa Provincia Dana per l'avvio di una nuova unità produttiva in Meccatronica"
+    ) == "Dana"
+    assert _snippet_company_hint(
+        "Fendi grazie ad un accordo un nuovo stabilimento e 133 nuovi posti"
+    ) == "Fendi"
+    from backend_mirror.source_adapters.generic_web import _serp_company_hint
+
+    assert (
+        _serp_company_hint(
+            title="MIMIT, 12 milioni per accordo sviluppo Azienda Agricola Ponte Reale",
+            snippet="accordo sviluppo Azienda Agricola Ponte Reale di Ciorlano",
+            url="",
+        )
+        == "Azienda Agricola Ponte Reale"
+    )
+
+
 def test_geography_serp_noise_rejected_by_concrete_event_gate() -> None:
     from backend_mirror.source_adapters.cheap_discovery_prefilter import (
         DiscoveryHit,
@@ -101,6 +124,17 @@ def test_crm_shell_followup_uses_crm_recovery_not_funding() -> None:
         requested_count=2,
         budget_eur=0.05,
         query="Trovami aziende che stanno cercando un nuovo CRM.",
+        technical_filters={
+            "universal_active_strategies": [
+                {
+                    "hypothesis_id": "hyp-crm-1",
+                    "signal_type": "technology_adoption",
+                    "event_type": "technology_adoption",
+                    "strategy_id": "technology_adoption:crm_hypothesis_0",
+                    "search_query": 'Italia ("adotta" OR "sceglie") CRM',
+                }
+            ]
+        },
     )
     state = GenericWebDiscoveryState()
     _enqueue_content_shell_followup(
@@ -186,14 +220,37 @@ def test_literal_excerpt_prefers_title_when_present_in_source() -> None:
 
 
 def test_content_shell_enqueues_followup_query() -> None:
+    from backend_mirror.source_adapters.contracts import AdapterDiscoveryRequest
     from backend_mirror.source_adapters.generic_web import _enqueue_content_shell_followup
     from backend_mirror.source_adapters.generic_web_budget import GenericWebDiscoveryState
 
+    request = AdapterDiscoveryRequest(
+        intent="funding",
+        signal_ids=("funding",),
+        signal_match_mode="any",
+        geographies=("Italia",),
+        freshness_max_age_days=180,
+        requested_count=2,
+        budget_eur=0.05,
+        query="Trovami startup che stanno raccogliendo fondi",
+        technical_filters={
+            "universal_active_strategies": [
+                {
+                    "hypothesis_id": "hyp-funding-1",
+                    "signal_type": "funding",
+                    "event_type": "funding",
+                    "strategy_id": "funding:startup_recipient",
+                    "search_query": 'startup Italia ("ha raccolto" OR "chiude un round")',
+                }
+            ]
+        },
+    )
     state = GenericWebDiscoveryState()
     _enqueue_content_shell_followup(
         state,
         identity_hint="Sirius Game",
         failed_url="https://www.borsaitaliana.it/borsa/notizie/archivi/teleborsa.html",
+        request=request,
     )
     assert state.followup_queries
     assert "Sirius Game" in state.followup_queries[0]
@@ -203,12 +260,14 @@ def test_content_shell_enqueues_followup_query() -> None:
         state,
         identity_hint="Sirius Game",
         failed_url="https://www.borsaitaliana.it/other.html",
+        request=request,
     )
     assert len(state.followup_queries) == 1
     _enqueue_content_shell_followup(
         state,
         identity_hint="Invertix",
         failed_url="https://startupitalia.eu/invertix",
+        request=request,
     )
     assert len(state.followup_queries) == 2
     assert "Invertix" in state.followup_queries[1]
@@ -362,6 +421,7 @@ def test_challenge_html_falls_back_to_serp_company_hint() -> None:
 
 
 def test_fetch_failure_enqueues_serp_company_followup() -> None:
+    from backend_mirror.source_adapters.contracts import AdapterDiscoveryRequest
     from backend_mirror.source_adapters.generic_web import _enqueue_content_shell_followup, _serp_company_hint
     from backend_mirror.source_adapters.generic_web_budget import GenericWebDiscoveryState
 
@@ -369,11 +429,33 @@ def test_fetch_failure_enqueues_serp_company_followup() -> None:
     snippet = "Matchplat, società che offre analisi ..."
     hint = _serp_company_hint(title=title, snippet=snippet)
     assert hint == "Matchplat"
+    request = AdapterDiscoveryRequest(
+        intent="funding",
+        signal_ids=("funding",),
+        signal_match_mode="any",
+        geographies=("Italia",),
+        freshness_max_age_days=180,
+        requested_count=2,
+        budget_eur=0.05,
+        query="Trovami startup che stanno raccogliendo fondi",
+        technical_filters={
+            "universal_active_strategies": [
+                {
+                    "hypothesis_id": "hyp-funding-1",
+                    "signal_type": "funding",
+                    "event_type": "funding",
+                    "strategy_id": "funding:startup_recipient",
+                    "search_query": 'startup Italia ("ha raccolto" OR "chiude un round")',
+                }
+            ]
+        },
+    )
     state = GenericWebDiscoveryState()
     _enqueue_content_shell_followup(
         state,
         identity_hint=hint,
         failed_url="https://startupitalia.eu/startup/investimenti/matchplat/",
+        request=request,
     )
     assert state.followup_queries
     assert "Matchplat" in state.followup_queries[0]

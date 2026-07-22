@@ -1060,6 +1060,20 @@ _SNIPPET_COMPANY_PATTERNS = (
         r"(?:ha\s+inaugurato|ha\s+aperto|inaugura|inaugurato|apre|celebra)\b",
         re.I,
     ),
+    # Institutional press: "Intesa Provincia Dana per l'avvio di una nuova unità…"
+    # Keep the operating company, never Provincia/Regione/Comune.
+    re.compile(
+        r"\bIntesa\s+(?:con\s+)?(?:la\s+)?(?:Provincia|Regione|Comune)\s+"
+        r"([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})"
+        r"\s+per\b",
+        re.I,
+    ),
+    # "Fendi grazie ad un accordo un nuovo stabilimento…"
+    re.compile(
+        r"^([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s+"
+        r"grazie\s+ad?\s+un\s+accordo\b",
+        re.I,
+    ),
     # "Cembre: nuovo stabilimento …" / "DalterFood inaugura un nuovo stabilimento"
     re.compile(
         r"^([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\s*[,:]\s+"
@@ -1125,7 +1139,18 @@ _COMPANY_NAME_MAX_WORDS = 5
 _TITLE_ACTION_TAIL_RE = re.compile(
     r"\s+(?:chiude un|chiude il|chiude la|ha raccolto|hanno raccolto|raccoglie|annuncia|annunciano|"
     r"sfiora|supera|porta a|sceglie|adotta|implementa|migra a|passa a|"
-    r"inaugura|ha inaugurato|inaugurato|apre|ha aperto|celebra)\b",
+    r"inaugura|ha inaugurato|inaugurato|apre|ha aperto|celebra|"
+    r"grazie ad|grazie a|per l['’]?avvio|per un nuovo)\b",
+    re.I,
+)
+
+# Public bodies / ministries are news actors, never the expanding operating company.
+_INSTITUTIONAL_ENTITY_RE = re.compile(
+    r"^(?:il\s+|la\s+|lo\s+)?"
+    r"(?:mimit|mise|mur|mef|ministero|assessorato|governo|prefettura|questura|"
+    r"regione|provincia|comune|camera\s+di\s+commercio|consorzio\s+agrario|"
+    r"unione\s+europea|commissione\s+europea|parlamento|senato|inps|inail|agenzia\s+delle\s+entrate)"
+    r"(?:\b|$)",
     re.I,
 )
 
@@ -1144,6 +1169,24 @@ def _is_geography_token(value: str) -> bool:
     return False
 
 
+def _is_institutional_entity(value: str) -> bool:
+    """True for ministries, assessorati, and other public bodies mistaken for firms."""
+    text = (_text(value) or "").strip().strip(".")
+    if not text:
+        return False
+    if _INSTITUTIONAL_ENTITY_RE.match(text):
+        return True
+    # Multi-token public offices: "Assessorato Attività produttive Industria 4.0"
+    low = text.casefold()
+    return bool(
+        re.search(
+            r"\b(?:assessorato|ministero|presidenza|segreteria\s+di\s+stato|"
+            r"direzione\s+generale|ufficio\s+stampa\s+della\s+provincia)\b",
+            low,
+        )
+    )
+
+
 def _looks_like_company_name(value: str) -> bool:
     text = (_text(value) or "").strip().strip(".")
     if not text or len(text) > _COMPANY_NAME_MAX_LEN:
@@ -1155,10 +1198,13 @@ def _looks_like_company_name(value: str) -> bool:
     if re.match(
         r"^(Le|La|Lo|Gli|I|Un|Una|Uno|Più|Molte|Tutte|Tutti|Press|News|Blog|Home|Forum|"
         r"Lavoro\s+Urgente|Inaugurazione|Inaugurato|Comunicato|RSS|"
-        r"Our|The|This|Just|Pubblicit[aà])\b",
+        r"Our|The|This|Just|Pubblicit[aà]|Imprese)\b",
         text,
         re.I,
     ):
+        return False
+    # Ministries and public offices must never seed company follow-up SERPs.
+    if _is_institutional_entity(text):
         return False
     # Italian localities/regions are never the operating company in news titles.
     if _is_geography_token(text):
@@ -1236,11 +1282,31 @@ def _serp_company_hint(*, title: str, snippet: str, url: str = "") -> str:
     """Company identity from SERP fields only — used before/without HTML body."""
     for text in (title, snippet, f"{title} {snippet}"):
         hint = _snippet_company_hint(text)
-        if hint and _looks_like_company_name(hint):
+        if hint and _looks_like_company_name(hint) and not _is_institutional_entity(hint):
             return hint
     leading = _title_company_leading(title)
-    if leading and _looks_like_company_name(leading):
+    if leading and _looks_like_company_name(leading) and not _is_institutional_entity(leading):
         return leading
+    # Ministry-led headlines often bury the real firm later in the SERP text.
+    legal = _LEGAL_ENTITY_RE.search(f"{title} {snippet}".strip())
+    if legal:
+        legal_name = legal.group(1).strip()
+        if legal_name and _looks_like_company_name(legal_name):
+            return legal_name
+    agricola = re.search(
+        r"\b(Azienda\s+Agricola\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*"
+        r"(?:\s+[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'’+-]*){0,3})\b",
+        f"{title} {snippet}",
+    )
+    if agricola:
+        parts = agricola.group(1).strip().split()
+        # Title/snippet concatenation can glue a trailing ministry token
+        # ("… Ponte Reale" + "MIMIT, 12 milioni…").
+        while len(parts) > 2 and _is_institutional_entity(parts[-1]):
+            parts.pop()
+        name = " ".join(parts)
+        if _looks_like_company_name(name):
+            return name
     return _company_hint_from_url(url)
 
 
@@ -1321,7 +1387,7 @@ def _enqueue_content_shell_followup(
 ) -> None:
     """When a SERP hit is a content shell, queue a targeted recovery query."""
     company = (_text(identity_hint) or "").strip()
-    if not company or not _looks_like_company_name(company):
+    if not company or not _looks_like_company_name(company) or _is_institutional_entity(company):
         return
     # CRM seeking recovery queries burned the €0.05 envelope on agency-page
     # shells (e.g. engage.it/agenzie/...): those pages mention CRM as a service

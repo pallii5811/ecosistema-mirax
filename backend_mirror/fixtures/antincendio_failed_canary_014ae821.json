@@ -1,0 +1,61 @@
+{
+  "search_id": "014ae821-21f0-4f11-9de7-3c7b5e032d56",
+  "first_loss": "institutional_identity_followups_burn_budget",
+  "funnel": {
+    "provider_queries": 3,
+    "pages_fetched": 14,
+    "raw_candidates": 0,
+    "semantic_calls_visible_in_final_adapter": 0,
+    "stop_reason": "partial_budget_exhausted",
+    "rejection_codes": {
+      "EVENT_GROUNDING_FAILED": 2,
+      "STRATEGY_INTENT_LEAKAGE": 1
+    }
+  },
+  "toxic_followups": [
+    {
+      "query": "\"Il Mimit\" (\"nuovo stabilimento\" OR \"ampliamento produttivo\" OR \"nuova unità produttiva\" OR \"capacità produttiva\") -site:gfinance.it",
+      "seed_identity": "Il Mimit",
+      "seed_url": "https://www.gfinance.it/settori/imprese/",
+      "seed_title": "Imprese - PNO Innovation - Gfinance",
+      "seed_snippet": "Il Mimit ha aperto il nuovo sportello dei Contratti sviluppo dedicato al rafforzamento della capacità produttiva delle ...",
+      "expected_identity": "",
+      "noise": true
+    },
+    {
+      "query": "\"Assessorato Attività produttive Industria 4.0\" (\"nuovo stabilimento\" OR \"ampliamento produttivo\" OR \"nuova unità produttiva\" OR \"capacità produttiva\") -site:www301.regione.toscana.it",
+      "seed_identity": "Assessorato Attività produttive Industria 4.0",
+      "seed_url": "https://www301.regione.toscana.it/bancadati/atti/Contenuto.xml?id=5112689&nomeFile=Decisione_n.20_del_11-04-2016-Allegato-A",
+      "seed_title": "Assessorato Attività produttive Industria 4.0: il sistema ...",
+      "seed_snippet": "un nuovo stabilimento o lanciare un nuovo prodotto in uno stabilimento pre-esistente",
+      "expected_identity": "",
+      "noise": true
+    }
+  ],
+  "parsed_pages_without_candidates": [
+    {
+      "url": "https://www.ufficiostampa.provincia.tn.it/Comunicati/Intesa-Provincia-Dana-per-l-avvio-di-una-nuova-unita-produttiva-in-Meccatronica",
+      "title": "Intesa Provincia Dana per l'avvio di una nuova unità produttiva in Meccatronica",
+      "snippet": "Intesa tra Provincia e Dana per l'avvio di una nuova unità produttiva in Meccatronica",
+      "expected_identity": "Dana",
+      "noise": false,
+      "block_reason_before_fix": "empty_company_hint"
+    },
+    {
+      "url": "https://www.firenzetoday.it/economia/offerte-di-lavoro/moda-fendi-posti-lavoro-nuovo-stabilimento.html",
+      "title": "Fendi grazie ad un accordo un nuovo stabilimento e 133 nuovi posti",
+      "snippet": "Fendi grazie ad un accordo un nuovo stabilimento e 133 nuovi posti di lavoro",
+      "expected_identity": "Fendi",
+      "noise": false,
+      "block_reason_before_fix": "empty_company_hint"
+    },
+    {
+      "url": "https://newsdellavalle.com/2023/06/16/mimit-12-milioni-per-accordo-sviluppo-azienda-agricola-ponte-reale-di-ciorlano-ce-e-per-un-nuovo-stabilimento-a-venafro-is",
+      "title": "MIMIT, 12 milioni per accordo sviluppo Azienda Agricola Ponte Reale",
+      "snippet": "MIMIT, 12 milioni per accordo sviluppo Azienda Agricola Ponte Reale di Ciorlano (CE) e per un nuovo stabilimento a Venafro (IS)",
+      "expected_identity": "Azienda Agricola Ponte Reale",
+      "noise": false,
+      "block_reason_before_fix": "ministry_mistaken_for_company"
+    }
+  ]
+}
