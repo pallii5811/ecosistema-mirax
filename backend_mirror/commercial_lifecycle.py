@@ -655,7 +655,8 @@ def _evaluate_publication_gate_core(
         identity_evidence.intersection({"company_tokens_in_host", "schema_org_identity_match"})
     )
     legacy_identity_proof = bool(
-        str(identity.get("resolution_source") or "") in {"extracted_website", "serp_identity"}
+        str(identity.get("resolution_source") or "")
+        in {"extracted_website", "serp_identity", "evidence_url"}
         and str(identity.get("resolution_method") or "") == "positive_page_identity"
         and len(identity_evidence) >= 2
         and ownership_proof
