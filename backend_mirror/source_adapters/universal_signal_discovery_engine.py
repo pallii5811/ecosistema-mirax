@@ -580,9 +580,16 @@ class UniversalSignalDiscoveryEngine:
             if result.status == "completed_requested_count" or len(qualified_by_key) >= spec.requested_count:
                 notes.append("requested_count_reached")
                 break
-            if result.status in {"partial_budget_exhausted", "partial_time_limit"}:
+            if result.status == "partial_budget_exhausted":
                 notes.append(result.status)
                 break
+            if result.status == "partial_time_limit":
+                # One slow strategy batch must not abort the rest of the matrix
+                # while budget and requested count remain (antincendio 2/3 stall).
+                notes.append(result.status)
+                if spent + 1e-9 >= hard_budget or remaining <= 0:
+                    break
+                continue
             if result.status == "partial_sources_exhausted":
                 notes.append(result.status)
                 pages = int(telemetry_bucket.get("pages_opened_after_prefilter") or 0)
