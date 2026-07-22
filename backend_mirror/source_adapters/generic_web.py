@@ -1267,10 +1267,13 @@ def _looks_like_company_name(value: str) -> bool:
     ):
         return False
     # Local TV / newspaper chrome must not become the expanding company.
-    if re.search(
-        r"(?:^|\b)(?:tv|tg|news|notizie|giornale|quotidiano|telegiornale|today|web\s*tv)(?:\b|$)",
-        text,
-        re.I,
+    if (
+        re.search(r"(?:tv|tg)$", text, re.I)
+        or re.search(
+            r"(?:^|\b)(?:tv|tg|news|notizie|giornale|quotidiano|telegiornale|today|web\s*tv)(?:\b|$)",
+            text,
+            re.I,
+        )
     ) and not re.search(r"\b(?:spa|srl|s\.p\.a|s\.r\.l)\b", text, re.I):
         return False
     # Italian localities/regions are never the operating company in news titles.
