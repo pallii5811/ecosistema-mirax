@@ -200,3 +200,63 @@ def test_expansion_proxy_does_not_promote_publisher_about_another_company() -> N
         "COMPANY_GROUNDING_FAILED",
         "EVENT_GROUNDING_FAILED",
     }
+
+
+def test_expansion_proxy_accepts_subject_company_after_facility_phrase() -> None:
+    source = (
+        "INAUGURATO IL NUOVO STABILIMENTO E-POWERTRAIN - TEXA apre a Monastier di Treviso "
+        "il nuovo sito produttivo dedicato alla mobilità elettrica."
+    )
+    interpretation = SemanticEventInterpretation.from_model(
+        {
+            "entities": [],
+            "events": [],
+            "relations": [],
+            "target_company": "TEXA",
+            "target_entity_role": "expanding_company",
+            "event_type": "production_expansion",
+            "open_predicate": "",
+            "actor": None,
+            "recipient": None,
+            "provider": None,
+            "beneficiary": None,
+            "investor": None,
+            "employer": None,
+            "recruiter": None,
+            "publisher": None,
+            "authority": None,
+            "predicate": "",
+            "direction": "",
+            "event_status": "observed",
+            "event_date": "2025-06-01",
+            "amount": None,
+            "location": "Treviso",
+            "technology": None,
+            "role": None,
+            "negated": False,
+            "hypothetical": False,
+            "conditional": False,
+            "rumor": False,
+            "historical": False,
+            "certainty": 0.9,
+            "query_match": False,
+            "query_match_reason": "",
+            "satisfied_relationships": [],
+            "acceptance_rubric_passed": [],
+            "buyer_need": "",
+            "why_now": "",
+            "evidence_excerpt": "",
+            "evidence_start": -1,
+            "evidence_end": -1,
+            "confidence": 0.9,
+            "rejection_reason": "",
+        }
+    )
+    enriched = apply_expansion_facility_proxy(
+        _contract(),
+        interpretation,
+        source_text=source,
+        candidate_company="TEXA",
+    )
+    assert EXPANSION_FACILITY_RELATIONSHIP in enriched.satisfied_relationships
+    assert "texa" in (enriched.evidence_excerpt or "").casefold()

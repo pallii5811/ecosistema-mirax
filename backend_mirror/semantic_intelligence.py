@@ -1035,8 +1035,8 @@ def apply_expansion_facility_proxy(
     start = match.start()
     end = match.end()
     # Prefer a slightly wider literal window that stays inside source_text.
-    window_start = max(0, start - 40)
-    window_end = min(len(source_text), end + 80)
+    window_start = max(0, start - 100)
+    window_end = min(len(source_text), end + 120)
     wider = _clean(source_text[window_start:window_end])
     if wider and wider in source_text:
         recovered_start = source_text.find(wider)
@@ -1045,9 +1045,23 @@ def apply_expansion_facility_proxy(
             start = recovered_start
             end = recovered_start + len(wider)
     # Never promote a publisher/association page about another company's plant.
-    # Unindustria/Purina canary: expansion language present, wrong subject.
+    # Unindustria/Purina: both names may appear; facility owner is Purina.
     subject = _canonical_name(candidate_company or interpretation.target_company)
-    if not subject or subject not in _canonical_name(excerpt):
+    excerpt_canon = _canonical_name(excerpt)
+    if not subject:
+        return interpretation
+    alien_owner = None
+    alien_match = re.search(
+        r"\bstabilimento\s+([A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ&.'-]{2,})",
+        excerpt or "",
+    )
+    if alien_match:
+        alien_owner = _canonical_name(alien_match.group(1))
+        if alien_owner in {"nuovo", "nuova", "produttivo", "produttiva", "logistico", "industriale", "e"}:
+            alien_owner = None
+    if alien_owner and alien_owner != subject:
+        return interpretation
+    if subject not in excerpt_canon:
         return interpretation
     relationships = set(interpretation.satisfied_relationships)
     relationships.add(EXPANSION_FACILITY_RELATIONSHIP)
