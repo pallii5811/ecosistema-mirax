@@ -17,6 +17,7 @@ from backend_mirror.source_adapters.generic_web import (
     _public_contacts_from_html,
     _size_class_from_employees,
     _valid_record,
+    backfill_lead_public_contacts,
 )
 from backend_mirror.source_adapters.generic_web_budget import GenericWebDiscoveryState
 
@@ -218,6 +219,38 @@ def test_public_contacts_from_mailto() -> None:
     kinds = {item.kind: item.value for item in contacts}
     assert kinds["email"] == "info@acme-pmi.it"
     assert "390212345678" in kinds["phone"] or kinds["phone"].endswith("0212345678")
+
+
+def test_backfill_lead_public_contacts_from_official_domain(monkeypatch) -> None:
+    """Tecnoeka-style: qualified on news page without mailto, contacts live on /contatti."""
+
+    def fake_enrich(row):
+        row = dict(row)
+        row["contacts"] = [{
+            "kind": "email",
+            "value": "info@tecnoeka.com",
+            "source_url": "https://tecnoeka.com/contatti/",
+            "verified": True,
+        }]
+        row["official_enrichment_url"] = "https://tecnoeka.com/contatti/"
+        return row
+
+    monkeypatch.setattr(
+        "backend_mirror.source_adapters.generic_web._enrich_from_official_domain",
+        fake_enrich,
+    )
+    lead = {
+        "azienda": "Tecnoeka",
+        "official_domain": "tecnoeka.com",
+        "sito": "https://tecnoeka.com",
+        "email": None,
+        "telefono": None,
+        "contatti": {"email": [], "telefoni": []},
+    }
+    filled = backfill_lead_public_contacts(lead)
+    assert filled["email"] == "info@tecnoeka.com"
+    assert filled["contatti"]["email"] == ["info@tecnoeka.com"]
+    assert filled["field_provenance"]["email"]["status"] == "verified"
 
 
 def test_publisher_mailto_dropped_when_company_domain_known() -> None:

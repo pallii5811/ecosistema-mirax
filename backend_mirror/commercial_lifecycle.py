@@ -997,11 +997,14 @@ def persist_and_publish_candidates(
     require_contact = bool(
         re.search(r"\b(?:contatto|contatti|email|telefono|phone)\b", raw_query, re.I)
     )
+    from source_adapters.generic_web import backfill_lead_public_contacts
+
+    enriched_leads = [backfill_lead_public_contacts(lead) for lead in leads if isinstance(lead, dict)]
     result = evaluate_and_publish(
         search_id,
-        leads,
+        enriched_leads,
         canonical_plan,
-        requested_count=max(len(leads), 1),
+        requested_count=max(len(enriched_leads), 1),
         supabase=supabase,
         user_id=user_id,
         shadow_mode=shadow_mode,

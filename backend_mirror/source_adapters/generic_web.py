@@ -484,7 +484,7 @@ def _enrich_from_official_domain(row: MutableMapping[str, Any]) -> MutableMappin
         ),
         "Accept": "text/html,application/xhtml+xml",
     }
-    for path in ("/", "/contatti", "/contact", "/azienda", "/about"):
+    for path in ("/", "/contatti", "/contatti/", "/contact", "/contact/", "/azienda", "/about"):
         try:
             with httpx.Client(timeout=8.0, follow_redirects=True, headers=headers) as client:
                 response = client.get(f"https://{domain}{path}")
@@ -514,6 +514,92 @@ def _enrich_from_official_domain(row: MutableMapping[str, Any]) -> MutableMappin
         except Exception:
             continue
     return row
+
+
+def _owned_or_verified_official_domain(row: Mapping[str, Any]) -> bool:
+    """True when enriching the official host is safe (verified or same-host evidence)."""
+    domain = _host(row.get("official_domain"))
+    if not domain:
+        return False
+    if row.get("official_domain_verified") is True:
+        return True
+    source_host = _host(row.get("source_url") or row.get("sito") or row.get("website") or "")
+    return bool(source_host and (source_host == domain or source_host.endswith("." + domain)))
+
+
+def _maybe_enrich_from_official_domain(row: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
+    if not _owned_or_verified_official_domain(row):
+        return row
+    return _enrich_from_official_domain(row)
+
+
+def backfill_lead_public_contacts(lead: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
+    """Fill missing email/phone from the official domain before acceptance gates.
+
+    Shadow payloads can qualify on a news/event page that never carried mailto/tel.
+    Contactability must still use the free official-site fetch, not reject a real PMI.
+    """
+    out = dict(lead)
+    contatti = out.get("contatti") if isinstance(out.get("contatti"), Mapping) else {}
+    has_email = bool(str(out.get("email") or "").strip() or (contatti.get("email") or ()))
+    has_phone = bool(str(out.get("telefono") or out.get("phone") or "").strip() or (contatti.get("telefoni") or ()))
+    if has_email or has_phone:
+        return out
+    domain = _host(out.get("official_domain") or out.get("sito") or out.get("website") or "")
+    if not domain:
+        return out
+    row: Dict[str, Any] = {
+        "official_domain": domain,
+        "official_domain_verified": True,
+        "source_url": str(out.get("sito") or out.get("website") or f"https://{domain}/"),
+        "contacts": [],
+    }
+    row = _enrich_from_official_domain(row)
+    contacts = row.get("contacts") if isinstance(row.get("contacts"), list) else []
+    emails = [
+        str(item.get("value") or "").strip()
+        for item in contacts
+        if isinstance(item, Mapping) and str(item.get("kind") or "") == "email" and str(item.get("value") or "").strip()
+    ]
+    phones = [
+        str(item.get("value") or "").strip()
+        for item in contacts
+        if isinstance(item, Mapping) and str(item.get("kind") or "") == "phone" and str(item.get("value") or "").strip()
+    ]
+    if not emails and not phones:
+        return out
+    if emails:
+        out["email"] = emails[0]
+    if phones:
+        out["telefono"] = phones[0]
+        out["phone"] = phones[0]
+    out["contatti"] = {
+        "email": emails[:2],
+        "telefoni": phones[:2],
+    }
+    if row.get("official_enrichment_url"):
+        out["official_enrichment_url"] = row.get("official_enrichment_url")
+    provenance = dict(out.get("field_provenance") or {}) if isinstance(out.get("field_provenance"), Mapping) else {}
+    observed = datetime.now(timezone.utc).isoformat()
+    source = str(row.get("official_enrichment_url") or f"https://{domain}/")
+    if emails:
+        provenance["email"] = {
+            "value": emails[0],
+            "source": source,
+            "status": "verified",
+            "confidence": 0.9,
+            "observed_at": observed,
+        }
+    if phones:
+        provenance["phone"] = {
+            "value": phones[0],
+            "source": source,
+            "status": "verified",
+            "confidence": 0.9,
+            "observed_at": observed,
+        }
+    out["field_provenance"] = provenance
+    return out
 
 
 def _iter_json(value: Any) -> Iterable[Mapping[str, Any]]:
@@ -1646,8 +1732,7 @@ def _append_semantic_deferred_news_record(
     )
     row = _apply_free_identity(row, request)
     row = _enrich_record_from_page(row, html=html or "", text=visible_text)
-    if row.get("official_domain_verified") is True:
-        row = _enrich_from_official_domain(row)
+    row = _maybe_enrich_from_official_domain(row)
     records.append(row)
     _remember_candidate_source_url(state, final_url)
     return True
@@ -2107,8 +2192,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 )
                                 row = _apply_free_identity(row, request)
                                 row = _enrich_record_from_page(row, html=html or "", text=visible_text)
-                                if row.get("official_domain_verified") is True:
-                                    row = _enrich_from_official_domain(row)
+                                row = _maybe_enrich_from_official_domain(row)
                                 records.append(row)
                                 _remember_candidate_source_url(state, str(fetch_provenance.get("final_url") or final_url or url))
                             if len(records) > structured_before:
@@ -2239,8 +2323,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                         )
                         row = _apply_free_identity(row, request)
                         row = _enrich_record_from_page(row, html=html or "", text=visible_text)
-                        if row.get("official_domain_verified") is True:
-                            row = _enrich_from_official_domain(row)
+                        row = _maybe_enrich_from_official_domain(row)
                         records.append(row)
                         _remember_candidate_source_url(state, str(fetch_provenance.get("final_url") or final_url or url))
                     if (
@@ -2611,6 +2694,23 @@ class GenericWebResearchAdapter:
                         str(record.get("source_html") or ""),
                         source_url=source_url,
                         prefer_domain=domain,
+                    )
+                if not contacts and domain:
+                    enrich_row = _maybe_enrich_from_official_domain({
+                        "official_domain": domain,
+                        "official_domain_verified": bool(record.get("official_domain_verified")),
+                        "source_url": source_url,
+                        "contacts": [],
+                    })
+                    contacts = tuple(
+                        ContactRecord(
+                            kind=str(item.get("kind") or "email"),
+                            value=str(item.get("value") or "").strip(),
+                            source_url=str(item.get("source_url") or source_url),
+                            verified=item.get("verified") is True,
+                        )
+                        for item in (enrich_row.get("contacts") or ())
+                        if isinstance(item, Mapping) and str(item.get("value") or "").strip()
                     )
                 candidates.append(OpportunityCandidate(
                     canonical_company_name=company,
