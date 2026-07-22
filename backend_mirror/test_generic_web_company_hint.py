@@ -405,7 +405,9 @@ def test_can_reserve_serp_after_first_semantic_for_second_lead() -> None:
     assert state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.02, governor_remaining=0.03)
     # Live 1/2 strand: €0.0276 spent → €0.0224 remaining must still unlock a SERP.
     assert state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.0276, governor_remaining=0.0224)
-    assert not state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.035, governor_remaining=0.015)
+    # Late envelope: SERP-only room still unlocks (antincendio 2/3 at €0.095).
+    assert state.can_reserve_serp(hard_cap_eur=0.10, spent_eur=0.095, governor_remaining=0.005)
+    assert not state.can_reserve_serp(hard_cap_eur=0.05, spent_eur=0.048, governor_remaining=0.002)
 
 
 def test_resume_followup_serp_not_zeroed_by_prior_discovery_spend() -> None:
