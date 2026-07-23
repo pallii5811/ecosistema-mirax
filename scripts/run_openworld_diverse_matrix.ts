@@ -85,15 +85,16 @@ async function reconstructBudgetViaPostgres() {
            from public.searches s
           where s.created_at >= $2::timestamptz
             and (
-              coalesce(s.intent->>'lifecycle_stage','') = 'v5_shadow'
-              or coalesce(s.intent->>'source_adapter_shadow','') in ('true','1')
+              coalesce(s.intent->'intent_compiler_telemetry'->>'source','')
+                = 'openworld_diverse_matrix_production_path'
+              or coalesce(s.category,'') ilike '%Open-World%'
+              or coalesce(s.category,'') ilike '%open-world%'
               or exists (
                    select 1 from public.canary_runs c
                     where c.search_id = s.id
                       and (
-                        c.canary_type ilike '%open_world%'
+                        c.canary_type ilike 'open_world%'
                         or c.canary_type ilike '%openworld%'
-                        or c.canary_type ilike '%matrix%'
                       )
                  )
             )
@@ -115,6 +116,7 @@ async function reconstructBudgetViaPostgres() {
       ledger_rows: Number(r.rows[0]?.n || 0),
       enough_for_one_case: residual + 1e-9 >= HARD_CAP_EUR,
       source: 'postgres_direct_campaign_scoped' as const,
+      budget_since: BUDGET_SINCE,
     }
   } finally {
     await c.end()
