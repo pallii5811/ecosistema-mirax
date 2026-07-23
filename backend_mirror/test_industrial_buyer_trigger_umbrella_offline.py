@@ -355,6 +355,31 @@ def test_excerpt_offset_letterali():
     assert source[verdict.evidence_start:verdict.evidence_end] == verdict.evidence_excerpt
 
 
+def test_future_date_skew_one_day_pass():
+    """Local calendar +1 vs UTC ref_day is allowed; +2 and future years are not."""
+    from backend_mirror.semantic_intelligence import _date_is_fresh
+
+    ref = date(2026, 7, 23)
+    assert _date_is_fresh(date(2026, 7, 23), ref_day=ref, maximum_age_days=365) is True
+    assert _date_is_fresh(date(2026, 7, 24), ref_day=ref, maximum_age_days=365) is True
+    assert _date_is_fresh(date(2026, 7, 25), ref_day=ref, maximum_age_days=365) is False
+    assert _date_is_fresh(date(2027, 7, 23), ref_day=ref, maximum_age_days=365) is False
+
+
+def test_event_date_future_beyond_skew_rejects_even_with_fresh_source():
+    source = "Tironi Spa ha inaugurato il nuovo stabilimento a Modena questa mattina."
+    verdict = _verify(
+        source,
+        _interp(evidence_excerpt=source, event_date="2026-07-25"),
+        now=date(2026, 7, 23),
+        max_age=365,
+        published_at="2026-07-23",
+    )
+    assert verdict.checks["temporal_evidence_valid"] is False
+    assert verdict.rejection_code == "EVENT_GROUNDING_FAILED"
+    assert verdict.event_date == "2026-07-25"
+
+
 def test_event_date_recente_source_vecchia_pass():
     source = "Tironi Spa ha inaugurato il nuovo stabilimento a Modena questa mattina."
     verdict = _verify(

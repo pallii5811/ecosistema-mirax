@@ -911,11 +911,10 @@ _HISTORICAL_EVENT_MARKER_RE = re.compile(
 def _date_is_fresh(day: date, *, ref_day: date, maximum_age_days: Optional[int]) -> bool:
     if maximum_age_days is None:
         return True
+    # Local calendar can be +1 day ahead of UTC ref_day; never accept unbounded future.
+    future_skew_days = 1
     age = (ref_day - day).days
-    # Local calendar "today" can be ahead of UTC ref_day; future-dated is not stale.
-    if age < 0:
-        return True
-    return age <= max(0, int(maximum_age_days))
+    return -future_skew_days <= age <= max(0, int(maximum_age_days))
 
 
 def _has_explicit_stale_year(source_text: str, *, ref_day: date, maximum_age_days: Optional[int]) -> bool:
