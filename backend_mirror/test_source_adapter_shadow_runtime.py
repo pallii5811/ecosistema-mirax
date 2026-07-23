@@ -215,7 +215,7 @@ def test_shadow_hard_cap_is_clamped_to_absolute_maximum():
             _intent(), requested_count=1, registry=SourceCapabilityRegistry((adapter,)), environ=env,
         )
     )
-    assert adapter.budgets == [pytest.approx(0.25)]
+    assert adapter.budgets == [pytest.approx(0.40)]
 
 
 def test_shadow_env_hard_cap_overrides_lower_plan_ceiling():

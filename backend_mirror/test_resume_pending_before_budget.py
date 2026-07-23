@@ -16,8 +16,13 @@ from source_adapters.contracts import (
     SourceCapability,
     SourceExhaustion,
 )
-from source_adapters.generic_web_budget import GenericWebDiscoveryState, encode_generic_web_cursor
+from source_adapters.generic_web_budget import (
+    GenericWebDiscoveryState,
+    decode_generic_web_v2_payload,
+    encode_generic_web_cursor,
+)
 from source_adapters.orchestrator import UniversalSourceOrchestrator, _pending_urls_from_resume_cursor
+from source_adapters.shadow_runtime import reopen_generic_web_resume_cursors
 
 
 def _capability(adapter_id: str, cost: float = 0.005) -> SourceCapability:
@@ -114,5 +119,40 @@ def test_orchestrator_drains_pending_adapter_before_budget_raising_peer() -> Non
     )
     assert generic.calls, "generic_web with pending must run despite growth budget raise"
     assert generic.calls[0] == "generic_web_research_v1"
-    # Growth budget raise must not abort the orchestration.
     assert result.status != "failed_terminal"
+
+
+def test_reopen_cursors_when_two_of_three_already_published() -> None:
+    """Remaining gap requested_count=1 must still reopen Tironi after 2 published domains."""
+    stranded = (
+        "https://www.tironi.com/news/elettromeccanica-tironi-inaugura-il-nuovo-stabilimento-logistico-a-modena/"
+    )
+    already = "https://www.tecnoeka.com/news/news-aziendali/inaugurazione-nuovo-polo-produttivo/"
+    cursor = encode_generic_web_cursor(
+        GenericWebDiscoveryState(
+            pending_urls=(),
+            salvaged_urls=(stranded, already),
+            candidate_source_urls=(stranded, already),
+            processed_terminal_urls=(stranded, already),
+            pages_fetched=45,
+        )
+    )
+    processed = ("domain:latterievicentine.it", "domain:tecnoeka.com")
+    # Bug reproduction: remaining gap alone would skip reopen (2 < 1 is false).
+    remaining_gap = 1
+    total_target = 3
+    assert not (len(processed) < remaining_gap)
+    assert len(processed) < total_target
+
+    reopened = reopen_generic_web_resume_cursors(
+        {"generic_web_research_v1": cursor},
+        processed_employer_keys=processed,
+    )
+    payload = decode_generic_web_v2_payload(reopened["generic_web_research_v1"].value)
+    assert payload is not None
+    pending = [str(u).rstrip("/") for u in (payload.get("pending_urls") or ())]
+    assert any("tironi.com" in u for u in pending)
+    assert not any("tecnoeka.com" in u for u in pending)
+    assert list(payload.get("salvaged_urls") or ()) == []
+    terminal = [str(u).rstrip("/") for u in (payload.get("processed_terminal_urls") or ())]
+    assert not any("tironi.com" in u for u in terminal)
