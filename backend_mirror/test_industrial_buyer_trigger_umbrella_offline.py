@@ -355,29 +355,130 @@ def test_excerpt_offset_letterali():
     assert source[verdict.evidence_start:verdict.evidence_end] == verdict.evidence_excerpt
 
 
-def test_source_published_at_supports_recency_without_becoming_event_date():
+def test_event_date_recente_source_vecchia_pass():
+    source = "Tironi Spa ha inaugurato il nuovo stabilimento a Modena questa mattina."
+    verdict = _verify(
+        source,
+        _interp(evidence_excerpt=source, event_date="2026-06-01"),
+        now=date(2026, 7, 23),
+        max_age=365,
+        published_at="2020-01-01",
+    )
+    assert verdict.checks["temporal_evidence_valid"] is True
+    assert verdict.event_date == "2026-06-01"
+    assert verdict.accepted is True
+
+
+def test_event_date_vecchia_source_recente_reject():
     source = "Tironi Spa ha inaugurato il nuovo stabilimento a Modena."
-    # Stale event_date, fresh source_published_at → temporal can pass; event_date unchanged.
     verdict = _verify(
         source,
         _interp(evidence_excerpt=source, event_date="2024-06-28"),
-        now=date(2026, 7, 1),
+        now=date(2026, 7, 23),
         max_age=365,
         published_at="2026-06-15",
     )
     assert verdict.event_date == "2024-06-28"
-    assert verdict.checks["temporal_evidence_valid"] is True
+    assert verdict.checks["temporal_evidence_valid"] is False
+    assert verdict.rejection_code == "EVENT_GROUNDING_FAILED"
 
 
-def test_nessuna_data_reject():
+def test_event_date_vecchia_source_vecchia_reject():
     source = "Tironi Spa ha inaugurato il nuovo stabilimento a Modena."
     verdict = _verify(
         source,
-        _interp(evidence_excerpt=source, event_date=None),
-        published_at="2026-06-15",
+        _interp(evidence_excerpt=source, event_date="2024-06-28"),
+        now=date(2026, 7, 23),
+        max_age=365,
+        published_at="2024-06-28",
+    )
+    assert verdict.checks["temporal_evidence_valid"] is False
+    assert verdict.rejection_code == "EVENT_GROUNDING_FAILED"
+
+
+def test_event_date_assente_source_recente_evento_corrente_pass():
+    source = "Tironi Spa ha inaugurato il nuovo stabilimento a Modena questa mattina."
+    verdict = _verify(
+        source,
+        _interp(evidence_excerpt=source, event_date=None, event_status="observed", historical=False),
+        now=date(2026, 7, 23),
+        max_age=365,
+        published_at="2026-07-20",
+    )
+    assert verdict.event_date is None
+    assert verdict.checks["temporal_evidence_valid"] is True
+    assert verdict.accepted is True
+
+
+def test_event_date_assente_source_recente_articolo_storico_reject():
+    source = (
+        "Archivio storico: Tironi Spa fu inaugurato il nuovo stabilimento anni fa, "
+        "nel 2019. Retrospective sulla crescita del gruppo."
+    )
+    verdict = _verify(
+        source,
+        _interp(evidence_excerpt=source, event_date=None, event_status="observed", historical=True),
+        now=date(2026, 7, 23),
+        max_age=365,
+        published_at="2026-07-20",
     )
     assert verdict.checks["temporal_evidence_valid"] is False
     assert verdict.accepted is False
+
+
+def test_nessuna_data_reject():
+    source = "Tironi Spa ha inaugurato il nuovo stabilimento a Modena questa mattina."
+    verdict = _verify(
+        source,
+        _interp(evidence_excerpt=source, event_date=None, event_status="observed"),
+        now=date(2026, 7, 23),
+        max_age=365,
+        published_at=None,
+    )
+    assert verdict.checks["temporal_evidence_valid"] is False
+    assert verdict.accepted is False
+
+
+def test_kastamonu_stale_rejects_despite_valid_buyer_trigger_page():
+    source = (
+        "Taglio del nastro per il nuovo stabilimento di Kastamonu Italia. "
+        "Questa mattina è stato inaugurato il nuovo sito industriale assieme alla "
+        "terza linea di produzione e alla nuova pressa di nobilitazione."
+    )
+    contract = _base_contract()
+    interpretation = _interp(
+        target_company="Kastamonu Italia",
+        evidence_excerpt=source,
+        event_date="2024-06-28",
+        event_status="completed",
+        satisfied_relationships=[
+            "factory_expansion_by_target_company",
+            "new_machinery_installation_by_target_company",
+        ],
+        acceptance_rubric_passed=[
+            "target_role_equipment_operator_grounded",
+            f"{INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}_grounded",
+        ],
+    )
+    verdict = SemanticEvidenceGroundingVerifier().verify(
+        contract,
+        interpretation,
+        source_text=source,
+        source_url="https://www.confindustriaemilia.it/flex/cm/pages/ServeBLOB.php/L/IT/IDPagina/105348",
+        source_publisher="Confindustria Emilia",
+        official_domain_verified=True,
+        official_domain_confidence=0.95,
+        entity_class="operating_company",
+        candidate_company="Kastamonu Italia",
+        maximum_age_days=365,
+        now=date(2026, 7, 23),
+        structured_metadata={"source_published_at": "2024-06-28", "published_at": "2024-06-28"},
+    )
+    assert verdict.checks["temporal_evidence_valid"] is False
+    assert verdict.rejection_code == "EVENT_GROUNDING_FAILED"
+    assert verdict.event_date == "2024-06-28"
+    classification = "VALID_EVENT_BUT_STALE_FOR_QUERY"
+    assert classification == "VALID_EVENT_BUT_STALE_FOR_QUERY"
 
 
 def test_no_predictive_maintenance_phrase_required_on_page():

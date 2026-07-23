@@ -11,8 +11,7 @@
     "title": "Kastamonu Italia inaugura nuovo stabilimento",
     "snippet": "Una volta a regime, il nuovo stabilimento creerà 25 nuovi posti di lavoro, portando l'organico aziendale a 315 persone di cui il 16% di presenze ...",
     "published_at": "2024-06-28",
-    "provider": "serper",
-    "source_type": "search"
+    "source_published_at": "2024-06-28"
   },
   "semantic_query_contract": {
     "offer": {
@@ -373,15 +372,15 @@
   },
   "replay_context": {
     "run_day": "2026-07-23",
-    "maximum_age_days": 360,
+    "maximum_age_days": 365,
     "event_date": "2024-06-28",
-    "event_status": "completed"
+    "source_published_at": "2024-06-28"
   },
-  "manual_classification": "VALID_BUYER_TRIGGER_PAGE",
+  "manual_classification": "VALID_EVENT_BUT_STALE_FOR_QUERY",
   "manual_classification_reason": "Page documents Kastamonu Italia inaugurating a new plant + third production line + new pressing machine (€30M). Operating company is the target; Confindustria Emilia is publisher only. EVENT_GROUNDING_FAILED is temporal (event_date 2024-06-28 vs 12-month window on 2026-07-23), not irrelevance of the page.",
   "required_relationships_normalized": [
     "industrial_buyer_trigger_by_target_company"
   ],
   "required_relationships_match_mode": "OR",
-  "exact_cause": "temporal_evidence_valid=false (event_date 2024-06-28 vs 12-month window on 2026-07-23)"
+  "exact_cause": "temporal_evidence_valid=false (event_date 2024-06-28 stale; source_published_at cannot rescue)"
 }

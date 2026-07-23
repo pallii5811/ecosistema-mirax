@@ -27,7 +27,11 @@ _STATE_OPERATOR_DOMAINS = {
 _BIG_FOUR_RE = re.compile(r"\b(pwc|deloitte|kpmg|ernst\s*&?\s*young|ey\b)\b", re.I)
 _LISTED_RE = re.compile(r"\b(quotat[oa]|listed|nyse|nasdaq|borsa\s+italiana|euronext)\b", re.I)
 _GLOBAL_PARENT_RE = re.compile(
-    r"\b(global|worldwide|multinational|international\s+plc|inc\.|corporation|holdings?\s+plc)\b",
+    r"\b("
+    r"global|worldwide|multinational|multinazional\w*|"
+    r"international\s+plc|inc\.|corporation|holdings?\s+plc|"
+    r"gruppo\s+internazionale|controllat[ao]\s+da\s+(?:un[oa]\s+)?multinazional\w*"
+    r")\b",
     re.I,
 )
 _ENTERPRISE_SIZE_CLASSES = {"enterprise", "multinational", "global_enterprise"}
@@ -220,7 +224,14 @@ class MarketScopeResolver:
         entity = candidate.get("entity_classification") if isinstance(candidate.get("entity_classification"), Mapping) else {}
         size_class = _size_class(candidate, employees)
         ownership = str(candidate.get("ownership_status") or candidate.get("forma_giuridica") or "").strip()
-        parent = str(candidate.get("parent_group") or candidate.get("controlling_group") or "").strip()
+        parent = str(
+            candidate.get("parent_group")
+            or candidate.get("controlling_group")
+            or candidate.get("parent_company")
+            or entity.get("parent_company")
+            or entity.get("parent_group")
+            or ""
+        ).strip()
         corporate_blob = " ".join((name, domain, ownership, parent, str(candidate.get("listed_status") or "")))
         enterprise: List[str] = []
         ambiguous: List[str] = []
@@ -279,10 +290,31 @@ class MarketScopeResolver:
             ambiguous.append("SIZE_CLASS_LARGE_UNRESOLVED")
 
         large_parent = _truthy_flag(candidate, "parent_group_is_large", "controlled_by_global_group", "global_parent")
-        if parent and (large_parent or _GLOBAL_PARENT_RE.search(parent)):
+        parent_blob = " ".join(
+            str(value or "")
+            for value in (
+                parent,
+                candidate.get("parent_company"),
+                entity.get("parent_company"),
+                entity.get("parent_group"),
+                candidate.get("controlling_group"),
+            )
+        )
+        if parent and (large_parent or _GLOBAL_PARENT_RE.search(parent_blob)):
             enterprise.append("LARGE_CORPORATE_GROUP")
         elif parent and not _truthy_flag(candidate, "parent_group_is_sme", "independent_company"):
             ambiguous.append("PARENT_GROUP_UNRESOLVED")
+        # Local opco headcount must not auto-promote a multinational-controlled
+        # subsidiary to SME when parent evidence is present.
+        if (
+            parent
+            and employees is not None
+            and employees <= 249
+            and (large_parent or _GLOBAL_PARENT_RE.search(parent_blob))
+        ):
+            confirmed = [item for item in confirmed if item != "EMPLOYEE_COUNT_SME"]
+            if "LARGE_CORPORATE_GROUP" not in enterprise:
+                enterprise.append("LARGE_CORPORATE_GROUP")
         if _truthy_flag(candidate, "corporate_signals_conflicting", "ownership_unresolved", "ownership_conflict"):
             ambiguous.append("CORPORATE_SIGNALS_CONTRADICTORY")
 

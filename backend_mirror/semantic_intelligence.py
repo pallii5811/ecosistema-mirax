@@ -884,6 +884,90 @@ def _parse_iso_date(value: Optional[str]) -> Optional[date]:
             return None
 
 
+_CURRENT_EVENT_MARKER_RE = re.compile(
+    r"\b(?:"
+    r"questa\s+mattina|oggi|appena|in\s+corso|recente(?:mente)?|corrente|attivo|"
+    r"inaugurat\w*|annuncia\w*|ha\s+(?:aperto|inaugurato|lanciato|installato)|"
+    r"announced|active|recent(?:ly)?|has\s+(?:opened|inaugurated|launched|installed)"
+    r")\b",
+    re.I,
+)
+_HISTORICAL_EVENT_MARKER_RE = re.compile(
+    r"\b(?:"
+    r"storic\w*|anni\s+fa|years?\s+ago|nel\s+passato|retrospective|archivio|"
+    r"flashback|era\s+il|fu\s+inaugurat\w*|back\s+in\s+20\d{2}"
+    r")\b",
+    re.I,
+)
+
+
+def _date_is_fresh(day: date, *, ref_day: date, maximum_age_days: Optional[int]) -> bool:
+    if maximum_age_days is None:
+        return True
+    age = (ref_day - day).days
+    return 0 <= age <= max(0, int(maximum_age_days))
+
+
+def _has_explicit_stale_year(source_text: str, *, ref_day: date, maximum_age_days: Optional[int]) -> bool:
+    """True when the page states a calendar year that falls outside the freshness window."""
+    if maximum_age_days is None:
+        return False
+    for match in re.finditer(r"\b(20\d{2})\b", source_text or ""):
+        year = int(match.group(1))
+        try:
+            year_end = date(year, 12, 31)
+        except ValueError:
+            continue
+        if (ref_day - year_end).days > max(0, int(maximum_age_days)):
+            return True
+    return False
+
+
+def evaluate_temporal_evidence_valid(
+    *,
+    event_date: Optional[str],
+    source_published_at: Optional[str],
+    source_text: str,
+    event_status: str,
+    historical: bool,
+    now: Optional[date],
+    maximum_age_days: Optional[int],
+) -> bool:
+    """Temporal semantics for OBSERVED_EVENT grounding.
+
+    1) event_date present → only event_date freshness counts.
+    2) event_date absent → source_published_at may support recency only for
+       current/active/announced events without historical markers or older
+       explicit years in the text.
+    3) both absent → false.
+    source_published_at must never be copied into event_date by callers.
+    """
+    event_day = _parse_iso_date(event_date)
+    published_day = _parse_iso_date(source_published_at)
+    ref_day = now or datetime.now(timezone.utc).date()
+
+    if event_day is not None:
+        return _date_is_fresh(event_day, ref_day=ref_day, maximum_age_days=maximum_age_days)
+
+    if published_day is None:
+        return False
+    if not _date_is_fresh(published_day, ref_day=ref_day, maximum_age_days=maximum_age_days):
+        return False
+    status = _clean(event_status).casefold()
+    if status not in {"observed", "active", "announced"}:
+        return False
+    if historical:
+        return False
+    text = source_text or ""
+    if _HISTORICAL_EVENT_MARKER_RE.search(text):
+        return False
+    if _has_explicit_stale_year(text, ref_day=ref_day, maximum_age_days=maximum_age_days):
+        return False
+    if not _CURRENT_EVENT_MARKER_RE.search(text):
+        return False
+    return True
+
+
 def _hiring_bridge_helpers():
     """Load duty detectors without importing source_adapters package __init__."""
     try:
@@ -1525,26 +1609,23 @@ class SemanticEvidenceGroundingVerifier:
             interpretation.negated, interpretation.hypothetical, interpretation.conditional,
             interpretation.rumor,
         ))
-        event_day = _parse_iso_date(interpretation.event_date)
-        published_day = None
+        published_raw = None
         if isinstance(structured_metadata, Mapping):
-            published_day = _parse_iso_date(
+            published_raw = (
                 structured_metadata.get("source_published_at")
                 or structured_metadata.get("published_at")
             )
-        # source_published_at may support recency but must never become event_date.
-        if event_day is None:
-            temporal = False
-        elif maximum_age_days is None:
-            temporal = True
-        else:
-            ref_day = now or datetime.now(timezone.utc).date()
-
-            def _fresh(day: date) -> bool:
-                age = (ref_day - day).days
-                return 0 <= age <= max(0, int(maximum_age_days))
-
-            temporal = _fresh(event_day) or (published_day is not None and _fresh(published_day))
+        # source_published_at may support recency only when event_date is absent;
+        # it must never become event_date and cannot rescue a stale event_date.
+        temporal = evaluate_temporal_evidence_valid(
+            event_date=interpretation.event_date,
+            source_published_at=str(published_raw) if published_raw else None,
+            source_text=source_text,
+            event_status=interpretation.event_status,
+            historical=bool(interpretation.historical),
+            now=now,
+            maximum_age_days=maximum_age_days,
+        )
         duty_ok = True
         if hiring_proxy is not None:
             duty_ok = bool(hiring_proxy["duty_proven"])

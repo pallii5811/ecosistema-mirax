@@ -291,6 +291,49 @@ def test_positive_enterprise_indicators_reject_without_employee_count(overrides)
     assert "COMPANY_OUT_OF_MARKET_SCOPE" in decision.rejection_codes or "GLOBAL_ENTERPRISE" in decision.rejection_codes
 
 
+def test_local_opco_controlled_by_multinational_not_auto_sme_from_headcount():
+    """Kastamonu-shaped case: 315 local employees must not wash a multinational parent into PMI."""
+    lead = _base_lead(
+        azienda="Kastamonu Italia",
+        sito="https://kastamonu-italia.example/",
+        employee_count=315,
+        company_size_class="unknown",
+        parent_group="Kastamonu Entegre",
+        parent_company="Kastamonu Entegre (multinazionale turca)",
+        entity_classification={
+            "entity_type": "operating_company",
+            "parent_company": "Kastamonu Entegre (multinazionale turca)",
+            "employee_count": 315,
+        },
+    )
+    lead["domain_verification"] = {**lead["domain_verification"], "url": lead["sito"]}
+    decision = evaluate_lead(lead, PLAN, cost_within_budget=True)
+    assert decision.accepted is False
+    assert decision.market_scope_status in {"ENTERPRISE", "AMBIGUOUS_CORPORATE"}
+    assert decision.market_scope_status not in {"CONFIRMED_SME", "LIKELY_SME"}
+    assert (
+        "AMBIGUOUS_CORPORATE" in decision.rejection_codes
+        or "COMPANY_OUT_OF_MARKET_SCOPE" in decision.rejection_codes
+        or "GLOBAL_ENTERPRISE" in decision.rejection_codes
+    )
+
+
+def test_local_opco_with_sme_headcount_still_enterprise_when_parent_is_multinational():
+    lead = _base_lead(
+        azienda="Controllata Locale Srl",
+        sito="https://controllata-locale.example/",
+        employee_count=180,
+        company_size_class="medium",
+        parent_group="Worldwide Multinational Holdings",
+        controlled_by_global_group=True,
+    )
+    lead["domain_verification"] = {**lead["domain_verification"], "url": lead["sito"]}
+    decision = evaluate_lead(lead, PLAN, cost_within_budget=True)
+    assert decision.accepted is False
+    assert decision.market_scope_status == "ENTERPRISE"
+    assert decision.market_scope_status != "CONFIRMED_SME"
+
+
 def test_conflicting_corporate_signals_are_held():
     lead = _base_lead(company_size_class="unknown", ownership_unresolved=True)
     lead.pop("employee_count", None)
