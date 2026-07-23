@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { commercialLeadToCsvRow, commercialResultsToCsv, COMMERCIAL_CSV_HEADERS } from './commercial-csv'
+import {
+  commercialCsvHeadersFor,
+  commercialLeadToCsvRow,
+  commercialResultsToCsv,
+  COMMERCIAL_CSV_HEADERS_BASE,
+} from './commercial-csv'
 
 describe('commercialResultsToCsv', () => {
   it('exports exactly three parity fields including canonical ids', () => {
@@ -16,6 +21,7 @@ describe('commercialResultsToCsv', () => {
         market_scope_status: 'LIKELY_SME',
         claim_type: 'OBSERVED_EVENT',
         event_date: '2026-03-01',
+        source_published_at: '2026-03-01',
       },
       {
         canonical_lead_id: 'e282e2bb-682c-43d3-a995-667f4adad5a6',
@@ -29,6 +35,7 @@ describe('commercialResultsToCsv', () => {
         market_scope_status: 'LIKELY_SME',
         claim_type: 'direct',
         event_date: '2026-07-20',
+        source_published_at: '2026-07-20',
       },
       {
         canonical_lead_id: '3b3dfade-e2db-447d-bb31-76be67b5fba1',
@@ -41,12 +48,13 @@ describe('commercialResultsToCsv', () => {
         market_scope_status: 'LIKELY_SME',
         claim_type: 'OBSERVED_EVENT',
         event_date: '2026-02-02',
+        source_published_at: '2026-02-02',
       },
     ]
     const csv = commercialResultsToCsv(leads)
     const lines = csv.replace(/^\uFEFF/, '').trim().split('\n')
     expect(lines).toHaveLength(4) // header + 3 data
-    expect(lines[0]).toBe(COMMERCIAL_CSV_HEADERS.join(','))
+    expect(lines[0]).toBe(COMMERCIAL_CSV_HEADERS_BASE.join(','))
     expect(csv).toContain('5105745d-2673-46cb-b1e0-246e34778ac8')
     expect(csv).toContain('latterievicentine.it')
     expect(csv).toContain('comm.formaggi@latterievicentine.it')
@@ -56,5 +64,42 @@ describe('commercialResultsToCsv', () => {
     expect(row.dominio).toBe('dalterfood.com')
     expect(row.email).toBe('')
     expect(row.telefono).toBe('+390522901101')
+  })
+
+  it('does not fall back source_published_at into event_date', () => {
+    const lead = {
+      azienda: 'Acme',
+      sito: 'https://acme.example',
+      source_published_at: '2026-05-10',
+      // event_date intentionally absent
+    }
+    const row = commercialLeadToCsvRow(lead)
+    expect(row.event_date).toBe('')
+    expect(row.source_published_at).toBe('2026-05-10')
+    expect(row.observed_at).toBeUndefined()
+    const headers = commercialCsvHeadersFor([lead])
+    expect(headers).toContain('source_published_at')
+    expect(headers).toContain('event_date')
+    expect(headers).not.toContain('observed_at')
+    const csv = commercialResultsToCsv([lead])
+    expect(csv).toContain('"2026-05-10"')
+    // event_date column must stay empty even when source_published_at is set
+    const cols = csv.replace(/^\uFEFF/, '').trim().split('\n')[0].split(',')
+    const eventIdx = cols.indexOf('event_date')
+    const dataCols = csv.replace(/^\uFEFF/, '').trim().split('\n')[1].split(',')
+    expect(dataCols[eventIdx]).toBe('""')
+    expect(dataCols[cols.indexOf('source_published_at')]).toBe('"2026-05-10"')
+  })
+
+  it('adds observed_at column only when present on a result', () => {
+    const withObserved = {
+      azienda: 'Acme',
+      sito: 'https://acme.example',
+      event_date: '2026-01-01',
+      source_published_at: '2026-01-02',
+      observed_at: '2026-01-03T12:00:00Z',
+    }
+    expect(commercialCsvHeadersFor([withObserved])).toContain('observed_at')
+    expect(commercialLeadToCsvRow(withObserved).observed_at).toBe('2026-01-03T12:00:00Z')
   })
 })

@@ -674,7 +674,12 @@ export default function LeadDetailClient({ lead: leadProp, searchId, leadIndex, 
           acceptance?.intent_strength ||
           '',
         ).trim()
-        const eventDate = String(lead?.event_date || lead?.source_published_at || verdict?.event_date || '').trim()
+        // Keep event_date / source_published_at / observed_at strictly separate — no cross-fallback.
+        const eventDate = String(lead?.event_date || verdict?.event_date || '').trim()
+        const sourcePublishedAt = String(
+          lead?.source_published_at || verdict?.source_published_at || '',
+        ).trim()
+        const observedAt = String(lead?.observed_at || '').trim()
         const marketScope = String(
           lead?.market_scope_status || lead?.market_scope_state || acceptance?.market_scope_status || '',
         ).trim()
@@ -707,9 +712,12 @@ export default function LeadDetailClient({ lead: leadProp, searchId, leadIndex, 
               {excerpt ? <div><span style={{ color: '#94A3B8' }}>Excerpt: </span>{excerpt}</div> : null}
               {whyNow ? <div><span style={{ color: '#94A3B8' }}>Why now: </span>{whyNow}</div> : null}
               {whyFit ? <div><span style={{ color: '#94A3B8' }}>Why fit: </span>{whyFit}</div> : null}
-              {(eventDate || claimType || marketScope) ? (
+              {eventDate ? <div><span style={{ color: '#94A3B8' }}>Data evento: </span>{eventDate}</div> : null}
+              {sourcePublishedAt ? <div><span style={{ color: '#94A3B8' }}>Fonte pubblicata il: </span>{sourcePublishedAt}</div> : null}
+              {observedAt ? <div><span style={{ color: '#94A3B8' }}>Osservato il: </span>{observedAt}</div> : null}
+              {(claimType || marketScope) ? (
                 <div style={{ color: '#64748B', fontSize: 12 }}>
-                  {[eventDate && `Data: ${eventDate}`, claimType && `Claim: ${claimType}`, marketScope && `Market scope: ${marketScope}`]
+                  {[claimType && `Claim: ${claimType}`, marketScope && `Market scope: ${marketScope}`]
                     .filter(Boolean)
                     .join(' · ')}
                 </div>

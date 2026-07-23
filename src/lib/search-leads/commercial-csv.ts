@@ -54,6 +54,8 @@ function readEvidence(obj: Record<string, unknown>): {
   source_url: string
   evidence_excerpt: string
   event_date: string
+  source_published_at: string
+  observed_at: string
   claim_type: string
   source_publisher: string
 } {
@@ -61,6 +63,7 @@ function readEvidence(obj: Record<string, unknown>): {
   const list = Array.isArray(grounding?.grounded_evidence) ? grounding!.grounded_evidence : []
   const first = asRecord(list[0])
   const verdict = asRecord(first?.verdict) || asRecord(first?.interpretation) || {}
+  // Keep event_date / source_published_at / observed_at strictly separate — no cross-fallback.
   return {
     source_url:
       readFirstString(obj, ['source_url']) ||
@@ -71,9 +74,14 @@ function readEvidence(obj: Record<string, unknown>): {
       readFirstString(verdict, ['evidence_excerpt', 'excerpt']) ||
       '',
     event_date:
-      readFirstString(obj, ['event_date', 'source_published_at', 'published_at']) ||
-      readFirstString(verdict, ['event_date', 'published_at']) ||
+      readFirstString(obj, ['event_date']) ||
+      readFirstString(verdict, ['event_date']) ||
       '',
+    source_published_at:
+      readFirstString(obj, ['source_published_at']) ||
+      readFirstString(verdict, ['source_published_at']) ||
+      '',
+    observed_at: readFirstString(obj, ['observed_at']),
     claim_type:
       readFirstString(obj, ['claim_type', 'evidence_claim_type', 'intent_strength']) ||
       readFirstString(verdict, ['evidence_claim_type', 'claim_type']) ||
@@ -95,7 +103,7 @@ function csvCell(value: unknown): string {
   return `"${String(value ?? '').replace(/"/g, '""')}"`
 }
 
-export const COMMERCIAL_CSV_HEADERS = [
+export const COMMERCIAL_CSV_HEADERS_BASE = [
   'canonical_lead_id',
   'azienda',
   'dominio',
@@ -107,17 +115,21 @@ export const COMMERCIAL_CSV_HEADERS = [
   'why_fit',
   'why_now',
   'event_date',
+  'source_published_at',
   'claim_type',
   'market_scope',
   'source_publisher',
   'citta',
 ] as const
 
-export type CommercialCsvRow = Record<(typeof COMMERCIAL_CSV_HEADERS)[number], string>
+/** Always-present columns; observed_at appended only when present on ≥1 result. */
+export const COMMERCIAL_CSV_HEADERS = COMMERCIAL_CSV_HEADERS_BASE
+
+export type CommercialCsvRow = Record<string, string>
 
 export function commercialLeadToCsvRow(lead: Record<string, unknown>): CommercialCsvRow {
   const evidence = readEvidence(lead)
-  return {
+  const row: CommercialCsvRow = {
     canonical_lead_id: readFirstString(lead, [
       'canonical_lead_id',
       'search_candidate_id',
@@ -134,18 +146,29 @@ export function commercialLeadToCsvRow(lead: Record<string, unknown>): Commercia
     why_fit: readWhyFit(lead),
     why_now: readWhyNow(lead),
     event_date: evidence.event_date,
+    source_published_at: evidence.source_published_at,
     claim_type: evidence.claim_type,
     market_scope: readMarketScope(lead),
     source_publisher: evidence.source_publisher,
     citta: readFirstString(lead, ['citta', 'city', 'matched_geography']),
   }
+  if (evidence.observed_at) row.observed_at = evidence.observed_at
+  return row
+}
+
+export function commercialCsvHeadersFor(results: Record<string, unknown>[]): string[] {
+  const hasObserved = results.some((lead) => Boolean(readEvidence(lead).observed_at))
+  return hasObserved
+    ? [...COMMERCIAL_CSV_HEADERS_BASE, 'observed_at']
+    : [...COMMERCIAL_CSV_HEADERS_BASE]
 }
 
 /** Export CSV commerciale (UTF-8 BOM per Excel). */
 export function commercialResultsToCsv(results: Record<string, unknown>[]): string {
+  const headers = commercialCsvHeadersFor(results)
   const rows = results.map((lead) => {
     const row = commercialLeadToCsvRow(lead)
-    return COMMERCIAL_CSV_HEADERS.map((h) => csvCell(row[h])).join(',')
+    return headers.map((h) => csvCell(row[h] ?? '')).join(',')
   })
-  return `\uFEFF${COMMERCIAL_CSV_HEADERS.join(',')}\n${rows.join('\n')}`
+  return `\uFEFF${headers.join(',')}\n${rows.join('\n')}`
 }
