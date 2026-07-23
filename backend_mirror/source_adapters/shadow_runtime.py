@@ -247,6 +247,8 @@ async def execute_source_adapter_shadow(
             "cumulative_audited": int(resume.get("cumulative_audited") or 0),
             "cumulative_qualified_unique": len(processed_employer_keys),
             "total_unique_employer_target": total_unique_target,
+            # Re-open candidate_source_urls once per resume when target unmet.
+            "clear_salvaged_on_resume": len(processed_employer_keys) < max(1, int(requested_count)),
         },
     )
     source_policy = plan.get("source_policy") or {}

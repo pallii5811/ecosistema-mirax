@@ -1972,6 +1972,10 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
     # Time-limit salvage: pages that already emitted candidates were marked
     # terminal before orchestrator finished semantic. Re-open them unless the
     # company domain is already in processed_employer_keys.
+    if request.technical_filters.pop("clear_salvaged_on_resume", None):
+        # One re-open wave per worker resume — persistent salvaged_urls otherwise
+        # permanently blocks Cembre/Tironi/DalterFood after a time-limit miss.
+        state.salvaged_urls = ()
     if (
         universal
         and request.technical_filters.get("semantic_authority_required") is True
@@ -1998,10 +2002,15 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
             compact = re.sub(r"[^a-z0-9]", "", (hint or "").casefold())
             if compact and any(compact in domain.replace(".", "") or domain.replace(".", "") in compact for domain in processed_domains):
                 continue
+            # Also skip when host itself is already a published employer domain.
+            host = _host(url)
+            if host and host.removeprefix("www.") in processed_domains:
+                continue
             seen.add(key)
             salvage_keys.append(key)
             accepted_hits.append(dict(meta))
-            if len(salvage_keys) >= max(2, min(limit, URLS_PER_WAVE)):
+            # Drain more PMI salvage URLs per wave — 2 was too low for requested_count=3.
+            if len(salvage_keys) >= max(4, min(limit, max(URLS_PER_WAVE, int(request.requested_count) + 2))):
                 break
         if salvage_keys:
             salvage_set = set(salvage_keys)
