@@ -56,7 +56,7 @@ def event(excerpt: str, *, company: str, role: str, query_match: bool) -> dict[s
         "provider": company if role == "provider" else None, "beneficiary": company if role == "recipient" else None,
         "investor": None, "employer": None, "recruiter": None, "publisher": "Fixture Publisher",
         "authority": None, "predicate": "capital_received_by_target" if accepted else "credit_offered_by_target",
-        "direction": "provider_to_recipient", "event_status": "completed", "event_date": "2026-07-18",
+        "direction": "provider_to_recipient", "event_status": "observed", "event_date": "2026-07-18",
         "amount": None, "location": "Italia", "technology": None, "role": None,
         "negated": False, "hypothetical": False, "conditional": False, "rumor": False, "historical": False,
         "certainty": 0.95, "query_match": query_match,
@@ -186,6 +186,23 @@ def test_common_semantic_gate_uses_evidence_published_at_when_model_omits_event_
         confidence=0.55,
     )
     excerpt = item.evidence[0].excerpt
+    # Undated event may lean on source_published_at only when status is
+    # observed/active/announced and the text marks the event as current.
+    source_text = (
+        f"{excerpt}. Annunciato oggi il closing del round. "
+        + ("contesto letterale sufficiente per il grounding semantico. " * 4)
+    )
+    item = replace(
+        item,
+        evidence=(replace(
+            item.evidence[0],
+            excerpt=excerpt,
+            provenance={
+                **dict(item.evidence[0].provenance),
+                "source_text": source_text,
+            },
+        ),),
+    )
     model = Model(event_without_date(excerpt, company="Datafire Srl", role="recipient", query_match=True))
     adapter = PagedAdapter(capability("generic", ("funding",)), [[item]])
     result = asyncio.run(UniversalSourceOrchestrator(SourceCapabilityRegistry((adapter,))).run(
@@ -193,6 +210,10 @@ def test_common_semantic_gate_uses_evidence_published_at_when_model_omits_event_
     ))
     assert result.progress.qualified_count == 1, result.rejection_codes
     assert result.rejection_codes.get("EVENT_GROUNDING_FAILED", 0) == 0
+    grounding = result.qualified_leads[0].candidate.provenance["semantic_grounding"]
+    assert grounding["accepted"] is True
+    # source_published_at must never be copied into event_date
+    assert grounding["grounded_evidence"][0]["verdict"]["event_date"] in (None, "")
 
 
 def test_common_semantic_gate_rejects_inverse_provider_before_scoring(tmp_path: Path) -> None:

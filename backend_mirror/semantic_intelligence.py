@@ -140,10 +140,17 @@ def industrial_buyer_trigger_satisfied(satisfied: Sequence[str]) -> bool:
 
 def missing_industrial_relationships(
     required: Sequence[str],
-    satisfied: Sequence[str],
+    satisfied: Any,
 ) -> Tuple[str, ...]:
+    # supported_relationships is often a set; _tuple() only accepts Sequence and
+    # would otherwise treat a set as empty → false SEMANTIC_QUERY_MISMATCH.
     req = set(_tuple(required))
-    sat = set(_tuple(satisfied))
+    if isinstance(satisfied, str):
+        sat = {_clean(satisfied)} if _clean(satisfied) else set()
+    elif isinstance(satisfied, Iterable) and not isinstance(satisfied, (bytes, bytearray)):
+        sat = {_clean(item) for item in satisfied if _clean(item)}
+    else:
+        sat = set()
     missing = set()
     for item in req:
         if item == INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY:
@@ -905,7 +912,10 @@ def _date_is_fresh(day: date, *, ref_day: date, maximum_age_days: Optional[int])
     if maximum_age_days is None:
         return True
     age = (ref_day - day).days
-    return 0 <= age <= max(0, int(maximum_age_days))
+    # Local calendar "today" can be ahead of UTC ref_day; future-dated is not stale.
+    if age < 0:
+        return True
+    return age <= max(0, int(maximum_age_days))
 
 
 def _has_explicit_stale_year(source_text: str, *, ref_day: date, maximum_age_days: Optional[int]) -> bool:

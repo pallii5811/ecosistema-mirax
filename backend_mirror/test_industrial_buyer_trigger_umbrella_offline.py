@@ -383,6 +383,15 @@ def test_event_date_vecchia_source_recente_reject():
     assert verdict.rejection_code == "EVENT_GROUNDING_FAILED"
 
 
+def test_missing_industrial_relationships_accepts_set_satisfied():
+    from backend_mirror.semantic_intelligence import missing_industrial_relationships
+
+    required = ("capital_received_by_target",)
+    # Orchestrator aggregates into a set; must not be treated as empty.
+    assert missing_industrial_relationships(required, {"capital_received_by_target"}) == ()
+    assert missing_industrial_relationships(required, set()) == ("capital_received_by_target",)
+
+
 def test_event_date_vecchia_source_vecchia_reject():
     source = "Tironi Spa ha inaugurato il nuovo stabilimento a Modena."
     verdict = _verify(
