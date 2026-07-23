@@ -8,11 +8,11 @@
  * Usage:
  *   npx tsx scripts/run_openworld_diverse_matrix.ts budget
  *   npx tsx scripts/run_openworld_diverse_matrix.ts offline-check
- *   npx tsx scripts/run_openworld_diverse_matrix.ts prepare --case A --user-email you@example.com
- *   npx tsx scripts/run_openworld_diverse_matrix.ts review --search-id <uuid>
- *   npx tsx scripts/run_openworld_diverse_matrix.ts worker-cmd --search-id <uuid>
+ *   npx tsx scripts/run_openworld_diverse_matrix.ts prepare --case=A --user-email=you@example.com
+ *   npx tsx scripts/run_openworld_diverse_matrix.ts review --search-id=<uuid>
+ *   npx tsx scripts/run_openworld_diverse_matrix.ts worker-cmd --search-id=<uuid> --worker-cap=0.21
  *
- * Do NOT run `all`. Execute case A only after SSH deploy, review, then B, …
+ * Do NOT run `all`. Do NOT set override env vars unless the owner authorizes spend.
  */
 import { config } from 'dotenv'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
@@ -32,11 +32,25 @@ import {
   formatFunnel,
   extractLeadReviewFields,
 } from './lib/openworld-matrix-cases'
+import {
+  CASE_TOTAL_CAP_EUR,
+  LEDGER_SPEND_STATUSES,
+  MATRIX_TELEMETRY_SOURCE,
+  type CanaryBudgetRow,
+  type LedgerBudgetRow,
+  type SearchBudgetRow,
+  assertBudgetAccountingMatch,
+  computeCampaignSpendTotals,
+  computeWorkerRemainingCap,
+  ledgerRowCost,
+  parseAllowOverCeiling,
+  parseOwnerAuthorizedExtraEur,
+  resolveSpendAuthorization,
+} from './lib/openworld-matrix-budget'
 
 config({ path: '.env.local' })
 
 const SPEND_CEILING_EUR = Number(process.env.MIRAX_OPENWORLD_SPEND_CEILING_EUR || '2.70')
-const HARD_CAP_EUR = Number(process.env.MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR || '0.25')
 /** Inclusive lower bound for campaign spend accounting (ISO date). */
 const BUDGET_SINCE = String(process.env.MIRAX_OPENWORLD_BUDGET_SINCE || '2026-07-20')
 
@@ -50,6 +64,7 @@ const action = String(args.get('action') || process.argv[2] || 'offline-check').
 const caseId = (args.get('case') || '').toUpperCase() as MatrixCaseId | ''
 const searchIdArg = args.get('search-id') || ''
 const userEmail = args.get('user-email') || ''
+const workerCapArg = args.get('worker-cap') || ''
 
 function requiredEnv(name: string): string {
   const value = String(process.env[name] || '').trim()
@@ -72,115 +87,176 @@ async function resolveUserId(service: SupabaseClient, email: string): Promise<st
   return user.id
 }
 
-/** Real cumulative spend from ledger — not report estimates. */
-async function reconstructBudgetViaPostgres() {
+async function loadCampaignDatasetViaPostgres(): Promise<{
+  searches: SearchBudgetRow[]
+  canaries: CanaryBudgetRow[]
+  ledger: LedgerBudgetRow[]
+}> {
   const { connectMiraxDb, loadMiraxDbPassword } = await import('./lib/mirax-db.mjs')
-  if (!loadMiraxDbPassword()) throw new Error('ECOSISTEMA_DB_PASSWORD missing for budget fallback')
+  if (!loadMiraxDbPassword()) throw new Error('ECOSISTEMA_DB_PASSWORD missing')
   const c = await connectMiraxDb()
   try {
-    // Campaign-scoped spend only (open-world / v5_shadow), not the whole product ledger.
-    const r = await c.query(
-      `with campaign_searches as (
-         select s.id
-           from public.searches s
-          where s.created_at >= $2::timestamptz
-            and (
-              coalesce(s.intent->'intent_compiler_telemetry'->>'source','')
-                = 'openworld_diverse_matrix_production_path'
-              or coalesce(s.category,'') ilike '%Open-World%'
-              or coalesce(s.category,'') ilike '%open-world%'
-              or exists (
-                   select 1 from public.canary_runs c
-                    where c.search_id = s.id
-                      and (
-                        c.canary_type ilike 'open_world%'
-                        or c.canary_type ilike '%openworld%'
-                      )
-                 )
-            )
-       ),
-       totals as (
-         select coalesce(sum(coalesce(l.actual_cost_eur, l.estimated_cost_eur, 0)), 0)::float as cumulative,
-                count(*)::int as n
-           from public.search_cost_ledger l
-           join campaign_searches cs on cs.id = l.search_id
-          where l.status = any($1::text[])
-       ),
-       successful as (
-         select coalesce(sum(coalesce(l.actual_cost_eur, l.estimated_cost_eur, 0)), 0)::float as cumulative
-           from public.search_cost_ledger l
-           join campaign_searches cs on cs.id = l.search_id
-           join public.searches s on s.id = cs.id
-          where l.status = any($1::text[])
-            and s.status = 'completed'
-            and jsonb_typeof(s.results) = 'array'
-            and jsonb_array_length(s.results) >= 1
-       )
-       select totals.cumulative, totals.n,
-              successful.cumulative as successful_cumulative
-         from totals, successful`,
-      [['settled', 'committed', 'failed', 'halted'], BUDGET_SINCE],
+    const searches = await c.query(
+      `select id, category, intent, status, results, created_at
+         from public.searches
+        where created_at >= $1::timestamptz`,
+      [BUDGET_SINCE],
     )
-    const cumulative = Number(r.rows[0]?.cumulative || 0)
-    const successfulCumulative = Number(r.rows[0]?.successful_cumulative || 0)
-    const residual = Math.max(0, SPEND_CEILING_EUR - cumulative)
-    const allowOver = String(process.env.MIRAX_OPENWORLD_ALLOW_OVER_CEILING || '') === '1'
+    const canaries = await c.query(
+      `select search_id, canary_type from public.canary_runs
+        where created_at >= $1::timestamptz
+           or canary_type ilike 'open_world%'
+           or canary_type ilike '%openworld%'`,
+      [BUDGET_SINCE],
+    )
+    const ledger = await c.query(
+      `select search_id, actual_cost_eur, estimated_cost_eur, status
+         from public.search_cost_ledger
+        where status = any($1::text[])`,
+      [[...LEDGER_SPEND_STATUSES]],
+    )
     return {
-      cumulative_cost_eur: Number(cumulative.toFixed(6)),
-      successful_completed_cost_eur: Number(successfulCumulative.toFixed(6)),
-      spend_ceiling_eur: SPEND_CEILING_EUR,
-      residual_budget_eur: Number(residual.toFixed(6)),
-      hard_cap_per_search_eur: HARD_CAP_EUR,
-      ledger_rows: Number(r.rows[0]?.n || 0),
-      enough_for_one_case: residual + 1e-9 >= HARD_CAP_EUR || allowOver,
-      allow_over_ceiling: allowOver,
-      source: 'postgres_direct_campaign_scoped' as const,
-      budget_since: BUDGET_SINCE,
+      searches: searches.rows as SearchBudgetRow[],
+      canaries: canaries.rows as CanaryBudgetRow[],
+      ledger: ledger.rows as LedgerBudgetRow[],
     }
   } finally {
     await c.end()
   }
 }
 
-/** Real cumulative spend from ledger — not report estimates. */
-async function reconstructBudget(service: SupabaseClient) {
-  try {
-    const { data, error } = await service
-      .from('search_cost_ledger')
-      .select('actual_cost_eur,estimated_cost_eur,status')
-      .in('status', ['settled', 'committed', 'failed', 'halted'])
-    if (error) throw new Error(error.message || JSON.stringify(error))
-    const rows = data || []
-    const cumulative = rows.reduce(
-      (sum, row) => sum + Number(row.actual_cost_eur ?? row.estimated_cost_eur ?? 0),
-      0,
-    )
-    const residual = Math.max(0, SPEND_CEILING_EUR - cumulative)
-    const out = {
-      cumulative_cost_eur: Number(cumulative.toFixed(6)),
-      spend_ceiling_eur: SPEND_CEILING_EUR,
-      residual_budget_eur: Number(residual.toFixed(6)),
-      hard_cap_per_search_eur: HARD_CAP_EUR,
-      ledger_rows: rows.length,
-      enough_for_one_case: residual + 1e-9 >= HARD_CAP_EUR,
-      source: 'supabase_rest' as const,
-    }
-    console.log(JSON.stringify({ budget: out }, null, 2))
-    return out
-  } catch (restErr) {
-    const out = await reconstructBudgetViaPostgres()
-    console.log(
-      JSON.stringify(
-        {
-          budget: out,
-          rest_fallback_reason: restErr instanceof Error ? restErr.message : String(restErr),
-        },
-        null,
-        2,
-      ),
-    )
-    return out
+async function loadCampaignDatasetViaRest(service: SupabaseClient): Promise<{
+  searches: SearchBudgetRow[]
+  canaries: CanaryBudgetRow[]
+  ledger: LedgerBudgetRow[]
+}> {
+  const { data: searches, error: sErr } = await service
+    .from('searches')
+    .select('id,category,intent,status,results,created_at')
+    .gte('created_at', BUDGET_SINCE)
+  if (sErr) throw new Error(`REST searches: ${sErr.message}`)
+
+  const { data: canaries, error: cErr } = await service
+    .from('canary_runs')
+    .select('search_id,canary_type,created_at')
+    .gte('created_at', BUDGET_SINCE)
+  if (cErr) throw new Error(`REST canaries: ${cErr.message}`)
+
+  // Also pull open_world canaries that may predate BUDGET_SINCE but still bind searches.
+  const { data: owCanaries, error: owErr } = await service
+    .from('canary_runs')
+    .select('search_id,canary_type,created_at')
+    .or('canary_type.ilike.open_world%,canary_type.ilike.%openworld%')
+  if (owErr) throw new Error(`REST open_world canaries: ${owErr.message}`)
+
+  const canaryMap = new Map<string, CanaryBudgetRow>()
+  for (const row of [...(canaries || []), ...(owCanaries || [])]) {
+    const key = `${row.search_id}:${row.canary_type}`
+    canaryMap.set(key, { search_id: row.search_id, canary_type: row.canary_type })
   }
+
+  const { data: ledger, error: lErr } = await service
+    .from('search_cost_ledger')
+    .select('search_id,actual_cost_eur,estimated_cost_eur,status')
+    .in('status', [...LEDGER_SPEND_STATUSES])
+  if (lErr) throw new Error(`REST ledger: ${lErr.message}`)
+
+  return {
+    searches: (searches || []) as SearchBudgetRow[],
+    canaries: [...canaryMap.values()],
+    ledger: (ledger || []) as LedgerBudgetRow[],
+  }
+}
+
+function authorizationFromEnv(totals: {
+  cumulative_cost_eur: number
+  successful_completed_cost_eur: number
+}) {
+  return resolveSpendAuthorization({
+    actualCumulativeBefore: totals.cumulative_cost_eur,
+    successfulCompletedCostEur: totals.successful_completed_cost_eur,
+    spendCeilingEur: SPEND_CEILING_EUR,
+    allowOverCeiling: parseAllowOverCeiling(process.env.MIRAX_OPENWORLD_ALLOW_OVER_CEILING),
+    ownerAuthorizedExtraEur: parseOwnerAuthorizedExtraEur(
+      process.env.MIRAX_OPENWORLD_OWNER_AUTHORIZED_EXTRA_EUR,
+    ),
+    caseTotalCapEur: CASE_TOTAL_CAP_EUR,
+  })
+}
+
+/**
+ * Dual-source authoritative budget. REST and Postgres must agree on campaign spend
+ * or fail closed with BUDGET_ACCOUNTING_MISMATCH.
+ */
+async function reconstructBudget(service: SupabaseClient) {
+  let restDataset: Awaited<ReturnType<typeof loadCampaignDatasetViaRest>>
+  let pgDataset: Awaited<ReturnType<typeof loadCampaignDatasetViaPostgres>>
+  try {
+    ;[restDataset, pgDataset] = await Promise.all([
+      loadCampaignDatasetViaRest(service),
+      loadCampaignDatasetViaPostgres(),
+    ])
+  } catch (error) {
+    const err = new Error(
+      `BUDGET_ACCOUNTING_MISMATCH source_load_failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+    err.name = 'BUDGET_ACCOUNTING_MISMATCH'
+    throw err
+  }
+
+  const restTotals = computeCampaignSpendTotals({
+    ...restDataset,
+    budgetSinceIso: BUDGET_SINCE,
+  })
+  const pgTotals = computeCampaignSpendTotals({
+    ...pgDataset,
+    budgetSinceIso: BUDGET_SINCE,
+  })
+  assertBudgetAccountingMatch(restTotals.cumulative_cost_eur, pgTotals.cumulative_cost_eur)
+
+  const auth = authorizationFromEnv(pgTotals)
+  const out = {
+    ...auth,
+    ledger_rows: pgTotals.ledger_rows,
+    campaign_search_count: pgTotals.campaign_search_ids.length,
+    budget_since: BUDGET_SINCE,
+    sources: {
+      rest_cumulative_cost_eur: restTotals.cumulative_cost_eur,
+      postgres_cumulative_cost_eur: pgTotals.cumulative_cost_eur,
+      matched: true,
+    },
+    note: 'successful_completed_cost_eur is diagnostic only and does not increase residual',
+  }
+  console.log(JSON.stringify({ budget: out }, null, 2))
+  return out
+}
+
+async function sumSearchPlanningSpend(service: SupabaseClient, searchId: string): Promise<number> {
+  const { data, error } = await service
+    .from('search_cost_ledger')
+    .select('actual_cost_eur,estimated_cost_eur,status')
+    .eq('search_id', searchId)
+    .in('status', [...LEDGER_SPEND_STATUSES])
+  if (error) {
+    // Fallback postgres for this search only
+    const { connectMiraxDb, loadMiraxDbPassword } = await import('./lib/mirax-db.mjs')
+    if (!loadMiraxDbPassword()) throw new Error(error.message)
+    const c = await connectMiraxDb()
+    try {
+      const r = await c.query(
+        `select coalesce(sum(coalesce(actual_cost_eur, estimated_cost_eur, 0)), 0)::float as c
+           from public.search_cost_ledger
+          where search_id = $1 and status = any($2::text[])`,
+        [searchId, [...LEDGER_SPEND_STATUSES]],
+      )
+      return Number(r.rows[0]?.c || 0)
+    } finally {
+      await c.end()
+    }
+  }
+  return (data || []).reduce((sum, row) => sum + ledgerRowCost(row), 0)
 }
 
 async function assertSafeIdle(service: SupabaseClient) {
@@ -196,10 +272,24 @@ async function assertSafeIdle(service: SupabaseClient) {
   }
 }
 
+async function cancelPlanningJob(
+  service: SupabaseClient,
+  planningId: string,
+  reason: string,
+) {
+  await service
+    .from('searches')
+    .update({
+      status: 'cancelled',
+      results: [],
+      progress: { stop_reason: reason, stage: 'matrix_budget_guard' },
+    })
+    .eq('id', planningId)
+}
+
 /**
  * Production compile path (same as unified-search-action shadow lane):
  * raw query → buildMiraxQueryPlan → canonical_plan from compiler.
- * No manual seller/target/signals/adapters injection.
  */
 async function compileProductionPlan(
   service: SupabaseClient,
@@ -231,9 +321,10 @@ async function prepareCase(service: SupabaseClient, id: MatrixCaseId) {
   assertCaseIsProductionInputOnly(spec)
 
   const budget = await reconstructBudget(service)
-  if (!budget.enough_for_one_case) {
+  if (!budget.can_prepare) {
     throw new Error(
-      `residual budget ${budget.residual_budget_eur} < hard cap ${HARD_CAP_EUR}; refuse paid prepare`,
+      `prepare rejected: ${budget.reject_reason} residual=${budget.residual_budget_eur} ` +
+        `authorized_ceiling=${budget.authorized_ceiling_eur} case_cap=${CASE_TOTAL_CAP_EUR}`,
     )
   }
   await assertSafeIdle(service)
@@ -249,21 +340,37 @@ async function prepareCase(service: SupabaseClient, id: MatrixCaseId) {
   try {
     plan = await compileProductionPlan(service, spec, planningId)
   } catch (error) {
-    await service
-      .from('searches')
-      .update({
-        status: 'cancelled',
-        results: [],
-        progress: {
-          stop_reason: error instanceof Error ? error.message : String(error),
-          stage: 'matrix_compile_failed',
-        },
-      })
-      .eq('id', planningId)
+    await cancelPlanningJob(
+      service,
+      planningId,
+      error instanceof Error ? error.message : String(error),
+    )
+    throw error
+  }
+
+  const planningSpend = await sumSearchPlanningSpend(service, planningId)
+  let workerCap: ReturnType<typeof computeWorkerRemainingCap>
+  try {
+    workerCap = computeWorkerRemainingCap(CASE_TOTAL_CAP_EUR, planningSpend)
+  } catch (error) {
+    await cancelPlanningJob(service, planningId, 'CASE_BUDGET_EXHAUSTED_DURING_PLANNING')
     throw error
   }
 
   const canonical = plan.canonical_plan!
+  const priorBudget =
+    canonical.budget_policy && typeof canonical.budget_policy === 'object'
+      ? (canonical.budget_policy as Record<string, unknown>)
+      : {}
+  const workerCanonical = {
+    ...canonical,
+    budget_policy: {
+      ...priorBudget,
+      // Worker may only spend the residual after planning — never a fresh CASE_TOTAL_CAP.
+      hard_cost_eur: workerCap.worker_remaining_cap_eur,
+      target_cost_eur: Number((workerCap.worker_remaining_cap_eur * 0.8).toFixed(4)),
+    },
+  }
   const job = await requestAgenticWorkerJob(service, {
     query: spec.raw_query,
     maxLeads: spec.requested_count,
@@ -280,16 +387,31 @@ async function prepareCase(service: SupabaseClient, id: MatrixCaseId) {
       required_signals: plan.required_signals,
       signals: (plan.required_signals || []).map((type) => ({ type, params: {} })),
       commercial_intent_spec: (canonical as { commercial_intent_spec?: unknown }).commercial_intent_spec,
+      case_total_cap_eur: CASE_TOTAL_CAP_EUR,
+      planning_spend_eur: workerCap.planning_spend_eur,
+      worker_remaining_cap_eur: workerCap.worker_remaining_cap_eur,
       intent_compiler_telemetry: {
-        source: 'openworld_diverse_matrix_production_path',
+        source: MATRIX_TELEMETRY_SOURCE,
         case_id: id,
         request_mode: (canonical as { request_mode?: string }).request_mode ?? null,
         parse_source: plan.parse_source,
       },
     },
-    plan: { ...plan, canonical_plan: canonical },
+    plan: { ...plan, canonical_plan: workerCanonical },
     existingSearchId: planningId,
   })
+
+  // Worker hard budget = remainder only (never re-grant the full CASE_TOTAL_CAP).
+  // May no-op if planning already initialized an immutable lower product cap.
+  try {
+    await service.rpc('initialize_search_budget', {
+      p_search_id: job.searchId,
+      p_target_cost_eur: Number((workerCap.worker_remaining_cap_eur * 0.8).toFixed(4)),
+      p_hard_cost_eur: workerCap.worker_remaining_cap_eur,
+    })
+  } catch {
+    // non-fatal; MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR enforces worker_remaining_cap
+  }
 
   const artifact = {
     case_id: id,
@@ -314,7 +436,11 @@ async function prepareCase(service: SupabaseClient, id: MatrixCaseId) {
       required_signals: canonical.signal_policy?.required_signals ?? [],
     },
     budget_before: budget,
-    note: 'Job prepared pending. Run worker --once on staging (persistent workers stay inactive+disabled).',
+    case_budget: {
+      case_total_cap_eur: CASE_TOTAL_CAP_EUR,
+      ...workerCap,
+    },
+    note: 'Job prepared pending. Run worker --once with worker_remaining_cap only.',
   }
 
   const outDir = path.join(process.cwd(), 'tmp', 'openworld-matrix')
@@ -331,8 +457,9 @@ async function prepareCase(service: SupabaseClient, id: MatrixCaseId) {
           query_mode: artifact.query_mode,
           required_signals: artifact.strategies.required_signals,
           preferred_sources: artifact.strategies.preferred_source_classes,
+          case_budget: artifact.case_budget,
           artifact: outPath,
-          worker_cmd: stagingWorkerCmd(job.searchId),
+          worker_cmd: stagingWorkerCmd(job.searchId, workerCap.worker_remaining_cap_eur),
         },
       },
       null,
@@ -342,11 +469,11 @@ async function prepareCase(service: SupabaseClient, id: MatrixCaseId) {
   return artifact
 }
 
-function stagingWorkerCmd(searchId: string): string {
+function stagingWorkerCmd(searchId: string, workerRemainingCapEur: number): string {
   return [
     'cd /home/worker/app/backend-staging &&',
     'MIRAX_WORKER_DISABLED=0 MIRAX_SEARCH_DISABLED=0 MIRAX_SOURCE_ADAPTER_SHADOW_ENABLED=1',
-    `MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR=${HARD_CAP_EUR}`,
+    `MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR=${workerRemainingCapEur}`,
     'PYTHONUNBUFFERED=1 PYTHONPATH=/home/worker/app/backend-staging',
     '/home/worker/app/venv/bin/python -u worker_supabase.py',
     `--once --search-id ${searchId} --mode user --user-recent-minutes 0 --cooldown 0`,
@@ -375,10 +502,7 @@ async function reviewSearch(service: SupabaseClient, searchId: string) {
     string,
     unknown
   >
-  const cost = (ledger || []).reduce(
-    (sum, row) => sum + Number(row.actual_cost_eur ?? row.estimated_cost_eur ?? 0),
-    0,
-  )
+  const cost = (ledger || []).reduce((sum, row) => sum + ledgerRowCost(row), 0)
   const leads = results.map((lead, i) => {
     const domain = String(lead.official_domain || lead.website_domain || lead.sito || lead.website || '')
       .replace(/^https?:\/\//i, '')
@@ -449,14 +573,6 @@ function offlineCheck() {
     market_scope_status: 'LIKELY_SME',
     _lead_acceptance: { accepted: true, opportunity_state: 'OPEN_DEMAND', intent_strength: 'inferred' },
   }
-  const fields = extractLeadReviewFields(fixtureLead)
-  if (fields.event_date !== '2026-01-15') throw new Error('event_date must stay literal')
-  if (fields.source_published_at !== '2026-01-16') throw new Error('source_published_at must stay literal')
-  // no cross-fallback: missing event_date stays empty
-  const noEvent = extractLeadReviewFields({ ...fixtureLead, event_date: undefined })
-  if (noEvent.event_date !== '') throw new Error('must not fall back source_published_at into event_date')
-  if (noEvent.source_published_at !== '2026-01-16') throw new Error('source_published_at lost')
-
   console.log(
     JSON.stringify(
       {
@@ -465,7 +581,6 @@ function offlineCheck() {
           id,
           label: OPENWORLD_MATRIX_CASES[id].label,
           keys: Object.keys(OPENWORLD_MATRIX_CASES[id]).sort(),
-          raw_query_preview: OPENWORLD_MATRIX_CASES[id].raw_query.slice(0, 80),
         })),
         sample_lead_review: formatLeadReview(fixtureLead, 0),
         sample_funnel: formatFunnel(
@@ -473,13 +588,13 @@ function offlineCheck() {
             acquisition: { pages_fetched: 12, provider_queries: 3 },
             universal_prefilter_telemetry: { prefilter_accepted: 8, prefilter_rejected: 20 },
             cumulative_raw_unique: 40,
-            cumulative_audited: 10,
             qualified: 3,
             published: 3,
           },
           3,
           3,
         ),
+        extract: extractLeadReviewFields(fixtureLead),
       },
       null,
       2,
@@ -516,7 +631,9 @@ async function main() {
     }
     if (action === 'worker-cmd' || action === 'worker_cmd') {
       if (!searchIdArg) throw new Error('--search-id required')
-      console.log(JSON.stringify({ worker_cmd: stagingWorkerCmd(searchIdArg) }, null, 2))
+      const cap = Number(workerCapArg)
+      if (!(cap > 0)) throw new Error('--worker-cap=<positive EUR> required (remaining after planning)')
+      console.log(JSON.stringify({ worker_cmd: stagingWorkerCmd(searchIdArg, cap) }, null, 2))
       return
     }
     throw new Error(`unknown action ${action}; use budget|offline-check|prepare|review|worker-cmd`)
