@@ -103,6 +103,71 @@ export type FetchMergedLeadsOptions = {
   legacyResults?: unknown
 }
 
+function normalizeDomainKey(raw: unknown): string {
+  const text = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+  return text.split('/')[0] || ''
+}
+
+function leadDomainKey(lead: Record<string, unknown>): string {
+  return (
+    normalizeDomainKey(lead.official_domain) ||
+    normalizeDomainKey(lead.website_domain) ||
+    normalizeDomainKey(lead.canonical_domain) ||
+    normalizeDomainKey(lead.sito || lead.website)
+  )
+}
+
+/**
+ * Attacca search_candidates.id come canonical_lead_id (match per dominio).
+ * Nessun ID inventato: solo lookup DB.
+ */
+export async function attachCanonicalLeadIds(
+  supabase: SupabaseClient,
+  searchId: string,
+  leads: Record<string, unknown>[],
+): Promise<Record<string, unknown>[]> {
+  if (!leads.length) return leads
+  try {
+    const { data, error } = await supabase
+      .from('search_candidates')
+      .select('id, canonical_domain, entity_name, stage')
+      .eq('search_id', searchId)
+    if (error || !data?.length) return leads
+    const byDomain = new Map<string, string>()
+    for (const row of data) {
+      const domain = normalizeDomainKey(row.canonical_domain)
+      if (domain && row.id) byDomain.set(domain, String(row.id))
+    }
+    return leads.map((lead) => {
+      const existing = String(
+        lead.canonical_lead_id || lead.search_candidate_id || lead.candidate_id || '',
+      ).trim()
+      if (existing) {
+        return {
+          ...lead,
+          canonical_lead_id: existing,
+          search_candidate_id: existing,
+        }
+      }
+      const domain = leadDomainKey(lead)
+      const id = domain ? byDomain.get(domain) : undefined
+      if (!id) return lead
+      return {
+        ...lead,
+        canonical_lead_id: id,
+        search_candidate_id: id,
+      }
+    })
+  } catch (e) {
+    console.warn('[search-leads] attachCanonicalLeadIds failed search_id=%s', searchId, e)
+    return leads
+  }
+}
+
 /**
  * Lead merged per un job: preferisce search_leads, fallback searches.results.
  */
@@ -126,16 +191,14 @@ export async function fetchMergedLeadsForSearch(
     console.warn('[search-leads] fetch failed search_id=%s, using legacy', searchId, e)
   }
 
+  let merged: Record<string, unknown>[] = []
+
   if (fromTable.length > 0 && legacy.length > 0) {
     const seen = new Map<string, Record<string, unknown>>()
     const keyOf = (lead: Record<string, unknown>) => {
       const d = String(lead.dedupe_key || '').trim()
       if (d) return d
-      const site = String(lead.sito || lead.website || '')
-        .toLowerCase()
-        .replace(/^https?:\/\//, '')
-        .replace(/^www\./, '')
-        .split('/')[0]
+      const site = leadDomainKey(lead)
       if (site) return `web:${site}`
       const phone = String(lead.telefono || lead.phone || '').replace(/\D/g, '').slice(-9)
       if (phone.length >= 8) return `tel:${phone}`
@@ -147,28 +210,28 @@ export async function fetchMergedLeadsForSearch(
       const prev = seen.get(k)
       seen.set(k, prev ? { ...prev, ...lead } : lead)
     }
-    return Array.from(seen.values())
-  }
-
-  if (fromTable.length > 0) return fromTable
-
-  if (legacy.length > 0) return legacy
-
-  // Fallback: searches.results via RLS (search_leads può essere vuota lato client)
-  try {
-    const { data, error } = await supabase
-      .from('searches')
-      .select('results')
-      .eq('id', searchId)
-      .single()
-    if (!error && data?.results) {
-      return parseLegacySearchResults(data.results)
+    merged = Array.from(seen.values())
+  } else if (fromTable.length > 0) {
+    merged = fromTable
+  } else if (legacy.length > 0) {
+    merged = legacy
+  } else {
+    // Fallback: searches.results via RLS (search_leads può essere vuota lato client)
+    try {
+      const { data, error } = await supabase
+        .from('searches')
+        .select('results')
+        .eq('id', searchId)
+        .single()
+      if (!error && data?.results) {
+        merged = parseLegacySearchResults(data.results)
+      }
+    } catch (e) {
+      console.warn('[search-leads] searches.results fallback failed search_id=%s', searchId, e)
     }
-  } catch (e) {
-    console.warn('[search-leads] searches.results fallback failed search_id=%s', searchId, e)
   }
 
-  return []
+  return attachCanonicalLeadIds(supabase, searchId, merged)
 }
 
 export type SearchLeadsQueryFilters = {

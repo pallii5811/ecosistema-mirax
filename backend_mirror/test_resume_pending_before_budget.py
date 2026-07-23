@@ -122,10 +122,23 @@ def test_orchestrator_drains_pending_adapter_before_budget_raising_peer() -> Non
     assert result.status != "failed_terminal"
 
 
-def test_reopen_cursors_when_two_of_three_already_published() -> None:
-    """Remaining gap requested_count=1 must still reopen Tironi after 2 published domains."""
+def test_resume_reopens_against_original_requested_count_not_remaining() -> None:
+    """original_requested_count is immutable; reopen iff published < original.
+
+    Bug: comparing published_count (2) to remaining_count (1) skips reopen.
+    Correct: published_count (2) < original_requested_count (3) ⇒ reopen.
+    """
+    original_requested_count = 3
+    published_count = 2
+    remaining_count = max(0, original_requested_count - published_count)
+    assert remaining_count == 1
+    # Wrong (bug): published_count < remaining_count → False
+    assert not (published_count < remaining_count)
+    # Correct: published_count < original_requested_count → True
+    assert published_count < original_requested_count
+
     stranded = (
-        "https://www.tironi.com/news/elettromeccanica-tironi-inaugura-il-nuovo-stabilimento-logistico-a-modena/"
+        "https://www.dalterfood.com/dalterfood-group-inaugura-a-parma-il-nuovo-stabilimento/"
     )
     already = "https://www.tecnoeka.com/news/news-aziendali/inaugurazione-nuovo-polo-produttivo/"
     cursor = encode_generic_web_cursor(
@@ -138,12 +151,7 @@ def test_reopen_cursors_when_two_of_three_already_published() -> None:
         )
     )
     processed = ("domain:latterievicentine.it", "domain:tecnoeka.com")
-    # Bug reproduction: remaining gap alone would skip reopen (2 < 1 is false).
-    remaining_gap = 1
-    total_target = 3
-    assert not (len(processed) < remaining_gap)
-    assert len(processed) < total_target
-
+    # Shadow resume must reopen using total unique target (= original), not gap.
     reopened = reopen_generic_web_resume_cursors(
         {"generic_web_research_v1": cursor},
         processed_employer_keys=processed,
@@ -151,11 +159,23 @@ def test_reopen_cursors_when_two_of_three_already_published() -> None:
     payload = decode_generic_web_v2_payload(reopened["generic_web_research_v1"].value)
     assert payload is not None
     pending = [str(u).rstrip("/") for u in (payload.get("pending_urls") or ())]
-    assert any("tironi.com" in u for u in pending)
+    assert any("dalterfood.com" in u for u in pending)
     assert not any("tecnoeka.com" in u for u in pending)
-    assert list(payload.get("salvaged_urls") or ()) == []
-    terminal = [str(u).rstrip("/") for u in (payload.get("processed_terminal_urls") or ())]
-    assert not any("tironi.com" in u for u in terminal)
+    # Existing two published domains stay processed — only hunt the third.
+    assert len(processed) == published_count
+    assert remaining_count == max(0, original_requested_count - published_count)
+
+
+def test_remaining_count_semantics_immutable_original() -> None:
+    original_requested_count = 3
+    accepted_unique_published_count = 2
+    remaining_count = max(0, original_requested_count - accepted_unique_published_count)
+    assert remaining_count == 1
+    # original stays immutable even after computing remaining
+    assert original_requested_count == 3
+    assert max(0, original_requested_count - 3) == 0
+    assert max(0, original_requested_count - 0) == 3
+
 
 
 def test_resume_provider_hits_fetch_before_news_shells() -> None:

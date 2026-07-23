@@ -29,6 +29,7 @@ import { leadMatchesSignalIntent } from '@/lib/signal-intent/match-lead'
 import { isAuditPendingLead } from '@/lib/lead-audit-status'
 import { leadRowKey, leadStableKey } from '@/components/dashboard/lead-utils'
 import { computeFreshnessScore, freshnessLabel } from '@/lib/lead-object'
+import { commercialResultsToCsv } from '@/lib/search-leads/commercial-csv'
 
 type LeadRecord = Record<string, unknown>
 
@@ -481,29 +482,10 @@ const ResultsTable = ({
   }, [results, sortByScore, sortAlpha, sortBySignals, hotOnly, buyingByItem, signalFocused, signalIntent, isScraping])
 
   const exportCsv = () => {
-    const rows = displayResults.map((item) => {
-      const obj = asRecord(item) || {}
-      const score = calcOpportunityScore(obj)
-      const stack = Array.isArray(obj.tech_stack) ? obj.tech_stack.filter((v) => typeof v === 'string').join(' | ') : ''
-      return [
-        readFirstString(obj, ['azienda', 'nome']),
-        readFirstString(obj, ['telefono', 'phone']),
-        readFirstString(obj, ['email']),
-        readFirstString(obj, ['sito', 'website']),
-        readFirstString(obj, ['citta', 'city']),
-        readFirstString(obj, ['categoria', 'category']),
-        readMarketScopeStatus(obj),
-        obj.rating ?? '',
-        readFirstString(obj, ['instagram']),
-        readFirstString(obj, ['facebook']),
-        stack,
-        score,
-      ]
-        .map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`)
-        .join(',')
-    })
-    const headers = ['Azienda', 'Telefono', 'Email', 'Sito', 'Città', 'Categoria', 'Market Scope', 'Rating', 'Instagram', 'Facebook', 'Opportunità', 'Score']
-    const csv = '\uFEFF' + [headers.join(','), ...rows].join('\n')
+    const rows = displayResults
+      .map((item) => asRecord(item))
+      .filter((item): item is LeadRecord => !!item)
+    const csv = commercialResultsToCsv(rows)
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')

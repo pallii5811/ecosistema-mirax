@@ -659,6 +659,66 @@ export default function LeadDetailClient({ lead: leadProp, searchId, leadIndex, 
         </div>
       )}
 
+      {(() => {
+        const acceptance = lead?._lead_acceptance && typeof lead._lead_acceptance === 'object' ? lead._lead_acceptance : null
+        const grounding = lead?.semantic_grounding?.grounded_evidence?.[0]
+        const verdict = grounding?.verdict || grounding?.interpretation || {}
+        const sourceUrl = String(lead?.source_url || verdict?.source_url || '').trim()
+        const excerpt = String(lead?.evidence_excerpt || verdict?.evidence_excerpt || verdict?.excerpt || '').trim()
+        const whyNow = String(lead?.why_now || acceptance?.why_now || '').trim()
+        const whyFit = String(lead?.why_fit || acceptance?.why_fit || '').trim()
+        const claimType = String(
+          lead?.claim_type ||
+          lead?.evidence_claim_type ||
+          verdict?.evidence_claim_type ||
+          acceptance?.intent_strength ||
+          '',
+        ).trim()
+        const eventDate = String(lead?.event_date || lead?.source_published_at || verdict?.event_date || '').trim()
+        const marketScope = String(
+          lead?.market_scope_status || lead?.market_scope_state || acceptance?.market_scope_status || '',
+        ).trim()
+        const canonicalId = String(
+          lead?.canonical_lead_id || lead?.search_candidate_id || lead?.candidate_id || '',
+        ).trim()
+        if (!sourceUrl && !excerpt && !whyNow && !canonicalId) return null
+        return (
+          <div style={{
+            background: 'white', border: '1px solid #e4e4e7',
+            borderRadius: 12, padding: '20px 24px',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+            marginBottom: 16,
+          }}>
+            <div style={{
+              fontSize: 10, fontWeight: 700, color: '#94A3B8',
+              textTransform: 'uppercase', letterSpacing: '0.1em',
+              fontFamily: 'Inter, sans-serif', marginBottom: 12,
+            }}>
+              Evidenza commerciale
+            </div>
+            <div style={{ display: 'grid', gap: 10, fontFamily: 'Inter, sans-serif', fontSize: 13, color: '#0F172A' }}>
+              {canonicalId ? <div><span style={{ color: '#94A3B8' }}>Lead ID: </span><span className="font-mono text-xs">{canonicalId}</span></div> : null}
+              {sourceUrl ? (
+                <div>
+                  <span style={{ color: '#94A3B8' }}>Fonte: </span>
+                  <a href={sourceUrl} target="_blank" rel="noreferrer" style={{ color: '#6366F1', wordBreak: 'break-all' }}>{sourceUrl}</a>
+                </div>
+              ) : null}
+              {excerpt ? <div><span style={{ color: '#94A3B8' }}>Excerpt: </span>{excerpt}</div> : null}
+              {whyNow ? <div><span style={{ color: '#94A3B8' }}>Why now: </span>{whyNow}</div> : null}
+              {whyFit ? <div><span style={{ color: '#94A3B8' }}>Why fit: </span>{whyFit}</div> : null}
+              {(eventDate || claimType || marketScope) ? (
+                <div style={{ color: '#64748B', fontSize: 12 }}>
+                  {[eventDate && `Data: ${eventDate}`, claimType && `Claim: ${claimType}`, marketScope && `Market scope: ${marketScope}`]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Top 3 card */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
 
