@@ -931,8 +931,12 @@ def _serp_fetch_priority(hit: Any) -> Tuple[int, int, int, str]:
     url = _hit_str(hit, "url")
     title = _hit_str(hit, "title")
     snippet = _hit_str(hit, "snippet")
+    provider = _hit_str(hit, "provider").casefold()
     host = _host(url)
-    if any(host == suffix or host.endswith("." + suffix) for suffix in _CONTENT_SHELL_HOST_SUFFIXES):
+    if provider == "resume":
+        # Salvage reopen URLs first — expansions must not starve Tironi/Cembre.
+        tier = -1
+    elif any(host == suffix or host.endswith("." + suffix) for suffix in _CONTENT_SHELL_HOST_SUFFIXES):
         tier = 2
     elif any(host == suffix or host.endswith("." + suffix) for suffix in _PREFERRED_NEWS_HOST_SUFFIXES):
         tier = 0
@@ -2132,6 +2136,12 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
         wave_cap = max(3, min(limit, URLS_PER_WAVE))
         if universal:
             wave_cap = max(wave_cap, min(len(accepted_hits), max(limit * 3, 8)))
+        # Salvage reopen must not expand news hubs for 80+ free pages and burn
+        # the orchestrator wall-clock before semantic (antincendio resume9:
+        # pages 45→129, partial_time_limit, still 2/3).
+        resume_drain = bool((request.technical_filters or {}).get("resume_pending_drain"))
+        if resume_drain:
+            wave_cap = min(len(accepted_hits), max(4, min(8, int(request.requested_count) + 5)))
         wave = sorted(accepted_hits, key=_serp_fetch_priority)[:wave_cap]
         for item in wave:
             url = item.url if hasattr(item, "url") else str(item.get("url") or "")
@@ -2275,13 +2285,14 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                                 "parse_status": "rejected_content",
                                 "rejection_code": "SIGNAL_STALE",
                             })
-                            _enqueue_same_host_expansion_articles(
-                                state,
-                                html=html or "",
-                                page_url=final_url or url,
-                                title=title,
-                                snippet=snippet,
-                            )
+                            if not resume_drain:
+                                _enqueue_same_host_expansion_articles(
+                                    state,
+                                    html=html or "",
+                                    page_url=final_url or url,
+                                    title=title,
+                                    snippet=snippet,
+                                )
                             stale_hint = _serp_company_hint(title=title, snippet=snippet, url=final_url or url)
                             if stale_hint:
                                 _enqueue_content_shell_followup(
@@ -2376,13 +2387,14 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                             "parse_status": "rejected_content",
                             "rejection_code": "SIGNAL_STALE",
                         })
-                        _enqueue_same_host_expansion_articles(
-                            state,
-                            html=html or "",
-                            page_url=final_url or url,
-                            title=title,
-                            snippet=snippet,
-                        )
+                        if not resume_drain:
+                            _enqueue_same_host_expansion_articles(
+                                state,
+                                html=html or "",
+                                page_url=final_url or url,
+                                title=title,
+                                snippet=snippet,
+                            )
                         if company_hint:
                             _enqueue_content_shell_followup(
                                 state,
@@ -2394,13 +2406,14 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
                         continue
                     # News hubs: pull concrete article URLs before spending semantic budget
                     # on the index page itself.
-                    _enqueue_same_host_expansion_articles(
-                        state,
-                        html=html or "",
-                        page_url=final_url or url,
-                        title=title,
-                        snippet=snippet,
-                    )
+                    if not resume_drain:
+                        _enqueue_same_host_expansion_articles(
+                            state,
+                            html=html or "",
+                            page_url=final_url or url,
+                            title=title,
+                            snippet=snippet,
+                        )
                     page_records_before = len(records)
                     events = extract_evidence_from_text(
                         text=semantic_text,

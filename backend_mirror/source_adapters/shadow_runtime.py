@@ -321,6 +321,9 @@ async def execute_source_adapter_shadow(
             "total_unique_employer_target": total_unique_target,
             # Re-open candidate_source_urls once per resume when target unmet.
             "clear_salvaged_on_resume": target_unmet,
+            # Keep this flag (not popped) so generic_web caps the free-fetch
+            # wave to salvage URLs instead of expanding news hubs for 15 minutes.
+            "resume_pending_drain": target_unmet,
         },
     )
     source_policy = plan.get("source_policy") or {}

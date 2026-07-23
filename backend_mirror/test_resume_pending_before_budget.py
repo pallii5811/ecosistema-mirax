@@ -156,3 +156,21 @@ def test_reopen_cursors_when_two_of_three_already_published() -> None:
     assert list(payload.get("salvaged_urls") or ()) == []
     terminal = [str(u).rstrip("/") for u in (payload.get("processed_terminal_urls") or ())]
     assert not any("tironi.com" in u for u in terminal)
+
+
+def test_resume_provider_hits_fetch_before_news_shells() -> None:
+    from source_adapters.generic_web import _serp_fetch_priority
+
+    resume_hit = {
+        "url": "https://www.tironi.com/news/nuovo-stabilimento",
+        "title": "",
+        "snippet": "",
+        "provider": "resume",
+    }
+    news_hit = {
+        "url": "https://www.bresciatoday.it/economia/cembre-lavoro-fatturato.html",
+        "title": "Cembre",
+        "snippet": "fatturato",
+        "provider": "serper",
+    }
+    assert _serp_fetch_priority(resume_hit) < _serp_fetch_priority(news_hit)
