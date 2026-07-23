@@ -98,23 +98,42 @@ async function reconstructBudgetViaPostgres() {
                       )
                  )
             )
+       ),
+       totals as (
+         select coalesce(sum(coalesce(l.actual_cost_eur, l.estimated_cost_eur, 0)), 0)::float as cumulative,
+                count(*)::int as n
+           from public.search_cost_ledger l
+           join campaign_searches cs on cs.id = l.search_id
+          where l.status = any($1::text[])
+       ),
+       successful as (
+         select coalesce(sum(coalesce(l.actual_cost_eur, l.estimated_cost_eur, 0)), 0)::float as cumulative
+           from public.search_cost_ledger l
+           join campaign_searches cs on cs.id = l.search_id
+           join public.searches s on s.id = cs.id
+          where l.status = any($1::text[])
+            and s.status = 'completed'
+            and jsonb_typeof(s.results) = 'array'
+            and jsonb_array_length(s.results) >= 1
        )
-       select coalesce(sum(coalesce(l.actual_cost_eur, l.estimated_cost_eur, 0)), 0)::float as cumulative,
-              count(*)::int as n
-         from public.search_cost_ledger l
-         join campaign_searches cs on cs.id = l.search_id
-        where l.status = any($1::text[])`,
+       select totals.cumulative, totals.n,
+              successful.cumulative as successful_cumulative
+         from totals, successful`,
       [['settled', 'committed', 'failed', 'halted'], BUDGET_SINCE],
     )
     const cumulative = Number(r.rows[0]?.cumulative || 0)
+    const successfulCumulative = Number(r.rows[0]?.successful_cumulative || 0)
     const residual = Math.max(0, SPEND_CEILING_EUR - cumulative)
+    const allowOver = String(process.env.MIRAX_OPENWORLD_ALLOW_OVER_CEILING || '') === '1'
     return {
       cumulative_cost_eur: Number(cumulative.toFixed(6)),
+      successful_completed_cost_eur: Number(successfulCumulative.toFixed(6)),
       spend_ceiling_eur: SPEND_CEILING_EUR,
       residual_budget_eur: Number(residual.toFixed(6)),
       hard_cap_per_search_eur: HARD_CAP_EUR,
       ledger_rows: Number(r.rows[0]?.n || 0),
-      enough_for_one_case: residual + 1e-9 >= HARD_CAP_EUR,
+      enough_for_one_case: residual + 1e-9 >= HARD_CAP_EUR || allowOver,
+      allow_over_ceiling: allowOver,
       source: 'postgres_direct_campaign_scoped' as const,
       budget_since: BUDGET_SINCE,
     }
