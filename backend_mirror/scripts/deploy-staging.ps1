@@ -3,7 +3,7 @@
 # NON tocca produzione 178:8001
 
 $ErrorActionPreference = "Stop"
-$HostTarget = if ($args[0]) { $args[0] } else { "root@116.203.137.39" }
+$HostTarget = if ($args[0]) { $args[0] } else { "root@167.233.55.196" }
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BashScript = Join-Path $ScriptDir "deploy-staging.sh"
 $LocalDir = Split-Path -Parent $ScriptDir

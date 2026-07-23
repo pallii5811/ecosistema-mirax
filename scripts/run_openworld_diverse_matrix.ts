@@ -125,46 +125,72 @@ async function loadCampaignDatasetViaPostgres(): Promise<{
   }
 }
 
+/** PostgREST truncates at ~1000 rows unless explicitly paginated. */
+async function restSelectAll<T>(
+  service: SupabaseClient,
+  table: string,
+  columns: string,
+  apply: (q: any) => any,
+): Promise<T[]> {
+  const pageSize = 1000
+  const out: T[] = []
+  for (let from = 0; ; from += pageSize) {
+    const to = from + pageSize - 1
+    let q = service.from(table).select(columns).range(from, to)
+    q = apply(q)
+    const { data, error } = await q
+    if (error) throw new Error(`REST ${table}: ${error.message}`)
+    const rows = (data || []) as T[]
+    out.push(...rows)
+    if (rows.length < pageSize) break
+  }
+  return out
+}
+
 async function loadCampaignDatasetViaRest(service: SupabaseClient): Promise<{
   searches: SearchBudgetRow[]
   canaries: CanaryBudgetRow[]
   ledger: LedgerBudgetRow[]
 }> {
-  const { data: searches, error: sErr } = await service
-    .from('searches')
-    .select('id,category,intent,status,results,created_at')
-    .gte('created_at', BUDGET_SINCE)
-  if (sErr) throw new Error(`REST searches: ${sErr.message}`)
+  const searches = await restSelectAll<SearchBudgetRow>(
+    service,
+    'searches',
+    'id,category,intent,status,results,created_at',
+    (q) => q.gte('created_at', BUDGET_SINCE),
+  )
 
-  const { data: canaries, error: cErr } = await service
-    .from('canary_runs')
-    .select('search_id,canary_type,created_at')
-    .gte('created_at', BUDGET_SINCE)
-  if (cErr) throw new Error(`REST canaries: ${cErr.message}`)
+  const canaries = await restSelectAll<CanaryBudgetRow & { created_at?: string }>(
+    service,
+    'canary_runs',
+    'search_id,canary_type,created_at',
+    (q) => q.gte('created_at', BUDGET_SINCE),
+  )
 
   // Also pull open_world canaries that may predate BUDGET_SINCE but still bind searches.
-  const { data: owCanaries, error: owErr } = await service
-    .from('canary_runs')
-    .select('search_id,canary_type,created_at')
-    .or('canary_type.ilike.open_world%,canary_type.ilike.%openworld%')
-  if (owErr) throw new Error(`REST open_world canaries: ${owErr.message}`)
+  const owCanaries = await restSelectAll<CanaryBudgetRow & { created_at?: string }>(
+    service,
+    'canary_runs',
+    'search_id,canary_type,created_at',
+    (q) => q.or('canary_type.ilike.open_world%,canary_type.ilike.%openworld%'),
+  )
 
   const canaryMap = new Map<string, CanaryBudgetRow>()
-  for (const row of [...(canaries || []), ...(owCanaries || [])]) {
+  for (const row of [...canaries, ...owCanaries]) {
     const key = `${row.search_id}:${row.canary_type}`
     canaryMap.set(key, { search_id: row.search_id, canary_type: row.canary_type })
   }
 
-  const { data: ledger, error: lErr } = await service
-    .from('search_cost_ledger')
-    .select('search_id,actual_cost_eur,estimated_cost_eur,status')
-    .in('status', [...LEDGER_SPEND_STATUSES])
-  if (lErr) throw new Error(`REST ledger: ${lErr.message}`)
+  const ledger = await restSelectAll<LedgerBudgetRow>(
+    service,
+    'search_cost_ledger',
+    'search_id,actual_cost_eur,estimated_cost_eur,status',
+    (q) => q.in('status', [...LEDGER_SPEND_STATUSES]),
+  )
 
   return {
-    searches: (searches || []) as SearchBudgetRow[],
+    searches,
     canaries: [...canaryMap.values()],
-    ledger: (ledger || []) as LedgerBudgetRow[],
+    ledger,
   }
 }
 

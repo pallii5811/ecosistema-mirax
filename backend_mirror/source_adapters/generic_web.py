@@ -845,10 +845,16 @@ def _gate_serp_hits(
     semantic_open_world = request.technical_filters.get("semantic_authority_required") is True
     codes: Dict[str, int] = {}
     raw = 0
+    seen_urls: set[str] = set()
     for item in hits:
         url = _text(item.get("url") or item.get("link")) or ""
         if not url:
             continue
+        url_key = url.casefold()
+        if url_key in seen_urls:
+            codes["duplicate_url"] = codes.get("duplicate_url", 0) + 1
+            continue
+        seen_urls.add(url_key)
         raw += 1
         hit = DiscoveryHit(
             title=str(item.get("title") or ""),
@@ -858,18 +864,27 @@ def _gate_serp_hits(
         )
         expansion_signals = {
             "production_expansion", "new_location", "geographic_expansion", "expansion",
+            "factory_expansion_by_target_company",
+            "production_line_automation_by_target_company",
+            "new_machinery_installation_by_target_company",
         }
+        # SERP-level concrete-event proof is recall-hostile: industrial news often
+        # buries the event in the article body. Keep static-capacity noise out only
+        # when the snippet is clearly a non-event company profile with no fetch value.
         if expansion_signals.intersection(
             str(signal).strip() for signal in request.signal_ids
         ) and not has_concrete_expansion_event(hit.title, hit.snippet):
-            codes["no_concrete_expansion_event"] = codes.get(
-                "no_concrete_expansion_event", 0
-            ) + 1
-            continue
+            from .cheap_discovery_prefilter import looks_plausible_industrial_fetch
+
+            if not looks_plausible_industrial_fetch(hit):
+                codes["no_concrete_expansion_event"] = codes.get(
+                    "no_concrete_expansion_event", 0
+                ) + 1
+                continue
         decision = prefilter_discovery_hit(
             hit,
-            # Keep event-hint gating even on semantic open-world — without it
-            # hub/association SERPs burn interpretation budget (antincendio canary).
+            # Event-hint gating remains, but plausible industrial/news hits soft-pass
+            # for fetch; post-fetch semantic/event proof stays strict.
             require_event_hint=True,
             allow_admin_assoc=False,
         )

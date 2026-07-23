@@ -3,7 +3,7 @@
 # Uso: ./backend_mirror/scripts/deploy-staging.sh [user@host]
 set -euo pipefail
 
-HOST="${1:-root@116.203.137.39}"
+HOST="${1:-root@167.233.55.196}"
 LOCAL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKSPACE_DIR="$(cd "${LOCAL_DIR}/.." && pwd)"
 TS="$(date +%Y%m%d_%H%M%S)"

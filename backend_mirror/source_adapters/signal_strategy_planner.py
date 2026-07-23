@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, replace
 from datetime import date
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
@@ -201,12 +202,146 @@ def _industry_phrase(spec: UniversalQuerySpec) -> str:
     return " ".join(spec.target_industries[:2]).strip()
 
 
+# Relationship IDs and open-world signals → Italian buyer-trigger lexicon.
+# Seller offer language must never appear here as required evidence terms.
+_RELATIONSHIP_LEXICON: Dict[str, Dict[str, Any]] = {
+    "factory_expansion_by_target_company": {
+        "events": (
+            "nuovo stabilimento",
+            "ampliamento produttivo",
+            "ampliamento dello stabilimento",
+            "nuova unità produttiva",
+            "capacità produttiva",
+        ),
+        "synonyms": (
+            "espansione produttiva",
+            "investimento industriale",
+            "modernizzazione fabbrica",
+            "aumento capacità",
+        ),
+        "adapters": ("generic_web_research_v1", "official_growth_signals_v1"),
+        "sources": ("corporate_newsroom", "industry_publication", "recognized_news", "official_company_website"),
+    },
+    "production_line_automation_by_target_company": {
+        "events": (
+            "nuova linea di produzione",
+            "automazione della linea",
+            "industria 4.0",
+            "automazione produttiva",
+            "robotizzazione",
+        ),
+        "synonyms": (
+            "linea automatizzata",
+            "automazione industriale",
+            "smart factory",
+            "digitalizzazione produzione",
+        ),
+        "adapters": ("generic_web_research_v1", "official_growth_signals_v1"),
+        "sources": ("corporate_newsroom", "industry_publication", "recognized_news", "official_company_website"),
+    },
+    "new_machinery_installation_by_target_company": {
+        "events": (
+            "nuovi macchinari",
+            "nuovo impianto",
+            "installazione di macchinari",
+            "revamping",
+            "ammodernamento impianto",
+        ),
+        "synonyms": (
+            "investimento in macchinari",
+            "nuova macchina",
+            "impianto produttivo",
+            "modernizzazione impianto",
+        ),
+        "adapters": ("generic_web_research_v1", "official_growth_signals_v1"),
+        "sources": ("corporate_newsroom", "industry_publication", "recognized_news", "official_company_website"),
+    },
+}
+
+_SELLER_OFFER_NOISE_RE = re.compile(
+    r"\b(?:manutenzione\s+predittiva|predictive\s+maintenance|condition\s+monitoring|"
+    r"vibration\s+analysis|cmms|pdm\b)\b",
+    re.I,
+)
+
+
+def _normalize_signal_key(signal: str) -> str:
+    low = str(signal or "").strip().casefold()
+    aliases = {
+        "factory_expansion": "factory_expansion_by_target_company",
+        "facility_expansion": "factory_expansion_by_target_company",
+        "production_expansion": "production_expansion",
+        "line_automation": "production_line_automation_by_target_company",
+        "production_line_automation": "production_line_automation_by_target_company",
+        "machinery_installation": "new_machinery_installation_by_target_company",
+        "new_machinery": "new_machinery_installation_by_target_company",
+        "new_machinery_installation": "new_machinery_installation_by_target_company",
+    }
+    if low in aliases:
+        return aliases[low]
+    if low in _RELATIONSHIP_LEXICON:
+        return low
+    return str(signal or "").strip()
+
+
+def _seller_noise_terms(spec: UniversalQuerySpec) -> Tuple[str, ...]:
+    blob = " ".join(
+        part
+        for part in (
+            spec.seller_offer or "",
+            spec.seller_profile or "",
+            spec.original_query or "",
+        )
+        if part
+    )
+    terms: List[str] = []
+    # First sentence of seller-framed queries ("Vendiamo X ...") is offer, not evidence.
+    m = re.search(r"\bvendiamo\s+([^.\n]+)", blob, re.I)
+    if m:
+        chunk = re.sub(r"\s+", " ", m.group(1)).strip(" ,;")
+        if 3 <= len(chunk) <= 80:
+            terms.append(chunk)
+    for match in _SELLER_OFFER_NOISE_RE.finditer(blob):
+        terms.append(match.group(0))
+    # Offer category / product phrases that must not become retrieval requirements.
+    for part in re.split(r"[|/,:;]+", spec.seller_offer or ""):
+        token = part.strip()
+        if 4 <= len(token) <= 60 and not re.search(r"\b(?:italia|pmi|aziend)", token, re.I):
+            terms.append(token)
+    return tuple(dict.fromkeys(terms))
+
+
+def strip_seller_offer_from_query(query: str, spec: UniversalQuerySpec) -> str:
+    """Keep buyer-trigger retrieval free of seller-offer contamination."""
+    out = str(query or "")
+    for term in _seller_noise_terms(spec):
+        if not term:
+            continue
+        out = re.sub(rf'"{re.escape(term)}"', " ", out, flags=re.I)
+        out = re.sub(rf"\b{re.escape(term)}\b", " ", out, flags=re.I)
+    out = re.sub(r"\s{2,}", " ", out)
+    out = re.sub(r"\(\s*(?:OR\s*)+\)", " ", out, flags=re.I)
+    out = re.sub(r"\s{2,}", " ", out).strip(" ()")
+    return out
+
+
 def _lexicon(signal: str) -> Dict[str, Any]:
-    return _SIGNAL_LEXICON.get(signal) or {
-        "events": (signal.replace("_", " "),),
-        "synonyms": (signal.replace("_", " "),),
+    key = _normalize_signal_key(signal)
+    if key in _RELATIONSHIP_LEXICON:
+        return _RELATIONSHIP_LEXICON[key]
+    if key in _SIGNAL_LEXICON:
+        return _SIGNAL_LEXICON[key]
+    # Never use raw English relationship/slug prose as the SERP event phrase.
+    slug = re.sub(r"_by_target_company$", "", key)
+    slug = slug.replace("_", " ").strip()
+    if re.search(r"\b(expansion|factory|automat|machiner|revamp|install)", slug, re.I):
+        # Map unknown expansion-like IDs onto the factory-expansion Italian lexicon.
+        return _RELATIONSHIP_LEXICON["factory_expansion_by_target_company"]
+    return {
+        "events": (slug,),
+        "synonyms": (slug,),
         "adapters": ("generic_web_research_v1",),
-        "sources": ("generic_web_research", "recognized_news"),
+        "sources": ("recognized_news", "industry_publication", "official_company_website"),
     }
 
 
@@ -272,10 +407,18 @@ def _bind_strategy(
         for value in (hypothesis.get("observable_event_types") or hypothesis.get("triggering_events") or (signal,))
         if str(value).strip()
     )
-    event_type = signal if signal in events else (events[0] if events else signal)
+    # Free-text triggering events (English prose) are not canonical event IDs.
+    free_text_events = bool(events) and all((" " in item and len(item) > 24) for item in events)
+    if signal in events:
+        event_type = signal
+    elif free_text_events:
+        event_type = signal
+    else:
+        event_type = events[0] if events else signal
     hypothesis_id = str(hypothesis.get("hypothesis_id") or hypothesis.get("id") or "").strip()
     problem = str(hypothesis.get("buyer_problem") or spec.business_problem or "").strip()
-    outcome = str(hypothesis.get("expected_outcome") or hypothesis.get("implied_need") or spec.seller_offer or "").strip()
+    # why_fit / outcome may mention the seller offer — never treat it as retrieval evidence.
+    outcome = str(hypothesis.get("expected_outcome") or hypothesis.get("implied_need") or "").strip()
     justification = f"{event_type} supports {problem}"
     if outcome:
         justification += f"; expected outcome: {outcome}"
@@ -287,6 +430,7 @@ def _bind_strategy(
         semantic_justification=justification,
         required_target_role=spec.required_target_role or "target_operating_company",
         prohibited_roles=tuple(spec.prohibited_roles),
+        search_query=strip_seller_offer_from_query(strategy.search_query, spec),
     )
 
 
@@ -408,13 +552,17 @@ def plan_strategies(spec: UniversalQuerySpec) -> Tuple[DiscoveryStrategy, ...]:
                 adapter_affinity=adapters,
             )
         )
-        # 6) fallback
+        # 6) fallback — Italian buyer-trigger terms only (never English signal slug / seller offer)
+        fallback_events = " OR ".join(f'"{item}"' for item in events[:3])
         strategies.append(
             DiscoveryStrategy(
                 strategy_id=f"{signal}:fallback",
                 signal_type=signal,
                 source_class="generic_web_research",
-                search_query=f'{signal.replace("_", " ")} {geo} {industry} azienda'.strip(),
+                search_query=strip_seller_offer_from_query(
+                    f'({fallback_events}) {geo} {industry} (azienda OR impresa OR spa OR srl) {year_hint}'.strip(),
+                    spec,
+                ),
                 preferred_domains=(),
                 excluded_domains=_DEFAULT_EXCLUDED,
                 freshness_days=spec.freshness_days,

@@ -114,11 +114,35 @@ def compile_universal_query_spec(
                 hypotheses.append(text)
             signals = _tuple_str(item.get("signals") or item.get("allowed_signal_families") or required)
             events = _tuple_str(item.get("triggering_events") or item.get("observable_event_types") or signals)
+            # Prefer canonical relationship/signal IDs over free-text English prose.
+            if events and all((" " in value and len(value) > 24) for value in events):
+                events = signals or events
             preferred_sources = _tuple_str(
                 item.get("source_classes") or source_policy.get("preferred_source_classes")
             )
             allowed_sources = _tuple_str(source_policy.get("allowed_source_classes"))
-            source_classes = tuple(dict.fromkeys((*preferred_sources, *allowed_sources)))
+            # Open-world relationship strategies also use newsroom/publication classes.
+            lexicon_sources: List[str] = []
+            try:
+                from source_adapters.signal_strategy_planner import _lexicon
+            except Exception:  # pragma: no cover - import path differs in package installs
+                from backend_mirror.source_adapters.signal_strategy_planner import _lexicon
+            for signal in signals or required:
+                lexicon_sources.extend(str(src) for src in (_lexicon(signal).get("sources") or ()))
+            source_classes = tuple(
+                dict.fromkeys(
+                    (
+                        *preferred_sources,
+                        *allowed_sources,
+                        *lexicon_sources,
+                        "recognized_news",
+                        "official_company_website",
+                        "industry_publication",
+                        "corporate_newsroom",
+                        "generic_web_research",
+                    )
+                )
+            )
             hypothesis_id = str(item.get("hypothesis_id") or item.get("id") or "").strip()
             if hypothesis_id:
                 hypothesis_contracts.append({

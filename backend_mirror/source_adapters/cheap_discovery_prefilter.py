@@ -74,11 +74,49 @@ _CONCRETE_EXPANSION_EVENT_RE = re.compile(
     r"increment\w*\s+(?:la\s+)?capacit[aà]\s+produttiva)\b",
     re.I,
 )
+# Soft SERP recall: industrial/editorial pages may carry the event only in the body.
+_INDUSTRIAL_OR_EDITORIAL_RE = re.compile(
+    r"\b(?:stabiliment\w*|impiant\w*|fabbric\w*|produzion\w*|industri\w*|meccanic\w*|"
+    r"automat\w*|macchin\w*|linea\s+di\s+produzione|revamping|industria\s+4\.0|"
+    r"manifattur\w*|officin\w*|fonderi\w*|s\.?p\.?a\.?|s\.?r\.?l\.?|"
+    r"comunicato\s+stampa|newsroom|ufficio\s+stampa|redazione)\b",
+    re.I,
+)
+_NEWS_HOST_RE = re.compile(
+    r"(repubblica|corriere|sole24ore|ansa\.|ilmattino|ilgazzettino|lagazzettadelmezzogiorno|"
+    r"quotidiano|giornale|news|press|comunicati)",
+    re.I,
+)
 
 
 def has_concrete_expansion_event(*values: str) -> bool:
     """Return true only for a literal facility/capacity change event."""
     return bool(_CONCRETE_EXPANSION_EVENT_RE.search(" ".join(str(value or "") for value in values)))
+
+
+def looks_plausible_industrial_fetch(hit: "DiscoveryHit") -> bool:
+    """SERP may omit the event; still fetch company/news pages that look industrial."""
+    host = _host(hit.url)
+    blob = f"{hit.title} {hit.snippet} {hit.publisher}".strip()
+    if not host or not blob:
+        return False
+    if _DIRECTORY_HOST_RE.search(host) or _DIRECTORY_HOST_RE.search(blob):
+        return False
+    if _FORM_OR_HUB_PATH_RE.search(hit.url):
+        return False
+    industrial = bool(_INDUSTRIAL_OR_EDITORIAL_RE.search(blob))
+    editorial = bool(_NEWS_HOST_RE.search(host) or _NEWS_HOST_RE.search(blob))
+    companyish = bool(
+        _looks_company_owned(host, hit.title, hit.snippet)
+        or re.search(r"\b(?:spa|srl|s\.p\.a|s\.r\.l)\b", blob, re.I)
+    )
+    # Company-owned alone is not enough ("Acme homepage / chi siamo"): need an
+    # industrial or editorial cue that makes a buyer-trigger event plausible.
+    if editorial and (industrial or companyish or len(blob) >= 40):
+        return True
+    if industrial and (companyish or editorial or len(blob) >= 40):
+        return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -154,6 +192,17 @@ def prefilter_discovery_hit(
     if _FORM_OR_HUB_PATH_RE.search(hit.url) or _FORM_OR_HUB_PATH_RE.search(blob):
         return PrefilterDecision(False, "form_or_hub_page", 0.1, False)
     if require_event_hint and not _EVENT_HINT_RE.search(blob):
+        # Recall-first: defer event proof to page body when the SERP looks like a
+        # real company/news industrial candidate. Hard-reject only clear non-events.
+        if looks_plausible_industrial_fetch(hit):
+            company_owned = _looks_company_owned(host, hit.title, hit.snippet)
+            return PrefilterDecision(
+                True,
+                "accepted_deferred_event_proof",
+                0.35 if company_owned else 0.28,
+                company_owned,
+                _probable_company(hit.title, hit.snippet),
+            )
         return PrefilterDecision(False, "no_event_hint", 0.15, False)
     # Protest / politics coverage about an expansion is not a buyer signal.
     if _OPPOSITION_EXPANSION_RE.search(blob):

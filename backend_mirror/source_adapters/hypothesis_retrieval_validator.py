@@ -35,7 +35,17 @@ _CROSS_INTENT_TERMS = {
     "procurement": ("procurement", "appalto", "bando", "gara", "aggiudicazione"),
     "hiring": ("hiring", "assume", "assunzione", "posizioni aperte", "job posting"),
     "technology": ("crm", "erp", "migrazione", "software", "piattaforma"),
-    "expansion": ("stabilimento", "ampliamento", "nuova sede", "capacita produttiva"),
+    "expansion": (
+        "stabilimento",
+        "ampliamento",
+        "nuova sede",
+        "capacita produttiva",
+        "capacità produttiva",
+        "macchinari",
+        "automazione",
+        "revamping",
+        "industria 4.0",
+    ),
     "marketing": ("seo", "advertising", "pixel", "gtm", "marketing"),
 }
 
@@ -44,7 +54,20 @@ _SUPPORT_TERMS = {
     "procurement": ("gara", "appalto", "bando", "rfp", "procurement", "fornitore"),
     "hiring": ("assume", "assunzione", "posizioni aperte", "job", "career", "hiring"),
     "technology": ("adotta", "sceglie", "implementa", "migrazione", "crm", "erp", "piattaforma"),
-    "expansion": ("stabilimento", "ampliamento", "espansione", "nuova sede", "impianto", "capacita produttiva"),
+    "expansion": (
+        "stabilimento",
+        "ampliamento",
+        "espansione",
+        "nuova sede",
+        "impianto",
+        "capacita produttiva",
+        "capacità produttiva",
+        "macchinari",
+        "automazione",
+        "revamping",
+        "linea di produzione",
+        "industria 4.0",
+    ),
     "marketing": ("seo", "advertising", "pixel", "gtm", "analytics", "marketing", "sito"),
 }
 
@@ -89,7 +112,21 @@ def _signal_family(signal: str) -> str:
         return "hiring"
     if "technology" in low or "crm" in low or "software" in low:
         return "technology"
-    if "expansion" in low or "location" in low or "facility" in low:
+    if any(
+        token in low
+        for token in (
+            "expansion",
+            "location",
+            "facility",
+            "factory",
+            "machiner",
+            "automat",
+            "revamp",
+            "install",
+            "stabiliment",
+            "impiant",
+        )
+    ):
         return "expansion"
     if any(token in low for token in ("marketing", "advert", "website", "seo", "pixel", "analytics")):
         return "marketing"
@@ -103,6 +140,10 @@ def _source_family(source: str) -> str:
         "public_procurement_portal": "procurement_registry",
         "municipal_register": "institutional_source",
         "verified_job_posting": "job_board",
+        "generic_web_research": "generic_web_research",
+        "industry_publication": "industry_publication",
+        "corporate_newsroom": "corporate_newsroom",
+        "official_company_website": "official_company_website",
     }
     return aliases.get(low, low)
 
