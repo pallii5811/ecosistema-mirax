@@ -1,0 +1,387 @@
+{
+  "url": "https://www.confindustriaemilia.it/flex/cm/pages/ServeBLOB.php/L/IT/IDPagina/105348",
+  "title": "Kastamonu Italia inaugura nuovo stabilimento",
+  "snippet": "Una volta a regime, il nuovo stabilimento creerà 25 nuovi posti di lavoro, portando l'organico aziendale a 315 persone di cui il 16% di presenze ...",
+  "source_text": "..........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................Taglio del nastro per il nuovo stabilimento di Kastamonu Italia, azienda che fa parte della multinazionale turca Kastamonu Entegre, leader mondiale nella produzione di pannelli truciolari ed altri derivati dalla lavorazione del legno per l'industria del mobile. Questa mattina, presso la sede di Pomposa, frazione del comune di Codigoro, in provincia di Ferrara, è stato inaugurato il nuovo sito industriale assieme alla terza linea di produzione... Per il nuovo sito produttivo, i cui lavori di costruzione sono iniziati a marzo 2023 e che si espande su una superficie di oltre, 20.000 m², sono stati utilizzati 8.000 m³ di calcestruzzo e ben 400.000 kg di armatura in ferro, per un investimento totale di quasi 30 milioni di euro; oltre al fabbricato, altamente tecnologico, e stata inaugurata anche la nuova pressa di nobilitazione che potenzierà la produzione di articoli ad alto valore aggiunto. Una volta a regime, il nuovo stabilimento creerà 25 nuovi posti di lavoro, portando l'organico aziendale a 315 persone",
+  "source_text_note": "Reconstructed offline from cached evidence_excerpt + claimed offsets; original HTML body was not persisted.",
+  "candidate_company": "Kastamonu Italia",
+  "candidate_domain": "kastamonu.com",
+  "source_publisher": "Confindustria Emilia",
+  "structured_metadata": {
+    "title": "Kastamonu Italia inaugura nuovo stabilimento",
+    "snippet": "Una volta a regime, il nuovo stabilimento creerà 25 nuovi posti di lavoro, portando l'organico aziendale a 315 persone di cui il 16% di presenze ...",
+    "published_at": "2024-06-28",
+    "provider": "serper",
+    "source_type": "search"
+  },
+  "semantic_query_contract": {
+    "offer": {
+      "description": "Predictive maintenance solutions for industrial equipment and production lines",
+      "sales_motion": "Direct outreach to operations/maintenance leadership"
+    },
+    "seller": {
+      "offer_category": "Predictive Maintenance",
+      "problems_solved": [
+        "Unplanned downtime reduction",
+        "Equipment failure prevention",
+        "Maintenance cost optimization"
+      ],
+      "products_or_services": [
+        "Predictive maintenance solutions",
+        "Maintenance analytics"
+      ],
+      "preferred_buyer_roles": [
+        "Operations Manager",
+        "Plant Manager",
+        "Maintenance Director",
+        "Production Manager"
+      ]
+    },
+    "industry": [
+      "Manufacturing",
+      "Industrial production"
+    ],
+    "geography": [
+      "Italy"
+    ],
+    "confidence": 0.85,
+    "query_goal": "Find Italian SMEs that have recently expanded factories, automated production lines, or installed new machinery, with public contact information",
+    "excluded_roles": [],
+    "original_query": "Vendiamo manutenzione predittiva alle PMI industriali. Trovami aziende italiane non enormi che hanno ampliato fabbriche, automatizzato linee o installato nuovi macchinari recentemente, con un contatto pubblico.",
+    "must_have_facts": [
+      "target_company_identity",
+      "source_evidence"
+    ],
+    "size_constraints": {
+      "company_size": "SME",
+      "employee_count_max": 500
+    },
+    "acceptance_rubric": [
+      "target_role_equipment_operator_grounded",
+      "factory_expansion_by_target_company_grounded",
+      "production_line_automation_by_target_company_grounded",
+      "new_machinery_installation_by_target_company_grounded"
+    ],
+    "data_requirements": [
+      "official_domain",
+      "source_url",
+      "observed_at"
+    ],
+    "excluded_entities": [
+      "large_enterprises",
+      "multinational_corporations"
+    ],
+    "ranking_objective": "Rank verified target-role evidence by freshness and confidence",
+    "negative_conditions": [
+      "No public contact information",
+      "Inactive or dormant operations"
+    ],
+    "positive_conditions": [
+      "Public contact information available",
+      "Recent capital investment in equipment or facilities",
+      "Active production operations"
+    ],
+    "target_entity_types": [
+      "operating_company"
+    ],
+    "discovery_hypotheses": [],
+    "forbidden_inferences": [
+      "publisher_is_target_company",
+      "source_domain_is_event_recipient"
+    ],
+    "target_role_in_event": "equipment_operator",
+    "temporal_constraints": {
+      "recency": "recent",
+      "timeframe_months": 12
+    },
+    "canonical_signal_hints": [],
+    "clarification_required": false,
+    "optional_relationships": [],
+    "required_relationships": [
+      "factory_expansion_by_target_company",
+      "production_line_automation_by_target_company",
+      "new_machinery_installation_by_target_company"
+    ],
+    "event_or_state_description": "Recent factory expansion, production line automation, or new machinery installation",
+    "target_company_description": "Italian SMEs in industrial manufacturing sector, not large enterprises"
+  },
+  "required_relationships": [
+    "factory_expansion_by_target_company",
+    "production_line_automation_by_target_company",
+    "new_machinery_installation_by_target_company"
+  ],
+  "target_role_in_event": "equipment_operator",
+  "acceptance_rubric": [
+    "target_role_equipment_operator_grounded",
+    "factory_expansion_by_target_company_grounded",
+    "production_line_automation_by_target_company_grounded",
+    "new_machinery_installation_by_target_company_grounded"
+  ],
+  "raw_SemanticEventInterpretation": {
+    "acceptance_rubric_passed": [
+      "target_role_equipment_operator_grounded",
+      "factory_expansion_by_target_company_grounded",
+      "new_machinery_installation_by_target_company_grounded",
+      "production_line_automation_by_target_company_grounded"
+    ],
+    "actor": "Kastamonu Italia",
+    "amount": "€30 million",
+    "authority": null,
+    "beneficiary": "Kastamonu Italia",
+    "buyer_need": "Predictive maintenance solutions for newly installed production equipment and expanded facility operations",
+    "certainty": 0.95,
+    "conditional": false,
+    "confidence": 0.95,
+    "direction": "subject_invests_in_expansion",
+    "employer": "Kastamonu Italia",
+    "entities": [
+      {
+        "confidence": 0.95,
+        "employee_count": 315,
+        "entity_id": "kastamonu_italia",
+        "entity_name": "Kastamonu Italia",
+        "entity_type": "operating_company",
+        "industry": "Manufacturing - Wood-based panels and derivatives",
+        "location": "Pomposa, Codigoro, Ferrara, Italy",
+        "parent_company": "Kastamonu Entegre (Turkish multinational)",
+        "role": "equipment_operator"
+      },
+      {
+        "confidence": 0.95,
+        "entity_id": "kastamonu_entegre",
+        "entity_name": "Kastamonu Entegre",
+        "entity_type": "multinational_corporation",
+        "industry": "Manufacturing - Wood-based panels",
+        "location": "Turkey",
+        "role": "parent_company"
+      },
+      {
+        "confidence": 0.95,
+        "entity_id": "confindustria_emilia",
+        "entity_name": "Confindustria Emilia",
+        "entity_type": "publisher",
+        "role": "publisher"
+      },
+      {
+        "confidence": 0.95,
+        "entity_id": "ozoguz_esat_bayram",
+        "entity_name": "Ozoguz Esat Bayram",
+        "entity_type": "person",
+        "organization": "Kastamonu Italia",
+        "role": "general_director"
+      }
+    ],
+    "event_date": "2024-06-28",
+    "event_status": "completed",
+    "event_type": "factory_expansion",
+    "events": [
+      {
+        "actor": "Kastamonu Italia",
+        "confidence": 0.95,
+        "description": "Inauguration of new industrial production facility",
+        "details": {
+          "construction_start": "March 2023",
+          "facility_size": "20,000+ m²",
+          "female_representation": "16%",
+          "inauguration_date": "June 28, 2024",
+          "investment_amount": "€30 million",
+          "new_jobs_created": 25,
+          "total_workforce_after": 315
+        },
+        "event_date": "2024-06-28",
+        "event_id": "factory_expansion_2024",
+        "event_status": "completed",
+        "event_type": "factory_expansion",
+        "location": "Pomposa, Codigoro, Ferrara, Italy"
+      },
+      {
+        "actor": "Kastamonu Italia",
+        "confidence": 0.95,
+        "description": "Installation of new high-tech pressing machine for high-value-added products",
+        "details": {
+          "machinery_type": "pressa di nobilitazione (pressing machine)",
+          "production_line_number": "third production line",
+          "purpose": "Production of high-value-added articles"
+        },
+        "event_date": "2024-06-28",
+        "event_id": "new_machinery_installation_2024",
+        "event_status": "completed",
+        "event_type": "new_machinery_installation",
+        "location": "Pomposa, Codigoro, Ferrara, Italy"
+      }
+    ],
+    "evidence_end": 1850,
+    "evidence_excerpt": "Taglio del nastro per il nuovo stabilimento di Kastamonu Italia, azienda che fa parte della multinazionale turca Kastamonu Entegre, leader mondiale nella produzione di pannelli truciolari ed altri derivati dalla lavorazione del legno per l'industria del mobile. Questa mattina, presso la sede di Pomposa, frazione del comune di Codigoro, in provincia di Ferrara, è stato inaugurato il nuovo sito industriale assieme alla terza linea di produzione... Per il nuovo sito produttivo, i cui lavori di costruzione sono iniziati a marzo 2023 e che si espande su una superficie di oltre, 20.000 m², sono stati utilizzati 8.000 m³ di calcestruzzo e ben 400.000 kg di armatura in ferro, per un investimento totale di quasi 30 milioni di euro; oltre al fabbricato, altamente tecnologico, e stata inaugurata anche la nuova pressa di nobilitazione che potenzierà la produzione di articoli ad alto valore aggiunto. Una volta a regime, il nuovo stabilimento creerà 25 nuovi posti di lavoro, portando l'organico aziendale a 315 persone",
+    "evidence_start": 1050,
+    "historical": false,
+    "hypothetical": false,
+    "investor": "Kastamonu Italia",
+    "location": "Pomposa, Codigoro, Ferrara, Italy",
+    "negated": false,
+    "open_predicate": "has_recently_expanded_factory_and_installed_new_machinery",
+    "predicate": "factory_expansion_with_new_machinery_installation",
+    "provider": null,
+    "publisher": "Confindustria Emilia",
+    "query_match": true,
+    "query_match_reason": "Kastamonu Italia is an Italian SME (315 employees, well below 500-employee threshold) that has recently completed a factory expansion (June 28, 2024) with new high-tech machinery installation (pressing machine) and a third production line. The event is observed and documented by official source (Confindustria Emilia). The company operates in industrial manufacturing (wood-based panels). All three required relationships are satisfied: factory_expansion_by_target_company, new_machinery_installation_by_target_company, and production_line_automation_by_target_company. Public contact information is available through the publisher source and company leadership (General Director Ozoguz Esat Bayram identified).",
+    "recipient": null,
+    "recruiter": null,
+    "rejection_reason": null,
+    "relations": [
+      {
+        "confidence": 0.95,
+        "direction": "subject_expands_object",
+        "excerpt_end": 1350,
+        "excerpt_start": 1050,
+        "object": "new industrial facility",
+        "reason": "Direct evidence of factory expansion with specific facility size, construction timeline, and inauguration date",
+        "relationship_id": "factory_expansion_by_target_company",
+        "subject": "Kastamonu Italia",
+        "subject_role": "equipment_operator",
+        "supported": true,
+        "supporting_excerpt": "Taglio del nastro per il nuovo stabilimento di Kastamonu Italia... è stato inaugurato il nuovo sito industriale assieme alla terza linea di produzione... il nuovo sito produttivo, i cui lavori di costruzione sono iniziati a marzo 2023 e che si espande su una superficie di oltre, 20.000 m²"
+      },
+      {
+        "confidence": 0.95,
+        "direction": "subject_installs_object",
+        "excerpt_end": 1620,
+        "excerpt_start": 1450,
+        "object": "pressa di nobilitazione (pressing machine)",
+        "reason": "Direct evidence of new high-tech machinery installation for production enhancement",
+        "relationship_id": "new_machinery_installation_by_target_company",
+        "subject": "Kastamonu Italia",
+        "subject_role": "equipment_operator",
+        "supported": true,
+        "supporting_excerpt": "oltre al fabbricato, altamente tecnologico, e stata inaugurata anche la nuova pressa di nobilitazione che potenzierà la produzione di articoli ad alto valore aggiunto"
+      },
+      {
+        "confidence": 0.85,
+        "direction": "subject_automates_object",
+        "excerpt_end": 1250,
+        "excerpt_start": 1150,
+        "object": "third production line",
+        "reason": "Evidence of new high-tech production line with advanced technological infrastructure supporting automation",
+        "relationship_id": "production_line_automation_by_target_company",
+        "subject": "Kastamonu Italia",
+        "subject_role": "equipment_operator",
+        "supported": true,
+        "supporting_excerpt": "è stato inaugurato il nuovo sito industriale assieme alla terza linea di produzione... il fabbricato, altamente tecnologico"
+      }
+    ],
+    "role": "equipment_operator",
+    "rumor": false,
+    "satisfied_relationships": [
+      "factory_expansion_by_target_company",
+      "new_machinery_installation_by_target_company",
+      "production_line_automation_by_target_company"
+    ],
+    "target_company": "Kastamonu Italia",
+    "target_entity_role": "equipment_operator",
+    "technology": "pressa di nobilitazione (high-tech pressing machine), advanced production line infrastructure",
+    "why_now": "Recent €30 million capital investment in new facility and high-tech machinery (June 2024 inauguration) creates immediate need for equipment monitoring, maintenance optimization, and downtime prevention on newly operational production lines. Expansion from 290 to 315 employees indicates active production ramp-up phase where predictive maintenance can prevent costly failures during critical startup period."
+  },
+  "evidence_excerpt": "...............................................................................................Taglio del nastro per il nuovo stabilimento di Kastamonu Italia, azienda che fa parte della multinazionale turca Kastamonu Entegre, leader mondiale nella produzione di pannelli truciolari ed altri deriva",
+  "evidence_start": 955,
+  "evidence_end": 1253,
+  "GroundingVerdict": {
+    "accepted": false,
+    "rejection_code": "EVENT_GROUNDING_FAILED",
+    "reasons": [
+      "temporal_evidence_valid"
+    ],
+    "checks": {
+      "excerpt_literal": true,
+      "offsets_exact": true,
+      "target_identity_matches_candidate": true,
+      "target_present_in_source": true,
+      "target_role_matches_query": true,
+      "target_role_not_excluded": true,
+      "required_relationships_supported": true,
+      "acceptance_rubric_satisfied": true,
+      "query_match": true,
+      "customer_acquisition_duty_literal": true,
+      "vacancy_active_when_hiring_relationship": true,
+      "not_negated_hypothetical_conditional_or_rumor": true,
+      "event_status_observed": true,
+      "temporal_evidence_valid": false,
+      "source_url_present": true,
+      "publisher_present": true,
+      "official_domain_verified": true,
+      "operating_entity": true,
+      "confidence_sufficient": true
+    },
+    "gate_results": {
+      "event_grounding": false,
+      "company_grounding": true,
+      "hypothesis_compatibility": true,
+      "commercial_inference_validity": false,
+      "explicit_demand_grounding": true
+    },
+    "failed_gate_codes": [
+      "EVENT_GROUNDING_FAILED",
+      "COMMERCIAL_INFERENCE_INVALID"
+    ],
+    "target_company": "Kastamonu Italia",
+    "target_entity_role": "equipment_operator",
+    "event_type": "factory_expansion",
+    "event_date": "2024-06-28",
+    "evidence_claim_type": "OBSERVED_EVENT"
+  },
+  "all_checks": {
+    "excerpt_literal": true,
+    "offsets_exact": true,
+    "target_identity_matches_candidate": true,
+    "target_present_in_source": true,
+    "target_role_matches_query": true,
+    "target_role_not_excluded": true,
+    "required_relationships_supported": true,
+    "acceptance_rubric_satisfied": true,
+    "query_match": true,
+    "customer_acquisition_duty_literal": true,
+    "vacancy_active_when_hiring_relationship": true,
+    "not_negated_hypothetical_conditional_or_rumor": true,
+    "event_status_observed": true,
+    "temporal_evidence_valid": false,
+    "source_url_present": true,
+    "publisher_present": true,
+    "official_domain_verified": true,
+    "operating_entity": true,
+    "confidence_sufficient": true
+  },
+  "all_false_checks": [
+    "temporal_evidence_valid"
+  ],
+  "gate_results": {
+    "event_grounding": false,
+    "company_grounding": true,
+    "hypothesis_compatibility": true,
+    "commercial_inference_validity": false,
+    "explicit_demand_grounding": true
+  },
+  "failed_gate_codes": [
+    "EVENT_GROUNDING_FAILED",
+    "COMMERCIAL_INFERENCE_INVALID"
+  ],
+  "reasons": [
+    "temporal_evidence_valid"
+  ],
+  "event_grounding_four_checks": {
+    "excerpt_literal": true,
+    "not_negated_hypothetical_conditional_or_rumor": true,
+    "event_status_observed": true,
+    "temporal_evidence_valid": false
+  },
+  "replay_context": {
+    "run_day": "2026-07-23",
+    "maximum_age_days": 360,
+    "event_date": "2024-06-28",
+    "event_status": "completed"
+  },
+  "manual_classification": "VALID_BUYER_TRIGGER_PAGE",
+  "manual_classification_reason": "Page documents Kastamonu Italia inaugurating a new plant + third production line + new pressing machine (€30M). Operating company is the target; Confindustria Emilia is publisher only. EVENT_GROUNDING_FAILED is temporal (event_date 2024-06-28 vs 12-month window on 2026-07-23), not irrelevance of the page.",
+  "required_relationships_normalized": [
+    "industrial_buyer_trigger_by_target_company"
+  ],
+  "required_relationships_match_mode": "OR",
+  "exact_cause": "temporal_evidence_valid=false (event_date 2024-06-28 vs 12-month window on 2026-07-23)"
+}

@@ -577,8 +577,12 @@ async def semantic_authority_qualifier(
             SemanticTelemetry,
             apply_hiring_relationship_proxy,
             apply_expansion_facility_proxy,
+            apply_industrial_buyer_trigger_proxy,
             find_expansion_facility_evidence,
             EXPANSION_FACILITY_RELATIONSHIP,
+            INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY,
+            industrial_buyer_trigger_satisfied,
+            missing_industrial_relationships,
             SemanticEventInterpretation,
         )
 
@@ -789,6 +793,12 @@ async def semantic_authority_qualifier(
                 interpretation,
                 source_text=source_text,
             )
+            interpretation = apply_industrial_buyer_trigger_proxy(
+                contract,
+                interpretation,
+                source_text=source_text,
+                candidate_company=candidate.canonical_company_name,
+            )
             if interpretation.target_entity_role in set(contract.excluded_roles):
                 rejection_codes.append("ACTOR_ROLE_EXCLUDED")
                 continue
@@ -799,10 +809,18 @@ async def semantic_authority_qualifier(
                 required_relationships=tuple(
                     item for item in contract.required_relationships
                     if item in interpretation.satisfied_relationships
+                    or (
+                        item == INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY
+                        and industrial_buyer_trigger_satisfied(interpretation.satisfied_relationships)
+                    )
                 ),
                 acceptance_rubric=tuple(
                     item for item in contract.acceptance_rubric
                     if item in interpretation.acceptance_rubric_passed
+                    or (
+                        item == f"{INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}_grounded"
+                        and industrial_buyer_trigger_satisfied(interpretation.satisfied_relationships)
+                    )
                 ),
             )
             # Preserve trustworthy source publication date for temporal grounding
@@ -841,12 +859,45 @@ async def semantic_authority_qualifier(
                     "origin_semantic_call_id": call_id,
                 })
                 supported_relationships.update(interpretation.satisfied_relationships)
+                if industrial_buyer_trigger_satisfied(interpretation.satisfied_relationships):
+                    supported_relationships.add(INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY)
                 passed_rubric.update(interpretation.acceptance_rubric_passed)
             else:
-                rejection_codes.append(verdict.rejection_code or "EVIDENCE_GROUNDING_FAILED")
+                code = verdict.rejection_code or "EVIDENCE_GROUNDING_FAILED"
+                rejection_codes.append(code)
+                false_checks = [name for name, passed in dict(verdict.checks or {}).items() if not passed]
+                missing_rels = list(
+                    missing_industrial_relationships(
+                        contract.required_relationships,
+                        interpretation.satisfied_relationships,
+                    )
+                )
+                reject_row = {
+                    "url": str(evidence.source_url or "")[:500],
+                    "rejection_code": code,
+                    "false_checks": false_checks,
+                    "missing_relationships": missing_rels,
+                    "candidate_company": str(candidate.canonical_company_name or "")[:160],
+                    "event_date": verdict.event_date,
+                    "gate_results": dict(verdict.gate_results or {}),
+                    "failed_gate_codes": list(verdict.failed_gate_codes or ()),
+                }
+                telemetry.grounding_rejects.append(reject_row)
+                # Also mirror into request technical filters for progress persistence.
+                bucket = request.technical_filters.setdefault("grounding_rejects", [])
+                if isinstance(bucket, list):
+                    bucket.append(reject_row)
         telemetry.grounded = len(grounded)
-        missing_relationships = set(contract.required_relationships) - supported_relationships
+        missing_relationships = set(
+            missing_industrial_relationships(contract.required_relationships, supported_relationships)
+        )
         missing_rubric = set(contract.acceptance_rubric) - passed_rubric
+        if INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY in contract.required_relationships:
+            umbrella_rubric = f"{INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}_grounded"
+            if industrial_buyer_trigger_satisfied(supported_relationships):
+                missing_relationships.discard(INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY)
+                missing_rubric.discard(umbrella_rubric)
+                passed_rubric.add(umbrella_rubric)
         if missing_relationships or missing_rubric:
             code = "SEMANTIC_QUERY_MISMATCH" if grounded else (
                 rejection_codes[0] if rejection_codes else "EVIDENCE_GROUNDING_FAILED"
@@ -1481,6 +1532,27 @@ class UniversalSourceOrchestrator:
                             "rejection_code": code,
                             "failure_detail": (
                                 (decision.semantic_grounding or {}).get("failure_detail")
+                                if isinstance(decision.semantic_grounding, Mapping)
+                                else None
+                            ),
+                            "grounding_rejects": (
+                                (decision.semantic_grounding or {}).get("telemetry", {}).get("grounding_rejects")
+                                if isinstance(decision.semantic_grounding, Mapping)
+                                else None
+                            ),
+                            "false_checks": (
+                                (
+                                    ((decision.semantic_grounding or {}).get("telemetry") or {}).get("grounding_rejects")
+                                    or [{}]
+                                )[-1].get("false_checks")
+                                if isinstance(decision.semantic_grounding, Mapping)
+                                else None
+                            ),
+                            "missing_relationships": (
+                                (
+                                    ((decision.semantic_grounding or {}).get("telemetry") or {}).get("grounding_rejects")
+                                    or [{}]
+                                )[-1].get("missing_relationships")
                                 if isinstance(decision.semantic_grounding, Mapping)
                                 else None
                             ),

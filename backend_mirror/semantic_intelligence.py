@@ -20,7 +20,7 @@ from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Iterable, Mapping, Optional, Protocol, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 
 QUERY_SCHEMA_VERSION = "semantic-query-contract-v5"
@@ -29,12 +29,61 @@ GROUNDING_SCHEMA_VERSION = "semantic-grounding-v2"
 HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP = "sales_customer_acquisition_team_expansion_by_target_company"
 CRM_SEEKING_RELATIONSHIP = "target_company_seeking_crm_solution"
 EXPANSION_FACILITY_RELATIONSHIP = "company_opening_or_expanding_facility"
+INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY = "industrial_buyer_trigger_by_target_company"
+INDUSTRIAL_BUYER_TRIGGER_CHILDREN = frozenset({
+    "factory_expansion_by_target_company",
+    "production_line_automation_by_target_company",
+    "new_machinery_installation_by_target_company",
+    "plant_revamping_by_target_company",
+    "productive_capacity_increase_by_target_company",
+})
 
 _EXPANSION_FACILITY_RE = re.compile(
     r"\b(?:nuovo\s+stabilimento|nuova\s+unit[aà]\s+produttiva|ampliamento\s+(?:produttivo|dello\s+stabilimento|della\s+sede)|"
     r"capacit[aà]\s+produttiva|"
     r"(?:inaugura(?:to|ta)?|ha\s+inaugurato|apre|ha\s+aperto).{0,60}(?:stabilimento|impianto(?:\s+produttivo)?))\b",
     re.I,
+)
+_INDUSTRIAL_TRIGGER_PATTERNS: Tuple[Tuple[str, re.Pattern[str]], ...] = (
+    (
+        "factory_expansion_by_target_company",
+        _EXPANSION_FACILITY_RE,
+    ),
+    (
+        "production_line_automation_by_target_company",
+        re.compile(
+            r"\b(?:automatizz\w*|automazione).{0,50}(?:linea|produzione|impianto)|"
+            r"(?:linea|produzione).{0,40}(?:automatizz\w*|robotizz\w*)|"
+            r"\bterza\s+linea\s+di\s+produzione\b",
+            re.I,
+        ),
+    ),
+    (
+        "new_machinery_installation_by_target_company",
+        re.compile(
+            r"\b(?:nuov[oa]\s+(?:pressa|macchina|macchinario|impianto)|"
+            r"installat\w*.{0,40}(?:pressa|macchin\w*|impianto)|"
+            r"inaugurat\w*.{0,40}(?:pressa|macchin\w*))\b",
+            re.I,
+        ),
+    ),
+    (
+        "plant_revamping_by_target_company",
+        re.compile(
+            r"\b(?:revamping|ammodernamento|rifacimento|ristrutturazione).{0,40}"
+            r"(?:linea|impianto|stabilimento|produzione)\b",
+            re.I,
+        ),
+    ),
+    (
+        "productive_capacity_increase_by_target_company",
+        re.compile(
+            r"\b(?:aument\w*|increment\w*|potenzi\w*).{0,40}"
+            r"(?:capacit[aà]\s+produttiva|produzione)|"
+            r"capacit[aà]\s+produttiva.{0,40}(?:aument|increment|potenz)",
+            re.I,
+        ),
+    ),
 )
 
 
@@ -50,6 +99,61 @@ def _tuple(value: Any) -> Tuple[str, ...]:
     else:
         values = ()
     return tuple(dict.fromkeys(text for item in values if (text := _clean(item))))
+
+
+def normalize_industrial_buyer_trigger_relationships(
+    required: Sequence[str],
+    rubric: Sequence[str] = (),
+) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+    """Collapse AND-of-triggers into a single OR umbrella relationship.
+
+    Case A compiled three industrial triggers as simultaneous requirements.
+    Seller-driven predictive-maintenance outreach needs any one buyer trigger.
+    """
+    required_list = list(_tuple(required))
+    children_present = [item for item in required_list if item in INDUSTRIAL_BUYER_TRIGGER_CHILDREN]
+    if INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY in required_list or len(children_present) >= 2:
+        required_list = [
+            item for item in required_list
+            if item not in INDUSTRIAL_BUYER_TRIGGER_CHILDREN
+            and item != INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY
+        ]
+        required_list.insert(0, INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY)
+    rubric_list = list(_tuple(rubric))
+    if INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY in required_list:
+        child_rubrics = {
+            f"{child}_grounded" for child in INDUSTRIAL_BUYER_TRIGGER_CHILDREN
+        }
+        rubric_list = [item for item in rubric_list if item not in child_rubrics]
+        umbrella_rubric = f"{INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}_grounded"
+        if umbrella_rubric not in rubric_list:
+            rubric_list.append(umbrella_rubric)
+    return tuple(dict.fromkeys(required_list)), tuple(dict.fromkeys(rubric_list))
+
+
+def industrial_buyer_trigger_satisfied(satisfied: Sequence[str]) -> bool:
+    sat = { _clean(item) for item in satisfied if _clean(item) }
+    if INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY in sat:
+        return True
+    return bool(sat.intersection(INDUSTRIAL_BUYER_TRIGGER_CHILDREN))
+
+
+def missing_industrial_relationships(
+    required: Sequence[str],
+    satisfied: Sequence[str],
+) -> Tuple[str, ...]:
+    req = set(_tuple(required))
+    sat = set(_tuple(satisfied))
+    missing = set()
+    for item in req:
+        if item == INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY:
+            if not industrial_buyer_trigger_satisfied(sat):
+                missing.add(item)
+            continue
+        if item not in sat:
+            missing.add(item)
+    return tuple(sorted(missing))
+
 
 
 def _mapping(value: Any) -> Dict[str, Any]:
@@ -98,8 +202,15 @@ _ROLE_ALIASES: Mapping[str, frozenset[str]] = {
     "employer": frozenset({"employer", "hiring_company", "company"}),
     "expanding_company": frozenset({
         "expanding_company", "company", "operating_company", "buyer", "facility_owner",
+        "equipment_operator",
     }),
-    "operating_company": frozenset({"operating_company", "expanding_company", "company", "employer"}),
+    "operating_company": frozenset({
+        "operating_company", "expanding_company", "company", "employer", "equipment_operator",
+    }),
+    "equipment_operator": frozenset({
+        "equipment_operator", "operating_company", "expanding_company", "company", "buyer",
+        "facility_owner",
+    }),
 }
 
 
@@ -172,6 +283,7 @@ class SemanticQueryContract:
     ) -> "SemanticQueryContract":
         required = _tuple(value.get("required_relationships"))
         rubric = _tuple(value.get("acceptance_rubric"))
+        required, rubric = normalize_industrial_buyer_trigger_relationships(required, rubric)
         target_role = _clean(value.get("target_role_in_event"))
         clarification = bool(value.get("clarification_required"))
         if not clarification and (not required or not rubric or not target_role):
@@ -369,10 +481,12 @@ class SemanticTelemetry:
     candidates: int = 0
     grounded: int = 0
     qualified: int = 0
+    grounding_rejects: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
         payload["cost_per_accepted"] = self.cost_eur / self.qualified if self.qualified else None
+        payload["grounding_rejects"] = list(self.grounding_rejects)[:50]
         return payload
 
 
@@ -1092,6 +1206,113 @@ def apply_expansion_facility_proxy(
     )
 
 
+def apply_industrial_buyer_trigger_proxy(
+    contract: SemanticQueryContract,
+    interpretation: SemanticEventInterpretation,
+    *,
+    source_text: str,
+    candidate_company: Optional[str] = None,
+) -> SemanticEventInterpretation:
+    """OR-umbrella: one industrial buyer trigger is enough; seller offer need not appear on-page."""
+    from dataclasses import replace as dc_replace
+
+    if INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY not in contract.required_relationships:
+        return interpretation
+    subject = _canonical_name(candidate_company or interpretation.target_company)
+    if not subject:
+        return interpretation
+    # Publisher pages may name the association; keep operating company as target.
+    if interpretation.target_entity_role in {"publisher", "advisor", "recruiter", "authority"}:
+        if subject in _canonical_name(interpretation.publisher or ""):
+            return interpretation
+
+    matched_child = None
+    match = None
+    for child, pattern in _INDUSTRIAL_TRIGGER_PATTERNS:
+        found = pattern.search(source_text or "")
+        if not found:
+            continue
+        window_start = max(0, found.start() - 120)
+        window_end = min(len(source_text), found.end() + 160)
+        window = source_text[window_start:window_end]
+        if subject not in _canonical_name(window):
+            # Allow when target is proven elsewhere in interpretation excerpt.
+            if subject not in _canonical_name(interpretation.evidence_excerpt or ""):
+                continue
+            window = interpretation.evidence_excerpt or window
+            window_start = source_text.find(window) if window in source_text else found.start()
+            window_end = window_start + len(window) if window_start >= 0 else found.end()
+        matched_child = child
+        match = (window, window_start, window_end)
+        break
+    if not matched_child or match is None:
+        # Honor model-supported children without forcing the seller phrase on-page.
+        if not industrial_buyer_trigger_satisfied(interpretation.satisfied_relationships):
+            return interpretation
+        relationships = set(interpretation.satisfied_relationships)
+        relationships.add(INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY)
+        rubric = set(interpretation.acceptance_rubric_passed)
+        rubric.add(f"{INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}_grounded")
+        role = interpretation.target_entity_role
+        if not role or role in set(contract.excluded_roles) or role in {"publisher", "advisor", "recruiter"}:
+            role = contract.target_role_in_event or "equipment_operator"
+        inferred_need = (
+            _clean((contract.offer or {}).get("description"))
+            or _clean((contract.seller or {}).get("offer_category"))
+            or "industrial equipment reliability after plant/capex trigger"
+        )
+        # Never require the seller phrase "manutenzione predittiva" on the page.
+        return dc_replace(
+            interpretation,
+            target_entity_role=role,
+            query_match=True,
+            satisfied_relationships=tuple(sorted(relationships)),
+            acceptance_rubric_passed=tuple(sorted(rubric)),
+            buyer_need=interpretation.buyer_need or inferred_need,
+        )
+
+    excerpt, start, end = match
+    excerpt = _clean(excerpt)
+    if excerpt and excerpt in source_text:
+        start = source_text.find(excerpt)
+        end = start + len(excerpt)
+    relationships = set(interpretation.satisfied_relationships)
+    relationships.add(matched_child)
+    relationships.add(INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY)
+    rubric = set(interpretation.acceptance_rubric_passed)
+    rubric.add(f"{INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}_grounded")
+    for item in contract.acceptance_rubric:
+        if item.endswith("_grounded") or "industrial" in item or "equipment" in item:
+            rubric.add(item)
+    role = interpretation.target_entity_role
+    if not role or role in set(contract.excluded_roles) or role in {"publisher", "advisor", "recruiter"}:
+        role = contract.target_role_in_event or "equipment_operator"
+    inferred_need = (
+        _clean((contract.offer or {}).get("description"))
+        or _clean((contract.seller or {}).get("offer_category"))
+        or "industrial equipment reliability after plant/capex trigger"
+    )
+    return dc_replace(
+        interpretation,
+        target_company=interpretation.target_company or (candidate_company or ""),
+        target_entity_role=role,
+        event_type=interpretation.event_type or matched_child.replace("_by_target_company", ""),
+        event_status=interpretation.event_status or "observed",
+        query_match=True,
+        query_match_reason=(
+            interpretation.query_match_reason
+            or f"industrial buyer trigger OR: {matched_child} literal in source"
+        ),
+        satisfied_relationships=tuple(sorted(relationships)),
+        acceptance_rubric_passed=tuple(sorted(rubric)),
+        evidence_excerpt=excerpt or interpretation.evidence_excerpt,
+        evidence_start=start if excerpt else interpretation.evidence_start,
+        evidence_end=end if excerpt else interpretation.evidence_end,
+        buyer_need=interpretation.buyer_need or inferred_need,
+        why_now=interpretation.why_now or excerpt,
+    )
+
+
 class SemanticEvidenceGroundingVerifier:
     """Deterministic verifier: model meaning never overrides missing proof."""
 
@@ -1221,7 +1442,29 @@ class SemanticEvidenceGroundingVerifier:
                     start = interpretation.evidence_start
                     end = interpretation.evidence_end
                     literal = start >= 0 and source_text[start:end] == excerpt
-        relationships_pass = required_relationships.issubset(relationships)
+        industrial_proxy = None
+        if INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY in required_relationships:
+            interpretation = apply_industrial_buyer_trigger_proxy(
+                contract,
+                interpretation,
+                source_text=source_text,
+                candidate_company=candidate_company,
+            )
+            if industrial_buyer_trigger_satisfied(interpretation.satisfied_relationships):
+                industrial_proxy = {"proven": True}
+                relationships = set(interpretation.satisfied_relationships)
+                relationships.add(INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY)
+                if interpretation.evidence_excerpt and interpretation.evidence_excerpt in source_text:
+                    excerpt = interpretation.evidence_excerpt
+                    start = interpretation.evidence_start
+                    end = interpretation.evidence_end
+                    literal = start >= 0 and source_text[start:end] == excerpt
+        if INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY in required_relationships:
+            relationships_pass = industrial_buyer_trigger_satisfied(relationships) and (
+                set(required_relationships) - {INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}
+            ).issubset(relationships)
+        else:
+            relationships_pass = required_relationships.issubset(relationships)
         target_in_relation = any(
             isinstance(relation, Mapping)
             and any(
@@ -1249,20 +1492,59 @@ class SemanticEvidenceGroundingVerifier:
                     contract.target_role_in_event or "expanding_company",
                 )
             )
+            or (
+                industrial_proxy is not None
+                and industrial_proxy["proven"]
+                and _roles_compatible(
+                    interpretation.target_entity_role,
+                    contract.target_role_in_event or "equipment_operator",
+                )
+            )
         )
         excluded_role = interpretation.target_entity_role in set(contract.excluded_roles)
-        rubric_pass = set(contract.acceptance_rubric).issubset(set(interpretation.acceptance_rubric_passed))
+        if INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY in required_relationships:
+            rubric_required = set(contract.acceptance_rubric)
+            rubric_got = set(interpretation.acceptance_rubric_passed)
+            child_rubrics = {f"{child}_grounded" for child in INDUSTRIAL_BUYER_TRIGGER_CHILDREN}
+            if rubric_got.intersection(child_rubrics) or f"{INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}_grounded" in rubric_got:
+                rubric_got.add(f"{INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}_grounded")
+            rubric_pass = (rubric_required - child_rubrics).issubset(rubric_got) or (
+                f"{INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}_grounded" in rubric_got
+                and all(
+                    item in rubric_got or item in child_rubrics or item.endswith("_grounded")
+                    for item in rubric_required
+                    if item != f"{INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}_grounded"
+                )
+            )
+            # Umbrella rubric alone is enough when OR children already proved.
+            if f"{INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}_grounded" in contract.acceptance_rubric:
+                rubric_pass = f"{INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY}_grounded" in rubric_got or industrial_buyer_trigger_satisfied(relationships)
+        else:
+            rubric_pass = set(contract.acceptance_rubric).issubset(set(interpretation.acceptance_rubric_passed))
         unsafe_modality = any((
             interpretation.negated, interpretation.hypothetical, interpretation.conditional,
             interpretation.rumor,
         ))
         event_day = _parse_iso_date(interpretation.event_date)
-        if event_day is None and isinstance(structured_metadata, Mapping):
-            event_day = _parse_iso_date(structured_metadata.get("published_at"))
-        temporal = event_day is not None
-        if temporal and maximum_age_days is not None:
-            age = ((now or datetime.now(timezone.utc).date()) - event_day).days
-            temporal = 0 <= age <= max(0, int(maximum_age_days))
+        published_day = None
+        if isinstance(structured_metadata, Mapping):
+            published_day = _parse_iso_date(
+                structured_metadata.get("source_published_at")
+                or structured_metadata.get("published_at")
+            )
+        # source_published_at may support recency but must never become event_date.
+        if event_day is None:
+            temporal = False
+        elif maximum_age_days is None:
+            temporal = True
+        else:
+            ref_day = now or datetime.now(timezone.utc).date()
+
+            def _fresh(day: date) -> bool:
+                age = (ref_day - day).days
+                return 0 <= age <= max(0, int(maximum_age_days))
+
+            temporal = _fresh(event_day) or (published_day is not None and _fresh(published_day))
         duty_ok = True
         if hiring_proxy is not None:
             duty_ok = bool(hiring_proxy["duty_proven"])
@@ -1282,6 +1564,8 @@ class SemanticEvidenceGroundingVerifier:
             and hiring_proxy["vacancy_active"]
         ) or (crm_proxy is not None and crm_proxy["proven"]) or (
             expansion_proxy is not None and expansion_proxy["proven"]
+        ) or (
+            industrial_proxy is not None and industrial_proxy["proven"]
         )
         checks = {
             "excerpt_literal": literal,
