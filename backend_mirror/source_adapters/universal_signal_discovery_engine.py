@@ -545,6 +545,29 @@ class UniversalSignalDiscoveryEngine:
                 if stored is not None:
                     batch_resume[adapter_id] = stored
 
+            # When a generic-web resume cursor already has free pending pages,
+            # force that adapter first and keep it in the batch even if this
+            # strategy's affinity only listed growth (resume 532 crash path).
+            pending_drain_adapters: List[str] = []
+            for adapter_id, cursor in list(batch_resume.items()) + [
+                (aid, strategy_cursors.get(_cursor_store_key(aid, "__legacy__")))
+                for aid in ("generic_web_research_v1",)
+            ]:
+                if cursor is None:
+                    continue
+                from .generic_web_budget import decode_generic_web_v2_payload
+
+                payload = decode_generic_web_v2_payload(cursor.value)
+                if isinstance(payload, Mapping) and payload.get("pending_urls"):
+                    pending_drain_adapters.append(str(adapter_id))
+                    if adapter_id not in batch_resume:
+                        batch_resume[adapter_id] = cursor
+            if pending_drain_adapters:
+                batch_adapters = list(
+                    dict.fromkeys([*pending_drain_adapters, *batch_adapters, "generic_web_research_v1"])
+                )
+                run_mandatory = tuple(batch_adapters)
+
             telemetry_bucket: Dict[str, Any] = {
                 "raw_discovery_hits": 0,
                 "prefilter_accepted": 0,
@@ -589,13 +612,27 @@ class UniversalSignalDiscoveryEngine:
                 },
             )
 
-            result = await self.orchestrator.run(
-                filtered_request,
-                required_source_classes=required_source_classes,
-                mandatory_adapter_ids=run_mandatory,
-                resume_cursors=batch_resume or None,
-                progress_callback=progress_callback,
-            )
+            try:
+                result = await self.orchestrator.run(
+                    filtered_request,
+                    required_source_classes=required_source_classes,
+                    mandatory_adapter_ids=run_mandatory,
+                    resume_cursors=batch_resume or None,
+                    progress_callback=progress_callback,
+                )
+            except Exception as batch_error:
+                err_name = batch_error.__class__.__name__
+                err_text = str(batch_error)
+                budget_like = (
+                    err_name == "ResearchBudgetExceeded"
+                    or "HARD_COST_CAP" in err_text
+                    or "would exceed hard budget" in err_text
+                )
+                if not budget_like:
+                    raise
+                notes.append(f"budget_exceeded:{strategy.strategy_id}:{err_text[:120]}")
+                stats.aborted = True
+                continue
             last_result = result
             batches_run += 1
             spent += float(result.cost_eur)

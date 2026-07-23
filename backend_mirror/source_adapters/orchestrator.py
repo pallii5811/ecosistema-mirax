@@ -37,6 +37,24 @@ def _signal_groups_from_required_signals(signals: Sequence[str]) -> Optional[Lis
     return None
 
 
+def _pending_urls_from_resume_cursor(cursor: Optional[DiscoveryCursor]) -> Tuple[str, ...]:
+    """Extract free-fetch pending URLs from a generic-web resume cursor."""
+    if cursor is None or not str(getattr(cursor, "value", "") or "").strip():
+        return ()
+    try:
+        from .generic_web_budget import decode_generic_web_v2_payload
+    except Exception:
+        return ()
+    payload = decode_generic_web_v2_payload(cursor.value)
+    if not isinstance(payload, Mapping):
+        return ()
+    return tuple(
+        str(item).strip()
+        for item in (payload.get("pending_urls") or ())
+        if str(item).strip()
+    )
+
+
 def _evidence_satisfies_request(evidence_signals: set[str], request: AdapterDiscoveryRequest) -> bool:
     groups = request.technical_filters.get("signal_groups")
     if isinstance(groups, list) and groups:
@@ -1066,6 +1084,30 @@ class UniversalSourceOrchestrator:
             raise ValueError(f"resume cursor references unselected adapter(s): {sorted(unknown_cursor_adapters)}")
         for adapter_id, cursor in supplied_cursors.items():
             states[adapter_id].next_cursor = cursor
+            # Seed free-fetch queue from resume cursor so zero-cost drain can
+            # run before any paid SERP peer burns the residual hard cap
+            # (antincendio resume 532f6a0c: growth SERP raised ResearchBudgetExceeded
+            # and aborted shadow before Tironi/Cembre pending pages).
+            pending_seed = _pending_urls_from_resume_cursor(cursor)
+            if pending_seed:
+                states[adapter_id].acquisition_telemetry["pending_urls"] = list(pending_seed)
+        if mandatory:
+            # Drain pending free work before paid discovery adapters.
+            drain_first = [
+                adapter_id
+                for adapter_id in mandatory
+                if adapter_id in states
+                and (
+                    states[adapter_id].acquisition_telemetry.get("pending_urls")
+                    or _pending_urls_from_resume_cursor(states[adapter_id].next_cursor)
+                )
+            ]
+            if drain_first:
+                mandatory = tuple(
+                    dict.fromkeys(
+                        [*drain_first, *[adapter_id for adapter_id in mandatory if adapter_id not in set(drain_first)]]
+                    )
+                )
         if request.cursor is not None:
             if supplied_cursors:
                 raise ValueError("use request.cursor or resume_cursors, not both")
@@ -1215,7 +1257,28 @@ class UniversalSourceOrchestrator:
                     },
                     cursor=state.next_cursor,
                 )
-                result = await adapter.discover(adapter_request)
+                try:
+                    result = await adapter.discover(adapter_request)
+                except Exception as discover_error:
+                    # Paid peers must not abort the whole shadow when residual
+                    # hard-cap blocks one SERP — pending free pages on another
+                    # adapter still need a turn (antincendio resume crash).
+                    err_name = discover_error.__class__.__name__
+                    err_text = str(discover_error)
+                    budget_like = (
+                        err_name == "ResearchBudgetExceeded"
+                        or "HARD_COST_CAP" in err_text
+                        or "would exceed hard budget" in err_text
+                        or "HARD_CAP" in err_text
+                    )
+                    if not budget_like:
+                        raise
+                    state.exhausted = True
+                    state.exhaustion_authoritative = False
+                    state.exhaustion_reason = "research_budget_exceeded"
+                    state.warnings.append(f"{err_name}:{err_text[:180]}")
+                    progressed = True
+                    continue
                 if zero_cost_drain:
                     acq = ((result.telemetry or {}).get("acquisition") or {}) if isinstance(result.telemetry, Mapping) else {}
                     new_pending = [
