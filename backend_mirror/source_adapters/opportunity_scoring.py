@@ -233,7 +233,7 @@ def score_opportunity(
     penalties: Dict[str, float] = {}
     if candidate.contradiction_flags:
         penalties["contradictions"] = min(0.35, 0.08 * len(candidate.contradiction_flags))
-    if candidate.entity_class != "operating_company":
+    if candidate.entity_class not in {"operating_company", "company_group"}:
         penalties["non_operating_entity"] = 0.40
         critical.append("operating_entity")
     if not candidate.official_domain:

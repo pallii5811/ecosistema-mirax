@@ -2656,7 +2656,7 @@ def _valid_record(record: Mapping[str, Any], request: AdapterDiscoveryRequest, t
             return False, "OFFICIAL_DOMAIN_UNVERIFIED"
         if not domain and source_class != "recognized_news":
             return False, "OFFICIAL_DOMAIN_UNRESOLVED"
-    if (_text(record.get("entity_class")) or "") != "operating_company":
+    if (_text(record.get("entity_class")) or "") not in {"operating_company", "company_group"}:
         return False, "NON_OPERATING_ENTITY"
     if universal:
         if source_class not in {"official_company_website", "recognized_news", "industry_publication", "corporate_newsroom"}:

@@ -184,3 +184,53 @@ def test_company_identity_hint_recovers_html_title_when_serp_meta_empty() -> Non
     <body><h1>Elettromeccanica Tironi inaugura il nuovo stabilimento</h1></body></html>
     """
     assert _company_identity_hint(title="", snippet="", html=html) == "Elettromeccanica Tironi"
+
+
+def test_valid_record_accepts_verified_company_group() -> None:
+    from datetime import date
+
+    from source_adapters.contracts import AdapterDiscoveryRequest
+    from source_adapters.generic_web import _valid_record
+    from source_adapters.generic_web_provenance import attach_generic_provenance, page_fetch_id
+
+    req = AdapterDiscoveryRequest(
+        intent="commercial_search",
+        signal_ids=("new_location",),
+        signal_match_mode="any",
+        geographies=("Nord Italia",),
+        freshness_max_age_days=730,
+        requested_count=1,
+        budget_eur=0.05,
+        query="PMI nuovo stabilimento",
+        technical_filters={"universal_engine": True, "semantic_authority_required": True},
+    )
+    text = (
+        "DalterFood Group inaugura a Parma il nuovo stabilimento per il taglio e il "
+        "confezionamento dei formaggi duri. Investimento produttivo 2026."
+    )
+    row = {
+        "company_name": "DalterFood Group",
+        "official_domain": "dalterfood.com",
+        "official_domain_verified": True,
+        "entity_class": "company_group",
+        "source_class": "official_company_website",
+        "source_url": "https://www.dalterfood.com/news",
+        "source_publisher": "DalterFood Group",
+        "evidence_excerpt": text[:160],
+        "published_at": "2026-02-02",
+        "matched_signal_ids": ["new_location"],
+        "geography": "Parma, Emilia-Romagna",
+    }
+    attach_generic_provenance(
+        row,
+        adapter_id="generic_web_research_v1",
+        search_scope="fixture",
+        execution_round=1,
+        provider_call_id="fixture",
+        page_fetch_id_value=page_fetch_id(search_scope="fixture", url=row["source_url"], wave_index=1),
+        source_text=text,
+        cursor_version="generic-web:v2:fixture",
+    )
+    ok, code = _valid_record(row, req, date(2026, 7, 23))
+    assert ok, code
+    assert code == ""

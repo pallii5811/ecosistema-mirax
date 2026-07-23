@@ -528,7 +528,7 @@ async def default_candidate_qualifier(candidate: OpportunityCandidate) -> Qualif
         or not _domain_verification_valid(candidate)
     ):
         return QualificationDecision(False, False, False, "OFFICIAL_DOMAIN_UNVERIFIED")
-    if candidate.entity_class != "operating_company":
+    if candidate.entity_class not in {"operating_company", "company_group"}:
         return QualificationDecision(False, False, False, "NON_OPERATING_ENTITY")
     evidence_verified = bool(candidate.evidence) and all(
         item.source_url and item.source_publisher and item.excerpt and item.published_at
