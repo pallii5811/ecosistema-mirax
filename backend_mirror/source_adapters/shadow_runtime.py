@@ -20,9 +20,10 @@ from .hiring_qualification import (
 from .orchestrator import OrchestrationResult, ProgressCallback, request_from_plan
 
 
-# Controlled one-shot canaries may need ~€0.05/lead; 3 leads + resume headroom
-# for a final semantic slot after 2/3 (antincendio 532 prior≈€0.23).
-_MAX_SHADOW_CAP_EUR = 0.40
+# Controlled one-shot canaries may need ~€0.05/lead; 3 leads + thin resume
+# headroom. DB initialize_search_budget rejects HARD_BUDGET_ABOVE_PRODUCT_CAP
+# above the product ceiling (currently €0.25).
+_MAX_SHADOW_CAP_EUR = 0.25
 
 
 def revalidate_hiring_payload_geographies(
