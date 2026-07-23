@@ -1873,7 +1873,13 @@ def _append_semantic_deferred_news_record(
 
 def _company_identity_hint(*, title: str, snippet: str, html: str) -> str:
     """Return only an identity explicitly present in acquired evidence."""
-    visible = _text(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)) or ""
+    soup = BeautifulSoup(html or "", "html.parser")
+    visible = _text(soup.get_text(" ", strip=True)) or ""
+    # Resume salvage often reopens URLs with empty SERP title/snippet. Recover
+    # the document title so Tironi/Dalter official news pages still resolve
+    # (otherwise COMPANY_IDENTITY_UNRESOLVED after a successful fetch).
+    if not str(title or "").strip() and soup.title is not None:
+        title = _text(soup.title.get_text(" ", strip=True)) or title
     if _is_challenge_or_empty_page(status_code=200, title=title, visible_text=visible, html=html):
         # Challenge/empty HTML must not invent identities; SERP fields remain usable.
         return _serp_company_hint(title=title, snippet=snippet)

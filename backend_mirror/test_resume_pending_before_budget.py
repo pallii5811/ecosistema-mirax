@@ -174,3 +174,13 @@ def test_resume_provider_hits_fetch_before_news_shells() -> None:
         "provider": "serper",
     }
     assert _serp_fetch_priority(resume_hit) < _serp_fetch_priority(news_hit)
+
+
+def test_company_identity_hint_recovers_html_title_when_serp_meta_empty() -> None:
+    from source_adapters.generic_web import _company_identity_hint
+
+    html = """
+    <html><head><title>Elettromeccanica Tironi inaugura il nuovo stabilimento logistico a Modena</title></head>
+    <body><h1>Elettromeccanica Tironi inaugura il nuovo stabilimento</h1></body></html>
+    """
+    assert _company_identity_hint(title="", snippet="", html=html) == "Elettromeccanica Tironi"
