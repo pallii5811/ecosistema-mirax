@@ -2131,7 +2131,7 @@ async def _default_generic_provider(request: AdapterDiscoveryRequest, offset: in
         # the next orchestrator round could not afford estimated_cost SERP.
         wave_cap = max(3, min(limit, URLS_PER_WAVE))
         if universal:
-            wave_cap = max(wave_cap, min(len(accepted_hits), max(limit * 5, 20)))
+            wave_cap = max(wave_cap, min(len(accepted_hits), max(limit * 3, 8)))
         wave = sorted(accepted_hits, key=_serp_fetch_priority)[:wave_cap]
         for item in wave:
             url = item.url if hasattr(item, "url") else str(item.get("url") or "")
