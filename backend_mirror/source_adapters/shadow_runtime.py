@@ -259,6 +259,66 @@ async def execute_source_adapter_shadow(
         text = str(cursor_value or "").strip()
         if text:
             resume_cursors[str(adapter_id)] = DiscoveryCursor(text)
+    # Mutate the productive generic-web cursor before strategy rotation:
+    # clear salvaged_urls and re-queue unpublished candidate pages. The filters
+    # flag alone is popped by the first virgin strategy and never reaches this
+    # cursor (antincendio 2/3: Tironi/Cembre/DalterFood stranded).
+    if len(processed_employer_keys) < max(1, int(requested_count)):
+        from .generic_web_budget import (
+            GenericWebDiscoveryState,
+            decode_generic_web_v2_payload,
+            encode_generic_web_cursor,
+        )
+
+        for adapter_id, cursor in list(resume_cursors.items()):
+            value = str(cursor.value or "")
+            if not value.startswith("generic-web:v2:"):
+                continue
+            payload = decode_generic_web_v2_payload(value)
+            if not isinstance(payload, Mapping):
+                continue
+            cand_urls = tuple(
+                str(item).strip()
+                for item in (payload.get("candidate_source_urls") or ())
+                if str(item).strip()
+            )
+            if not cand_urls and not payload.get("salvaged_urls"):
+                continue
+            cand_keys = {str(item).strip().lower().rstrip("/") for item in cand_urls}
+            processed_domains = {
+                str(item).split("domain:", 1)[-1].casefold().removeprefix("www.")
+                for item in processed_employer_keys
+                if str(item).startswith("domain:")
+            }
+            reopen = []
+            for url in cand_urls:
+                host = str(url).split("://", 1)[-1].split("/", 1)[0].casefold().removeprefix("www.")
+                if host and host in processed_domains:
+                    continue
+                reopen.append(url)
+            if not reopen and not payload.get("salvaged_urls"):
+                continue
+            reopen_keys = {str(item).strip().lower().rstrip("/") for item in reopen}
+            state = GenericWebDiscoveryState(
+                legacy_offset=int(payload.get("legacy_offset") or 0),
+                query_index=int(payload.get("query_index") or 0),
+                discovery_spent_eur=float(payload.get("discovery_spent_eur") or 0.0),
+                executed_query_keys=tuple(str(x) for x in (payload.get("executed_query_keys") or ()) if str(x).strip()),
+                pending_urls=tuple(dict.fromkeys((*reopen, *(str(x) for x in (payload.get("pending_urls") or ()) if str(x).strip())))),
+                url_meta=tuple(dict(item) for item in (payload.get("url_meta") or ()) if isinstance(item, Mapping)),
+                processed_terminal_urls=tuple(
+                    str(item)
+                    for item in (payload.get("processed_terminal_urls") or ())
+                    if str(item).strip().lower().rstrip("/") not in reopen_keys
+                ),
+                pages_fetched=int(payload.get("pages_fetched") or 0),
+                provider_calls=int(payload.get("provider_calls") or 0),
+                wave_terminal_rejections=int(payload.get("wave_terminal_rejections") or 0),
+                followup_queries=tuple(str(x) for x in (payload.get("followup_queries") or ()) if str(x).strip()),
+                candidate_source_urls=tuple(cand_urls),
+                salvaged_urls=(),
+            )
+            resume_cursors[adapter_id] = encode_generic_web_cursor(state)
     # worker_supabase exposes backend_mirror on sys.path and paid providers
     # import these modules by their runtime names. Reusing that exact namespace
     # avoids creating a second ContextVar that provider threads cannot see.
