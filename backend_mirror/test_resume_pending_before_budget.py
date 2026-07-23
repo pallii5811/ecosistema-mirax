@@ -197,7 +197,7 @@ def test_valid_record_accepts_verified_company_group() -> None:
         intent="commercial_search",
         signal_ids=("new_location",),
         signal_match_mode="any",
-        geographies=("Nord Italia",),
+        geographies=(),
         freshness_max_age_days=730,
         requested_count=1,
         budget_eur=0.05,
@@ -219,7 +219,7 @@ def test_valid_record_accepts_verified_company_group() -> None:
         "evidence_excerpt": text[:160],
         "published_at": "2026-02-02",
         "matched_signal_ids": ["new_location"],
-        "geography": "Parma, Emilia-Romagna",
+        "geography": "Parma",
     }
     attach_generic_provenance(
         row,
