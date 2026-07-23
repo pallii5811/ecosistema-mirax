@@ -37,6 +37,8 @@ config({ path: '.env.local' })
 
 const SPEND_CEILING_EUR = Number(process.env.MIRAX_OPENWORLD_SPEND_CEILING_EUR || '2.70')
 const HARD_CAP_EUR = Number(process.env.MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR || '0.25')
+/** Inclusive lower bound for campaign spend accounting (ISO date). */
+const BUDGET_SINCE = String(process.env.MIRAX_OPENWORLD_BUDGET_SINCE || '2026-07-20')
 
 const args = new Map(
   process.argv.slice(2).map((arg) => {
@@ -81,24 +83,27 @@ async function reconstructBudgetViaPostgres() {
       `with campaign_searches as (
          select s.id
            from public.searches s
-          where coalesce(s.intent->>'lifecycle_stage','') = 'v5_shadow'
-             or coalesce(s.intent->>'source_adapter_shadow','') in ('true','1')
-             or exists (
-                  select 1 from public.canary_runs c
-                   where c.search_id = s.id
-                     and (
-                       c.canary_type ilike '%open_world%'
-                       or c.canary_type ilike '%openworld%'
-                       or c.canary_type ilike '%matrix%'
-                     )
-                )
+          where s.created_at >= $2::timestamptz
+            and (
+              coalesce(s.intent->>'lifecycle_stage','') = 'v5_shadow'
+              or coalesce(s.intent->>'source_adapter_shadow','') in ('true','1')
+              or exists (
+                   select 1 from public.canary_runs c
+                    where c.search_id = s.id
+                      and (
+                        c.canary_type ilike '%open_world%'
+                        or c.canary_type ilike '%openworld%'
+                        or c.canary_type ilike '%matrix%'
+                      )
+                 )
+            )
        )
        select coalesce(sum(coalesce(l.actual_cost_eur, l.estimated_cost_eur, 0)), 0)::float as cumulative,
               count(*)::int as n
          from public.search_cost_ledger l
          join campaign_searches cs on cs.id = l.search_id
         where l.status = any($1::text[])`,
-      [['settled', 'committed', 'failed', 'halted']],
+      [['settled', 'committed', 'failed', 'halted'], BUDGET_SINCE],
     )
     const cumulative = Number(r.rows[0]?.cumulative || 0)
     const residual = Math.max(0, SPEND_CEILING_EUR - cumulative)
