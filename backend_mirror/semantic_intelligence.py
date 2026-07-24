@@ -26,6 +26,8 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Opti
 QUERY_SCHEMA_VERSION = "semantic-query-contract-v5"
 EVENT_SCHEMA_VERSION = "semantic-commercial-event-v4"
 GROUNDING_SCHEMA_VERSION = "semantic-grounding-v2"
+VERIFIER_POLICY_VERSION = "semantic-verifier-v3"
+
 HIRING_CUSTOMER_ACQUISITION_RELATIONSHIP = "sales_customer_acquisition_team_expansion_by_target_company"
 CRM_SEEKING_RELATIONSHIP = "target_company_seeking_crm_solution"
 EXPANSION_FACILITY_RELATIONSHIP = "company_opening_or_expanding_facility"
@@ -456,9 +458,17 @@ class GroundingVerdict:
     gate_results: Mapping[str, bool]
     failed_gate_codes: Tuple[str, ...]
     schema_version: str = GROUNDING_SCHEMA_VERSION
+    primary_rejection_code: Optional[str] = None
+    false_checks: Tuple[str, ...] = ()
+    missing_relationships: Tuple[str, ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["primary_rejection_code"] = self.primary_rejection_code or self.rejection_code
+        payload["false_checks"] = list(self.false_checks or self.reasons)
+        payload["failed_gate_codes"] = list(self.failed_gate_codes)
+        payload["missing_relationships"] = list(self.missing_relationships)
+        return payload
 
 
 class SemanticModelClient(Protocol):
@@ -498,7 +508,13 @@ class SemanticTelemetry:
 
 
 class SemanticResultCache:
-    """Process-safe cache keyed by content, query contract, model and schema."""
+    """Process-safe two-level cache: model interpretation vs deterministic verdict.
+
+    A) MODEL INTERPRETATION CACHE — content_hash + model + event schema.
+       Contract / verifier / umbrella changes must NOT force a paid re-call.
+    B) DETERMINISTIC VERDICT CACHE — interpretation hash + contract hash +
+       verifier policy version.
+    """
 
     def __init__(self, path: Optional[str] = None, ttl_days: int = 30) -> None:
         data_dir = Path(os.getenv("MIRAX_DATA_DIR") or Path(__file__).resolve().parent / "data")
@@ -512,15 +528,53 @@ class SemanticResultCache:
                 "cache_key TEXT PRIMARY KEY, result_json TEXT NOT NULL, created_at REAL NOT NULL, "
                 "last_hit_at REAL NOT NULL, hit_count INTEGER NOT NULL DEFAULT 0)"
             )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS semantic_model_interpretation_cache ("
+                "cache_key TEXT PRIMARY KEY, result_json TEXT NOT NULL, content_hash TEXT NOT NULL, "
+                "model_version TEXT NOT NULL, event_schema_version TEXT NOT NULL, "
+                "canonical_url TEXT, created_at REAL NOT NULL, last_hit_at REAL NOT NULL, "
+                "hit_count INTEGER NOT NULL DEFAULT 0)"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS semantic_verdict_cache ("
+                "cache_key TEXT PRIMARY KEY, result_json TEXT NOT NULL, "
+                "raw_interpretation_hash TEXT NOT NULL, normalized_contract_hash TEXT NOT NULL, "
+                "verifier_policy_version TEXT NOT NULL, created_at REAL NOT NULL, "
+                "last_hit_at REAL NOT NULL, hit_count INTEGER NOT NULL DEFAULT 0)"
+            )
             connection.commit()
 
     @staticmethod
     def key(*, content_hash: str, semantic_query_contract_hash: str, model_version: str, interpreter_schema_version: str) -> str:
+        # Legacy combined key retained for old entries only.
         return _digest({
             "content_hash": content_hash,
             "semantic_query_contract_hash": semantic_query_contract_hash,
             "model_version": model_version,
             "interpreter_schema_version": interpreter_schema_version,
+        })
+
+    @staticmethod
+    def model_interpretation_key(*, content_hash: str, model_version: str, event_schema_version: str) -> str:
+        return _digest({
+            "layer": "model_interpretation",
+            "content_hash": content_hash,
+            "model_version": model_version,
+            "event_schema_version": event_schema_version,
+        })
+
+    @staticmethod
+    def verdict_key(
+        *,
+        raw_interpretation_hash: str,
+        normalized_contract_hash: str,
+        verifier_policy_version: str,
+    ) -> str:
+        return _digest({
+            "layer": "deterministic_verdict",
+            "raw_interpretation_hash": raw_interpretation_hash,
+            "normalized_contract_hash": normalized_contract_hash,
+            "verifier_policy_version": verifier_policy_version,
         })
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
@@ -555,6 +609,161 @@ class SemanticResultCache:
                 "VALUES(?,?,?,?,0) ON CONFLICT(cache_key) DO UPDATE SET "
                 "result_json=excluded.result_json,created_at=excluded.created_at,last_hit_at=excluded.last_hit_at",
                 (key, serialized, now, now),
+            )
+            connection.commit()
+
+    def get_model_interpretation(self, key: str) -> Optional[Dict[str, Any]]:
+        cutoff = time.time() - self.ttl_seconds
+        with self._lock, closing(sqlite3.connect(self.path, timeout=10.0)) as connection:
+            row = connection.execute(
+                "SELECT result_json, created_at FROM semantic_model_interpretation_cache WHERE cache_key = ?",
+                (key,),
+            ).fetchone()
+            if not row:
+                return None
+            if float(row[1]) < cutoff:
+                connection.execute("DELETE FROM semantic_model_interpretation_cache WHERE cache_key = ?", (key,))
+                connection.commit()
+                return None
+            connection.execute(
+                "UPDATE semantic_model_interpretation_cache SET hit_count = hit_count + 1, last_hit_at = ? "
+                "WHERE cache_key = ?",
+                (time.time(), key),
+            )
+            connection.commit()
+        try:
+            result = json.loads(str(row[0]))
+            return dict(result) if isinstance(result, Mapping) else None
+        except json.JSONDecodeError:
+            return None
+
+    def get_model_interpretation_for_url(self, canonical_url: str) -> Optional[Dict[str, Any]]:
+        url = _canonical_source_url(canonical_url)
+        if not url:
+            return None
+        cutoff = time.time() - self.ttl_seconds
+        with self._lock, closing(sqlite3.connect(self.path, timeout=10.0)) as connection:
+            row = connection.execute(
+                "SELECT result_json, created_at, cache_key FROM semantic_model_interpretation_cache "
+                "WHERE canonical_url = ? ORDER BY last_hit_at DESC LIMIT 1",
+                (url,),
+            ).fetchone()
+            if not row:
+                return None
+            if float(row[1]) < cutoff:
+                connection.execute(
+                    "DELETE FROM semantic_model_interpretation_cache WHERE cache_key = ?",
+                    (row[2],),
+                )
+                connection.commit()
+                return None
+            connection.execute(
+                "UPDATE semantic_model_interpretation_cache SET hit_count = hit_count + 1, last_hit_at = ? "
+                "WHERE cache_key = ?",
+                (time.time(), row[2]),
+            )
+            connection.commit()
+        try:
+            result = json.loads(str(row[0]))
+            return dict(result) if isinstance(result, Mapping) else None
+        except json.JSONDecodeError:
+            return None
+
+        cutoff = time.time() - self.ttl_seconds
+        with self._lock, closing(sqlite3.connect(self.path, timeout=10.0)) as connection:
+            row = connection.execute(
+                "SELECT result_json, created_at FROM semantic_model_interpretation_cache WHERE cache_key = ?",
+                (key,),
+            ).fetchone()
+            if not row:
+                return None
+            if float(row[1]) < cutoff:
+                connection.execute("DELETE FROM semantic_model_interpretation_cache WHERE cache_key = ?", (key,))
+                connection.commit()
+                return None
+            connection.execute(
+                "UPDATE semantic_model_interpretation_cache SET hit_count = hit_count + 1, last_hit_at = ? "
+                "WHERE cache_key = ?",
+                (time.time(), key),
+            )
+            connection.commit()
+        try:
+            result = json.loads(str(row[0]))
+            return dict(result) if isinstance(result, Mapping) else None
+        except json.JSONDecodeError:
+            return None
+
+    def set_model_interpretation(
+        self,
+        key: str,
+        result: Mapping[str, Any],
+        *,
+        content_hash: str,
+        model_version: str,
+        event_schema_version: str,
+        canonical_url: str = "",
+    ) -> None:
+        now = time.time()
+        serialized = _stable_json(result)
+        with self._lock, closing(sqlite3.connect(self.path, timeout=10.0)) as connection:
+            connection.execute(
+                "INSERT INTO semantic_model_interpretation_cache("
+                "cache_key,result_json,content_hash,model_version,event_schema_version,canonical_url,"
+                "created_at,last_hit_at,hit_count) VALUES(?,?,?,?,?,?,?,?,0) "
+                "ON CONFLICT(cache_key) DO UPDATE SET result_json=excluded.result_json,"
+                "created_at=excluded.created_at,last_hit_at=excluded.last_hit_at,"
+                "content_hash=excluded.content_hash,canonical_url=excluded.canonical_url",
+                (key, serialized, content_hash, model_version, event_schema_version, canonical_url, now, now),
+            )
+            connection.commit()
+
+    def get_verdict(self, key: str) -> Optional[Dict[str, Any]]:
+        cutoff = time.time() - self.ttl_seconds
+        with self._lock, closing(sqlite3.connect(self.path, timeout=10.0)) as connection:
+            row = connection.execute(
+                "SELECT result_json, created_at FROM semantic_verdict_cache WHERE cache_key = ?",
+                (key,),
+            ).fetchone()
+            if not row:
+                return None
+            if float(row[1]) < cutoff:
+                connection.execute("DELETE FROM semantic_verdict_cache WHERE cache_key = ?", (key,))
+                connection.commit()
+                return None
+            connection.execute(
+                "UPDATE semantic_verdict_cache SET hit_count = hit_count + 1, last_hit_at = ? WHERE cache_key = ?",
+                (time.time(), key),
+            )
+            connection.commit()
+        try:
+            result = json.loads(str(row[0]))
+            return dict(result) if isinstance(result, Mapping) else None
+        except json.JSONDecodeError:
+            return None
+
+    def set_verdict(
+        self,
+        key: str,
+        result: Mapping[str, Any],
+        *,
+        raw_interpretation_hash: str,
+        normalized_contract_hash: str,
+        verifier_policy_version: str,
+    ) -> None:
+        now = time.time()
+        serialized = _stable_json(result)
+        with self._lock, closing(sqlite3.connect(self.path, timeout=10.0)) as connection:
+            connection.execute(
+                "INSERT INTO semantic_verdict_cache("
+                "cache_key,result_json,raw_interpretation_hash,normalized_contract_hash,"
+                "verifier_policy_version,created_at,last_hit_at,hit_count) "
+                "VALUES(?,?,?,?,?,?,?,0) ON CONFLICT(cache_key) DO UPDATE SET "
+                "result_json=excluded.result_json,created_at=excluded.created_at,"
+                "last_hit_at=excluded.last_hit_at",
+                (
+                    key, serialized, raw_interpretation_hash, normalized_contract_hash,
+                    verifier_policy_version, now, now,
+                ),
             )
             connection.commit()
 
@@ -756,29 +965,71 @@ class SemanticCommercialEventInterpreter:
             "source_text": content, "source_url": str(source_url), "publisher": str(publisher or ""),
             "structured_metadata": dict(structured_metadata or {}), "entity_hints": list(_tuple(entity_hints)),
         }
-        # URL-stable primary key: windowing/snippet drift must not force a paid
-        # re-interpretation of the same article. Grounding still re-checks the
-        # literal excerpt against the freshly fetched source_text.
+        # Layer A: model interpretation cache is content+model+schema only.
+        # Contract / umbrella / verifier changes must re-verify offline, not re-pay.
         canonical_url = _canonical_source_url(str(source_url))
-        content_hash = _digest({"source_url": canonical_url})
-        key = SemanticResultCache.key(
-            content_hash=content_hash, semantic_query_contract_hash=contract.contract_hash,
-            model_version=self.model.model_version, interpreter_schema_version=EVENT_SCHEMA_VERSION,
+        page_content_hash = _digest({"source_text": content, "source_url": canonical_url})
+        model_key = SemanticResultCache.model_interpretation_key(
+            content_hash=page_content_hash,
+            model_version=self.model.model_version,
+            event_schema_version=EVENT_SCHEMA_VERSION,
         )
-        cached = self.cache.get(key)
+        cached = self.cache.get_model_interpretation(model_key)
         if cached is None:
-            # Legacy key (title+snippet+full text) for entries written before URL-stable keys.
-            legacy_hash = _digest({
-                "title": payload["title"], "snippet": payload["snippet"], "source_text": content,
-                "source_url": payload["source_url"], "structured_metadata": payload["structured_metadata"],
-            })
-            legacy_key = SemanticResultCache.key(
-                content_hash=legacy_hash, semantic_query_contract_hash=contract.contract_hash,
-                model_version=self.model.model_version, interpreter_schema_version=EVENT_SCHEMA_VERSION,
+            # Same page URL already interpreted under any content window.
+            cached = self.cache.get_model_interpretation_for_url(canonical_url)
+        if cached is None:
+            # Legacy URL-stable + contract key (pre two-level cache).
+            url_hash = _digest({"source_url": canonical_url})
+            cached = self.cache.get(
+                SemanticResultCache.key(
+                    content_hash=url_hash,
+                    semantic_query_contract_hash=URL_STABLE_MODEL_MARKER,
+                    model_version=self.model.model_version,
+                    interpreter_schema_version=EVENT_SCHEMA_VERSION,
+                )
             )
-            cached = self.cache.get(legacy_key)
+        if cached is None:
+            url_hash = _digest({"source_url": canonical_url})
+            legacy_contract_key = SemanticResultCache.key(
+                content_hash=url_hash,
+                semantic_query_contract_hash=contract.contract_hash,
+                model_version=self.model.model_version,
+                interpreter_schema_version=EVENT_SCHEMA_VERSION,
+            )
+            cached = self.cache.get(legacy_contract_key)
+            if cached is None:
+                legacy_hash = _digest({
+                    "title": payload["title"], "snippet": payload["snippet"], "source_text": content,
+                    "source_url": payload["source_url"], "structured_metadata": payload["structured_metadata"],
+                })
+                cached = self.cache.get(
+                    SemanticResultCache.key(
+                        content_hash=legacy_hash,
+                        semantic_query_contract_hash=contract.contract_hash,
+                        model_version=self.model.model_version,
+                        interpreter_schema_version=EVENT_SCHEMA_VERSION,
+                    )
+                )
             if cached is not None:
-                self.cache.set(key, cached)
+                self.cache.set_model_interpretation(
+                    model_key,
+                    cached,
+                    content_hash=page_content_hash,
+                    model_version=self.model.model_version,
+                    event_schema_version=EVENT_SCHEMA_VERSION,
+                    canonical_url=canonical_url,
+                )
+        elif cached is not None:
+            # Promote URL hit into content-hash key for next time.
+            self.cache.set_model_interpretation(
+                model_key,
+                cached,
+                content_hash=page_content_hash,
+                model_version=self.model.model_version,
+                event_schema_version=EVENT_SCHEMA_VERSION,
+                canonical_url=canonical_url,
+            )
         if cached is not None:
             self.telemetry.semantic_cache_hits += 1
             return SemanticEventInterpretation.from_model(cached)
@@ -791,8 +1042,15 @@ class SemanticCommercialEventInterpreter:
             entity_hints=entity_hints,
         )
         if deterministic is not None:
-            # No paid model call: structured vacancy + literal duty already prove the proxy.
-            self.cache.set(key, deterministic.to_dict())
+            payload_dict = deterministic.to_dict()
+            self.cache.set_model_interpretation(
+                model_key,
+                payload_dict,
+                content_hash=page_content_hash,
+                model_version=self.model.model_version,
+                event_schema_version=EVENT_SCHEMA_VERSION,
+                canonical_url=canonical_url,
+            )
             return deterministic
         self.telemetry.semantic_calls += 1
         result = await self.model.complete_json(
@@ -813,12 +1071,144 @@ class SemanticCommercialEventInterpreter:
             )
             interpretation = SemanticEventInterpretation.from_model(adjudicated)
             result = adjudicated
-        self.cache.set(key, dict(result))
+        self.cache.set_model_interpretation(
+            model_key,
+            dict(result),
+            content_hash=page_content_hash,
+            model_version=self.model.model_version,
+            event_schema_version=EVENT_SCHEMA_VERSION,
+            canonical_url=canonical_url,
+        )
+        url_hash = _digest({"source_url": canonical_url})
+        # Contract-agnostic durable URL key + contract-specific legacy key.
+        self.cache.set(
+            SemanticResultCache.key(
+                content_hash=url_hash,
+                semantic_query_contract_hash=URL_STABLE_MODEL_MARKER,
+                model_version=self.model.model_version,
+                interpreter_schema_version=EVENT_SCHEMA_VERSION,
+            ),
+            dict(result),
+        )
+        self.cache.set(
+            SemanticResultCache.key(
+                content_hash=url_hash,
+                semantic_query_contract_hash=contract.contract_hash,
+                model_version=self.model.model_version,
+                interpreter_schema_version=EVENT_SCHEMA_VERSION,
+            ),
+            dict(result),
+        )
         return interpretation
+
+
+URL_STABLE_MODEL_MARKER = "url_stable_model_v1"
 
 
 def _canonical_name(value: str) -> str:
     return "".join(char.casefold() for char in _clean(value) if char.isalnum())
+
+
+def resolve_maximum_age_days(
+    *,
+    freshness_max_age_days: Optional[int],
+    temporal_constraints: Optional[Mapping[str, Any]] = None,
+) -> Optional[int]:
+    """Prefer request freshness; else contract temporal window (months→days)."""
+    if freshness_max_age_days is not None:
+        return max(0, int(freshness_max_age_days))
+    constraints = temporal_constraints if isinstance(temporal_constraints, Mapping) else {}
+    if constraints.get("maximum_age_days") is not None:
+        return max(0, int(constraints.get("maximum_age_days")))
+    if constraints.get("timeframe_months") is not None:
+        return max(0, int(constraints.get("timeframe_months")) * 30)
+    return None
+
+
+def select_primary_rejection_code(
+    *,
+    failed_gate_codes: Sequence[str],
+    false_checks: Sequence[str] = (),
+    role_unverified: bool = False,
+    market_scope_rejected: bool = False,
+) -> Optional[str]:
+    """Deterministic primary rejection order (multi-gate failures all persist)."""
+    failed = [str(item) for item in failed_gate_codes if str(item).strip()]
+    checks = {str(item) for item in false_checks}
+    if role_unverified and "TARGET_ROLE_UNVERIFIED" not in failed:
+        failed = ["TARGET_ROLE_UNVERIFIED", *failed]
+    if market_scope_rejected and "MARKET_SCOPE_REJECTED" not in failed:
+        failed = [*failed, "MARKET_SCOPE_REJECTED"]
+    order = (
+        "EVENT_GROUNDING_FAILED",
+        "TARGET_ROLE_UNVERIFIED",
+        "COMPANY_GROUNDING_FAILED",
+        "HYPOTHESIS_COMPATIBILITY_FAILED",
+        "MARKET_SCOPE_REJECTED",
+        "EXPLICIT_DEMAND_GROUNDING_FAILED",
+        "COMMERCIAL_INFERENCE_INVALID",
+    )
+    # Temporal failure always elevates EVENT even if gate naming drifts.
+    if "temporal_evidence_valid" in checks and "EVENT_GROUNDING_FAILED" not in failed:
+        failed = ["EVENT_GROUNDING_FAILED", *failed]
+    for code in order:
+        if code in failed:
+            return code
+    return failed[0] if failed else None
+
+
+def reverify_interpretation_offline(
+    *,
+    contract: "SemanticQueryContract",
+    interpretation: "SemanticEventInterpretation",
+    source_text: str,
+    source_url: str,
+    source_publisher: str = "",
+    official_domain_verified: bool = False,
+    official_domain_confidence: float = 0.0,
+    entity_class: Optional[str] = "operating_company",
+    candidate_company: Optional[str] = None,
+    maximum_age_days: Optional[int] = None,
+    now: Optional[date] = None,
+    structured_metadata: Optional[Mapping[str, Any]] = None,
+    identity_verification_deferred: bool = False,
+    cache: Optional[SemanticResultCache] = None,
+) -> GroundingVerdict:
+    """Re-run deterministic verifier on a persisted raw interpretation (no LLM)."""
+    age = resolve_maximum_age_days(
+        freshness_max_age_days=maximum_age_days,
+        temporal_constraints=contract.temporal_constraints,
+    )
+    verdict = SemanticEvidenceGroundingVerifier().verify(
+        contract,
+        interpretation,
+        source_text=source_text,
+        source_url=source_url,
+        source_publisher=source_publisher,
+        official_domain_verified=official_domain_verified,
+        official_domain_confidence=official_domain_confidence,
+        entity_class=entity_class,
+        candidate_company=candidate_company,
+        maximum_age_days=age,
+        now=now,
+        structured_metadata=structured_metadata,
+        identity_verification_deferred=identity_verification_deferred,
+    )
+    if cache is not None:
+        raw_hash = _digest(interpretation.to_dict())
+        vkey = SemanticResultCache.verdict_key(
+            raw_interpretation_hash=raw_hash,
+            normalized_contract_hash=contract.contract_hash,
+            verifier_policy_version=VERIFIER_POLICY_VERSION,
+        )
+        cache.set_verdict(
+            vkey,
+            verdict.to_dict(),
+            raw_interpretation_hash=raw_hash,
+            normalized_contract_hash=contract.contract_hash,
+            verifier_policy_version=VERIFIER_POLICY_VERSION,
+        )
+    return verdict
 
 
 def _normalize_literal_surface(value: str) -> str:
@@ -1738,22 +2128,19 @@ class SemanticEvidenceGroundingVerifier:
         reasons = tuple(name for name, passed in checks.items() if not passed)
         if hiring_proxy is not None and not duty_ok:
             rejection = "CUSTOMER_ACQUISITION_DUTY_UNPROVEN"
-        elif not event_grounding:
-            rejection = "EVENT_GROUNDING_FAILED"
-        elif not role_match or excluded_role:
-            rejection = "TARGET_ROLE_UNVERIFIED"
-        elif not company_grounding:
-            rejection = "COMPANY_GROUNDING_FAILED"
-        elif not hypothesis_compatibility:
-            rejection = "HYPOTHESIS_COMPATIBILITY_FAILED"
-        elif not explicit_demand_grounding:
-            rejection = "EXPLICIT_DEMAND_GROUNDING_FAILED"
-        elif not commercial_inference_validity:
-            rejection = "COMMERCIAL_INFERENCE_INVALID"
-        elif reasons:
-            rejection = failed_gate_codes[0] if failed_gate_codes else "EVIDENCE_GROUNDING_FAILED"
+            failed_gate_codes = tuple(dict.fromkeys(("CUSTOMER_ACQUISITION_DUTY_UNPROVEN", *failed_gate_codes)))
         else:
-            rejection = None
+            rejection = select_primary_rejection_code(
+                failed_gate_codes=failed_gate_codes,
+                false_checks=reasons,
+                role_unverified=(not role_match or excluded_role),
+            )
+            if rejection is None and reasons:
+                rejection = "EVIDENCE_GROUNDING_FAILED"
+        missing_relationships = missing_industrial_relationships(
+            contract.required_relationships,
+            relationships,
+        )
         return GroundingVerdict(
             accepted=rejection is None,
             rejection_code=rejection,
@@ -1772,6 +2159,9 @@ class SemanticEvidenceGroundingVerifier:
             evidence_claim_type=claim_type,
             gate_results=gate_results,
             failed_gate_codes=failed_gate_codes,
+            primary_rejection_code=rejection,
+            false_checks=reasons,
+            missing_relationships=missing_relationships,
         )
 
 

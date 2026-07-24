@@ -132,16 +132,17 @@ def _canonical_plan(intent: Mapping[str, Any]) -> Mapping[str, Any]:
     return plan
 
 
-def _hard_cap(plan: Mapping[str, Any], environ: Mapping[str, str]) -> float:
+def _hard_cap(plan: Mapping[str, Any], environ: Mapping[str, str], resume_state: Optional[Mapping[str, Any]] = None) -> float:
+    from .shadow_budget import resolve_shadow_hard_cap_eur
+
     budget = plan.get("budget_policy") if isinstance(plan.get("budget_policy"), Mapping) else {}
     plan_cap = float(budget.get("hard_cost_eur") or _MAX_SHADOW_CAP_EUR)
-    raw_env = str(environ.get("MIRAX_SOURCE_ADAPTER_SHADOW_HARD_CAP_EUR") or "").strip()
-    # Explicit operator ENV overrides the baked plan ceiling (up or down) so
-    # resumes are not stranded when prior_cost already consumed the original
-    # plan hard_cost_eur. Absolute product max still applies.
-    if raw_env:
-        return max(0.0, min(_MAX_SHADOW_CAP_EUR, float(raw_env)))
-    return max(0.0, min(_MAX_SHADOW_CAP_EUR, plan_cap))
+    return resolve_shadow_hard_cap_eur(
+        plan_hard_cost_eur=plan_cap,
+        environ=environ,
+        resume_state=resume_state,
+        absolute_max_eur=_MAX_SHADOW_CAP_EUR,
+    )
 
 
 def _plan_with_hard_cap(plan: Mapping[str, Any], hard_cap_eur: float) -> dict[str, Any]:
@@ -189,14 +190,25 @@ def reopen_generic_web_resume_cursors(
     resume_cursors: Mapping[str, DiscoveryCursor],
     *,
     processed_employer_keys: Sequence[str],
+    terminal_ledger: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, DiscoveryCursor]:
-    """Re-queue unpublished candidate pages and clear salvaged_urls on resume."""
+    """Re-queue unpublished candidate pages and clear salvaged_urls on resume.
+
+    URLs present in the durable terminal ledger are never reopened — not for
+    fetch, parse, cache lookup, or a paid semantic call.
+    """
     from .generic_web_budget import (
         GenericWebDiscoveryState,
         decode_generic_web_v2_payload,
         encode_generic_web_cursor,
     )
+    from .terminal_url_ledger import (
+        eligible_for_semantic_call,
+        filter_nonterminal_urls,
+        ledger_from_mapping,
+    )
 
+    ledger = ledger_from_mapping(terminal_ledger)
     out = dict(resume_cursors)
     for adapter_id, cursor in list(out.items()):
         value = str(cursor.value or "")
@@ -219,26 +231,64 @@ def reopen_generic_web_resume_cursors(
         }
         reopen = []
         for url in cand_urls:
+            if not eligible_for_semantic_call(ledger, url):
+                continue
             host = str(url).split("://", 1)[-1].split("/", 1)[0].casefold().removeprefix("www.")
             if host and host in processed_domains:
                 continue
             reopen.append(url)
+        reopen = list(filter_nonterminal_urls(reopen, ledger))
+        if not reopen and not payload.get("salvaged_urls"):
+            # Still rewrite cursor so terminal URLs stay in processed_terminal_urls.
+            existing_terminal = tuple(
+                str(item) for item in (payload.get("processed_terminal_urls") or ()) if str(item).strip()
+            )
+            terminal_from_ledger = tuple(ledger.keys())
+            state = GenericWebDiscoveryState(
+                legacy_offset=int(payload.get("legacy_offset") or 0),
+                query_index=int(payload.get("query_index") or 0),
+                discovery_spent_eur=float(payload.get("discovery_spent_eur") or 0.0),
+                executed_query_keys=tuple(str(x) for x in (payload.get("executed_query_keys") or ()) if str(x).strip()),
+                pending_urls=tuple(str(x) for x in (payload.get("pending_urls") or ()) if str(x).strip() and eligible_for_semantic_call(ledger, x)),
+                url_meta=tuple(dict(item) for item in (payload.get("url_meta") or ()) if isinstance(item, Mapping)),
+                processed_terminal_urls=tuple(dict.fromkeys((*existing_terminal, *terminal_from_ledger))),
+                pages_fetched=int(payload.get("pages_fetched") or 0),
+                provider_calls=int(payload.get("provider_calls") or 0),
+                wave_terminal_rejections=int(payload.get("wave_terminal_rejections") or 0),
+                followup_queries=tuple(str(x) for x in (payload.get("followup_queries") or ()) if str(x).strip()),
+                candidate_source_urls=tuple(cand_urls),
+                salvaged_urls=(),
+            )
+            out[adapter_id] = encode_generic_web_cursor(state)
+            continue
         if not reopen and not payload.get("salvaged_urls"):
             continue
         reopen_keys = {str(item).strip().lower().rstrip("/") for item in reopen}
+        existing_terminal = tuple(
+            str(item) for item in (payload.get("processed_terminal_urls") or ()) if str(item).strip()
+        )
+        # Keep durable terminals even when reopening other candidates.
+        durable_terminals = tuple(ledger.keys())
         state = GenericWebDiscoveryState(
             legacy_offset=int(payload.get("legacy_offset") or 0),
             query_index=int(payload.get("query_index") or 0),
             discovery_spent_eur=float(payload.get("discovery_spent_eur") or 0.0),
             executed_query_keys=tuple(str(x) for x in (payload.get("executed_query_keys") or ()) if str(x).strip()),
             pending_urls=tuple(
-                dict.fromkeys((*reopen, *(str(x) for x in (payload.get("pending_urls") or ()) if str(x).strip())))
+                dict.fromkeys((*reopen, *(str(x) for x in (payload.get("pending_urls") or ()) if str(x).strip() and eligible_for_semantic_call(ledger, x))))
             ),
             url_meta=tuple(dict(item) for item in (payload.get("url_meta") or ()) if isinstance(item, Mapping)),
             processed_terminal_urls=tuple(
-                str(item)
-                for item in (payload.get("processed_terminal_urls") or ())
-                if str(item).strip().lower().rstrip("/") not in reopen_keys
+                dict.fromkeys(
+                    (
+                        *(
+                            str(item)
+                            for item in existing_terminal
+                            if str(item).strip().lower().rstrip("/") not in reopen_keys
+                        ),
+                        *durable_terminals,
+                    )
+                )
             ),
             pages_fetched=int(payload.get("pages_fetched") or 0),
             provider_calls=int(payload.get("provider_calls") or 0),
@@ -273,14 +323,17 @@ async def execute_source_adapter_shadow(
     plan = validate_commercial_search_plan(_canonical_plan(intent)).model_dump(mode="json")
     validate_plan_signals(plan)
     validate_plan_source_policy(plan)
-    cap = _hard_cap(plan, env)
+    resume = dict(resume_state or intent.get("shadow_resume") or {})
+    prior_cost_eur = float(resume.get("prior_cost_eur") or 0.0)
+    cap = _hard_cap(plan, env, resume_state=resume)
     if cap <= 0:
         raise PermissionError("SOURCE_ADAPTER_SHADOW_ZERO_BUDGET")
     plan = _plan_with_hard_cap(plan, cap)
     if (persistent_client is None) != (search_id is None):
         raise ValueError("persistent_client and search_id must be provided together")
-    resume = dict(resume_state or intent.get("shadow_resume") or {})
-    prior_cost_eur = float(resume.get("prior_cost_eur") or 0.0)
+    from .terminal_url_ledger import ledger_from_mapping, ledger_to_mapping, merge_terminal_ledgers
+
+    terminal_ledger = ledger_from_mapping(resume.get("terminal_url_ledger"))
     prior_payloads_raw = [
         item for item in (resume.get("qualified_lead_payloads") or ())
         if isinstance(item, Mapping)
@@ -324,6 +377,8 @@ async def execute_source_adapter_shadow(
             # Keep this flag (not popped) so generic_web caps the free-fetch
             # wave to salvage URLs instead of expanding news hubs for 15 minutes.
             "resume_pending_drain": target_unmet,
+            "terminal_url_ledger": ledger_to_mapping(terminal_ledger),
+            "search_id": str(search_id or ""),
         },
     )
     source_policy = plan.get("source_policy") or {}
@@ -342,6 +397,7 @@ async def execute_source_adapter_shadow(
         resume_cursors = reopen_generic_web_resume_cursors(
             resume_cursors,
             processed_employer_keys=tuple(str(item) for item in processed_employer_keys),
+            terminal_ledger=ledger_to_mapping(terminal_ledger),
         )
     # worker_supabase exposes backend_mirror on sys.path and paid providers
     # import these modules by their runtime names. Reusing that exact namespace
@@ -499,6 +555,51 @@ def build_shadow_resume_state(
         list(prior.get("processed_identity_hashes") or ())
         + list(acquisition.get("processed_identity_hashes") or ())
     ))
+    from .terminal_url_ledger import (
+        ledger_from_mapping,
+        ledger_to_mapping,
+        mark_terminal,
+        merge_terminal_ledgers,
+        terminal_status_for_rejection,
+    )
+
+    terminal_ledger = ledger_from_mapping(prior.get("terminal_url_ledger"))
+    grounding_bucket = []
+    for item in result.adapter_progress:
+        hist = getattr(item, "rejected_candidates", None) or []
+        if isinstance(hist, list):
+            for row in hist:
+                if isinstance(row, Mapping):
+                    grounding_bucket.append(row)
+                if isinstance(row, Mapping) and row.get("grounding_rejects"):
+                    grounding_bucket.extend(
+                        g for g in (row.get("grounding_rejects") or ()) if isinstance(g, Mapping)
+                    )
+    tech_rejects = []
+    if isinstance(getattr(result, "semantic_telemetry", None), Mapping):
+        tech_rejects = list(result.semantic_telemetry.get("grounding_rejects") or [])
+    for row in list(grounding_bucket) + list(tech_rejects):
+        if not isinstance(row, Mapping):
+            continue
+        url = str(row.get("url") or "")
+        if not url:
+            continue
+        status, reason = terminal_status_for_rejection(
+            primary_rejection_code=str(row.get("primary_rejection_code") or row.get("rejection_code") or ""),
+            false_checks=list(row.get("false_checks") or ()),
+        )
+        mark_terminal(
+            terminal_ledger,
+            search_id=str(prior.get("search_id") or ""),
+            url=url,
+            terminal_status=status,
+            terminal_reason=reason,
+            event_date=(str(row["event_date"]) if row.get("event_date") else None),
+            primary_rejection_code=str(row.get("primary_rejection_code") or row.get("rejection_code") or "") or None,
+            failed_gate_codes=list(row.get("failed_gate_codes") or ()),
+            false_checks=list(row.get("false_checks") or ()),
+            content_hash=str(row.get("content_hash") or ""),
+        )
     return {
         "resumable": resumable,
         "resume_cursors": resume_cursors,
@@ -513,6 +614,7 @@ def build_shadow_resume_state(
         "processed_place_ids_ref": acquisition.get("processed_place_ids_ref") or prior.get("processed_place_ids_ref"),
         "cumulative_raw_unique": int(acquisition.get("cumulative_raw_unique") or prior.get("cumulative_raw_unique") or 0),
         "cumulative_audited": int(acquisition.get("cumulative_audited") or prior.get("cumulative_audited") or 0),
+        "terminal_url_ledger": ledger_to_mapping(terminal_ledger),
         "cumulative_qualified_unique": cumulative_orchestrator,
         "acquisition": acquisition,
         "termination_reason": result.status,

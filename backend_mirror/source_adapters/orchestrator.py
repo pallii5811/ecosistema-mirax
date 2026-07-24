@@ -583,7 +583,15 @@ async def semantic_authority_qualifier(
             INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY,
             industrial_buyer_trigger_satisfied,
             missing_industrial_relationships,
+            resolve_maximum_age_days,
             SemanticEventInterpretation,
+        )
+        from .terminal_url_ledger import (
+            eligible_for_semantic_call,
+            ledger_from_mapping,
+            ledger_to_mapping,
+            mark_terminal,
+            terminal_status_for_rejection,
         )
 
         contract = SemanticQueryContract.from_model(
@@ -653,7 +661,13 @@ async def semantic_authority_qualifier(
         supported_relationships: set[str] = set()
         passed_rubric: set[str] = set()
         rejection_codes: list[str] = []
+        terminal_ledger = ledger_from_mapping(request.technical_filters.get("terminal_url_ledger"))
+        search_id = str(request.technical_filters.get("search_id") or "")
         for evidence in candidate.evidence:
+            if not eligible_for_semantic_call(terminal_ledger, str(evidence.source_url or "")):
+                # Durable terminal: skip before fetch/parse/cache/LLM.
+                rejection_codes.append("EVENT_GROUNDING_FAILED")
+                continue
             provenance = evidence.provenance if isinstance(evidence.provenance, Mapping) else {}
             if request.technical_filters.get("semantic_authority_required") is True:
                 if candidate.adapter_id == "generic_web_research_v1":
@@ -829,6 +843,10 @@ async def semantic_authority_qualifier(
             if evidence.published_at:
                 verifier_structured_metadata.setdefault("published_at", evidence.published_at)
                 verifier_structured_metadata.setdefault("source_published_at", evidence.published_at)
+            max_age = resolve_maximum_age_days(
+                freshness_max_age_days=request.freshness_max_age_days,
+                temporal_constraints=contract.temporal_constraints,
+            )
             verdict = verifier.verify(
                 per_source_contract,
                 interpretation,
@@ -839,7 +857,7 @@ async def semantic_authority_qualifier(
                 official_domain_confidence=candidate.official_domain_confidence,
                 entity_class=candidate.entity_class,
                 candidate_company=candidate.canonical_company_name,
-                maximum_age_days=request.freshness_max_age_days,
+                maximum_age_days=max_age,
                 structured_metadata=verifier_structured_metadata,
                 identity_verification_deferred=(
                     not candidate.official_domain_verified
@@ -863,30 +881,50 @@ async def semantic_authority_qualifier(
                     supported_relationships.add(INDUSTRIAL_BUYER_TRIGGER_BY_TARGET_COMPANY)
                 passed_rubric.update(interpretation.acceptance_rubric_passed)
             else:
-                code = verdict.rejection_code or "EVIDENCE_GROUNDING_FAILED"
+                code = verdict.primary_rejection_code or verdict.rejection_code or "EVIDENCE_GROUNDING_FAILED"
                 rejection_codes.append(code)
-                false_checks = [name for name, passed in dict(verdict.checks or {}).items() if not passed]
-                missing_rels = list(
-                    missing_industrial_relationships(
-                        contract.required_relationships,
-                        interpretation.satisfied_relationships,
-                    )
-                )
+                false_checks = list(verdict.false_checks or [
+                    name for name, passed in dict(verdict.checks or {}).items() if not passed
+                ])
+                missing_rels = list(verdict.missing_relationships or missing_industrial_relationships(
+                    contract.required_relationships,
+                    interpretation.satisfied_relationships,
+                ))
                 reject_row = {
                     "url": str(evidence.source_url or "")[:500],
                     "rejection_code": code,
+                    "primary_rejection_code": code,
                     "false_checks": false_checks,
                     "missing_relationships": missing_rels,
+                    "failed_gate_codes": list(verdict.failed_gate_codes or ()),
                     "candidate_company": str(candidate.canonical_company_name or "")[:160],
                     "event_date": verdict.event_date,
                     "gate_results": dict(verdict.gate_results or {}),
-                    "failed_gate_codes": list(verdict.failed_gate_codes or ()),
+                    "entity_class": candidate.entity_class,
+                    "official_domain_verified": bool(candidate.official_domain_verified),
+                    "official_domain_confidence": float(candidate.official_domain_confidence or 0.0),
                 }
+                status, reason = terminal_status_for_rejection(
+                    primary_rejection_code=code,
+                    false_checks=false_checks,
+                )
+                mark_terminal(
+                    terminal_ledger,
+                    search_id=search_id,
+                    url=str(evidence.source_url or ""),
+                    terminal_status=status,
+                    terminal_reason=reason,
+                    event_date=verdict.event_date,
+                    primary_rejection_code=code,
+                    failed_gate_codes=list(verdict.failed_gate_codes or ()),
+                    false_checks=false_checks,
+                )
                 telemetry.grounding_rejects.append(reject_row)
                 # Also mirror into request technical filters for progress persistence.
                 bucket = request.technical_filters.setdefault("grounding_rejects", [])
                 if isinstance(bucket, list):
                     bucket.append(reject_row)
+                request.technical_filters["terminal_url_ledger"] = ledger_to_mapping(terminal_ledger)
         telemetry.grounded = len(grounded)
         missing_relationships = set(
             missing_industrial_relationships(contract.required_relationships, supported_relationships)
